@@ -105,3 +105,19 @@ missing secret for an app that is not installed is therefore reported as a
 reconcile failure. Checking for an absent container in `ExistingOnly` mode
 before resolving secrets would make a clean node report `failed=0`, and real
 failures easier to spot.
+
+## Renaming a node replaces the CA-issued certificate (archy `6d5f3ff`)
+
+`setup-node-ca.sh` issues the leaf certificate from the node's own CA, with
+every global address as a SAN, so one installed CA covers the dashboard and
+every app port. A later `server.set-name` calls `regenerate_tls_cert`
+(`core/archipelago/src/api/rpc/system/handlers.rs`, ~line 845). Through
+`TlsMaterial::stage_validate_and_swap` (~line 702) that mints a **self-signed**
+leaf whose SAN is only `DNS:<name>`, `DNS:<name>.local`, `DNS:localhost` and
+`IP:127.0.0.1`. After a rename, the node therefore serves a certificate that
+the installed CA does not vouch for, and that does not name the node's IP
+addresses. Cross-origin requests to `https://<ip>:<app-port>` then fail until
+someone runs `system.node-ca.generate` (Settings → Node certificate), which
+re-runs `setup-node-ca.sh`. Having the rename path reissue through
+`setup-node-ca.sh` whenever a node CA exists would keep the two producers in
+step.
