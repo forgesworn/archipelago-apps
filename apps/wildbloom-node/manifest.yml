@@ -5,16 +5,16 @@ app:
   upstream:
     kind: github
     repo: forgesworn/wildbloom-node
-  description: Blossom storage on your node, owned by your node's Nostr identity. Only your node can upload; anyone who can reach the node and knows a file's hash can read it, as with any Blossom server, so encrypt private files before upload.
+  description: Blossom storage on your node, owned by your node identities. Only your node identities can upload; anyone who can reach the node and knows a file's hash can read it, as with any Blossom server, so encrypt private files before upload.
   category: nostr
 
   container:
-    image: ghcr.io/forgesworn/wildbloom-node:0.2.2-b3b254b-1
+    image: ghcr.io/forgesworn/wildbloom-node:0.2.2-b3b254b-2
     pull_policy: if-not-present
     network: archy-net
     derived_env:
       - key: WILDBLOOM_ALLOW_PUBKEYS
-        template: "{{NODE_NOSTR_PUBKEY}}"
+        template: "{{NODE_IDENTITY_PUBKEYS}}"
       - key: WILDBLOOM_PUBLIC_URL
         template: "https://{{HOST_IP}}:3742"
       - key: WILDBLOOM_SERVER_NAME
@@ -39,7 +39,7 @@ app:
       protocol: tcp
       bind: 127.0.0.1
       auth: open
-      auth_rationale: Blossom server with its own Nostr authorisation. Uploads, mirrors and deletes need an event signed by the node's own key; listings need the lister's own signature; reads are by SHA-256 as the protocol intends. Blossom clients send no cookies, so a dashboard challenge would refuse every one of them. No node credentials are reachable.
+      auth_rationale: Blossom server with its own Nostr authorisation. Uploads, mirrors and deletes need an event signed by one of your node identities; listings need the lister's own signature; reads are by SHA-256 as the protocol intends. Blossom clients send no cookies, so a dashboard challenge would refuse every one of them. No node credentials are reachable.
 
   volumes:
     - type: bind

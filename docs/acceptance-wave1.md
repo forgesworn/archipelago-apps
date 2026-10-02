@@ -3,7 +3,7 @@
 Acceptance for `wildbloom-node` and `wildbloom` on a lite Archipelago node (see
 `node/README.md`). The scripted half runs `scripts/acceptance.sh`, which makes
 every check on the node over SSH, through the dashboard's JSON-RPC and the
-node's own signer. The browser half uses the real dashboard and its consent
+node's identity signer. The browser half uses the real dashboard and its consent
 prompt.
 
 ## Run 1: 2 October 2026
@@ -64,11 +64,13 @@ What this shows:
 
 1. Both apps are installed and running.
 2. The owner key injected into `wildbloom-node` (`WILDBLOOM_ALLOW_PUBKEYS`) is
-   the key `node.nostr-pubkey` reports.
+   the key `node.nostr-pubkey` reports. (Run 1 only: that is the discovery key,
+   which apps never sign with. See Findings.)
 3. The Wildbloom UI refuses a request with no dashboard session (401). The
    Blossom port answers through the app gate over TLS, and refuses an unsigned
    upload for want of authorisation (401), not for a malformed request.
-4. An upload authorisation (kind 24242) signed by `node.nostr-sign`, with the
+4. An upload authorisation (kind 24242) signed by `node.nostr-sign` (run 1;
+   the script now uses `identity.nostr-sign`), with the
    node's injected mDNS name as its `server` tag, is accepted, and fetching the
    blob by its SHA-256 returns the same bytes.
 5. Wildbloom's page loads the node's signer script, and the provider file was
@@ -98,3 +100,14 @@ Browser run after reboot: pending.
   cannot rely on it.
 - Sideloaded manifests sit inside the frontend payload and would not survive
   an OTA frontend update. See `docs/upstream-notes.md`.
+- Checks 2 and 4/5 proved the wrong owner. The run-1 backend injected the
+  node's discovery key (`{{NODE_NOSTR_PUBKEY}}`), but the NIP-07 bridge signs
+  app uploads with an identity the user picks, and the picker never offers the
+  node identity. On the test node "Personal" is `a4bbfde0…`, "Node" is
+  `0a8d88…` and the discovery key is `94972f…`, so no upload from Wildbloom's
+  page could be accepted. The owner is now every identity the picker offers,
+  through `{{NODE_IDENTITY_PUBKEYS}}` (backend patch level 2,
+  `backend-v1.8.22-alpha-p2`; image `wildbloom-node:0.2.2-b3b254b-2`). Check 2
+  now compares the injected list with `identity.list` filtered as the picker
+  filters it, and checks 4/5 sign with `identity.nostr-sign` as the first such
+  identity. Acceptance must be re-run against that backend and image.

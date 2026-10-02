@@ -17,11 +17,24 @@ As a result, after a seed restore or seed generation the function can return
 either the previous key (if an older `nostr_pub` remains) or an empty string (if
 none exists). Neither matches the key the node actually signs with.
 
-The `{{NODE_NOSTR_PUBKEY}}` placeholder in
-`upstream/patches/0001-feat-add-NODE_NOSTR_PUBKEY-derived-env-placeholder.patch`
-does not depend on this function. It uses `nostr_discovery::get_nostr_pubkey`,
-which derives the public key from `nostr_secret`, in the same way as the
-`node.nostr-pubkey` RPC.
+The `{{NODE_IDENTITY_PUBKEYS}}` placeholder in
+`upstream/patches/0001-feat-add-NODE_IDENTITY_PUBKEYS-derived-env-placeholder.patch`
+does not depend on this function, nor on the node's discovery key at all. It
+reads the Nostr keys stored with the identities in `identities/`, the records
+`identity.list` returns, and keeps only those `NostrIdentityPicker.vue` offers
+to apps.
+
+## App signing uses identities, not the discovery key (archy `6d5f3ff`)
+
+An app's NIP-07 requests go through the dashboard bridge, which signs with
+`identity.nostr-sign` and the identity the user picked
+(`neode-ui/src/views/appSession/useNostrBridge.ts:154`). The picker hides the
+node identity (`neode-ui/src/components/NostrIdentityPicker.vue:156-162`). The
+node's discovery key, which `node.nostr-pubkey` reports, is therefore never what
+signs an app's events once an identity is picked. Our first placeholder,
+`{{NODE_NOSTR_PUBKEY}}`, injected that discovery key, and on a real node no
+upload signed through the bridge could match it. The patch now injects every
+identity the picker offers.
 
 ## Running the backend tests in CI (archy `6d5f3ff`)
 

@@ -7,6 +7,6 @@ WILDBLOOM_NODE_REF=b3b254b10c42e94135f735abebfcbcc9262fef4d
 # Packaging revisions: bump when the image changes without an upstream pin change.
 # The node never re-pulls an existing tag, so every image change needs a new tag.
 WILDBLOOM_PKG_REV=4
-WILDBLOOM_NODE_PKG_REV=1
+WILDBLOOM_NODE_PKG_REV=2
 # Bumped whenever upstream/patches changes; names the backend release asset.
-BACKEND_PATCH_LEVEL=1
+BACKEND_PATCH_LEVEL=2

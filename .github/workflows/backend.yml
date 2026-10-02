@@ -55,16 +55,19 @@ jobs:
             | tee "$RUNNER_TEMP/host-ops.log"
           grep -q 'test result: ok. 5 passed;' "$RUNNER_TEMP/host-ops.log"
       # Our patch's tests, by exact name: a rename gives "0 passed" and fails.
-      - name: Patch tests (NODE_NOSTR_PUBKEY)
+      - name: Patch tests (NODE_IDENTITY_PUBKEYS)
         working-directory: .cache/archy
         run: |
           cargo test --manifest-path core/Cargo.toml -p archipelago-container --locked --lib -- --exact \
-            manifest::tests::node_nostr_pubkey_placeholder_is_accepted \
-            manifest::tests::resolve_derived_env_renders_node_nostr_pubkey | tee "$RUNNER_TEMP/container.log"
+            manifest::tests::node_identity_pubkeys_placeholder_is_accepted \
+            manifest::tests::resolve_derived_env_renders_node_identity_pubkeys | tee "$RUNNER_TEMP/container.log"
           grep -q 'test result: ok. 2 passed;' "$RUNNER_TEMP/container.log"
           cargo test --manifest-path core/Cargo.toml -p archipelago --locked --bin archipelago -- --exact \
-            container::prod_orchestrator::tests::node_nostr_pubkey_placeholder_renders_the_node_key | tee "$RUNNER_TEMP/archipelago.log"
-          grep -q 'test result: ok. 1 passed;' "$RUNNER_TEMP/archipelago.log"
+            identity_manager::tests::app_signable_nostr_pubkeys_mirror_the_identity_picker \
+            identity_manager::tests::app_signable_nostr_pubkeys_is_empty_with_only_the_node_identity \
+            container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_renders_the_signable_identities \
+            container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_refuses_an_empty_set | tee "$RUNNER_TEMP/archipelago.log"
+          grep -q 'test result: ok. 4 passed;' "$RUNNER_TEMP/archipelago.log"
       - name: Build backend
         working-directory: .cache/archy/core
         run: cargo build --release -p archipelago
