@@ -33,19 +33,27 @@ grep -q '^archipelago:' /etc/subuid || echo "archipelago:100000:65536" >> /etc/s
 grep -q '^archipelago:' /etc/subgid || echo "archipelago:100000:65536" >> /etc/subgid
 # As the ISO does: the daemon uses sudo for volume ownership, hostname sync and
 # certificate reissue, some of it non-interactively (sudo -n).
-echo "archipelago ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/archipelago
-chmod 0440 /etc/sudoers.d/archipelago
-visudo -cf /etc/sudoers.d/archipelago
+sudoers_tmp=$(mktemp)
+echo "archipelago ALL=(ALL) NOPASSWD:ALL" > "$sudoers_tmp"
+visudo -cf "$sudoers_tmp"
+install -m 0440 -o root -g root "$sudoers_tmp" /etc/sudoers.d/archipelago
+rm -f "$sudoers_tmp"
 
-# Linger starts user@1000 asynchronously; wait for its runtime dir.
+# Linger starts user@1000 asynchronously; wait for its user bus, which
+# `systemctl --user` and rootless Podman need.
 loginctl enable-linger archipelago
-for _ in $(seq 1 30); do [ -d /run/user/1000 ] && break; sleep 1; done
-test -d /run/user/1000
+for _ in $(seq 1 30); do [ -S /run/user/1000/bus ] && break; sleep 1; done
+systemctl is-active --quiet user@1000.service
+test -S /run/user/1000/bus
 
-mkdir -p /var/lib/archipelago/{data,config,containers/tmp,containers/storage} /etc/archipelago/ssl \
-  /opt/archipelago/{bin,scripts,web-ui} /var/log/archipelago /etc/containers /var/lib/containers
-# Never run archy's first-boot container script here: it creates the Bitcoin stack.
-touch /var/lib/archipelago/.first-boot-containers-done
+# Directories the service user owns. Created and chowned individually, never
+# recursively: on a re-run /var/lib/archipelago holds image layers and app
+# volumes owned by subuid-mapped ids, which a recursive chown would corrupt.
+install -d -o archipelago -g archipelago /var/lib/archipelago \
+  /var/lib/archipelago/data /var/lib/archipelago/config /var/lib/archipelago/containers \
+  /var/lib/archipelago/containers/tmp /var/lib/archipelago/containers/storage
+mkdir -p /etc/archipelago/ssl /opt/archipelago/bin /opt/archipelago/scripts /opt/archipelago/web-ui \
+  /var/log/archipelago /etc/containers /var/lib/containers
 
 # Backend (patched, verified).
 (cd "$bundle" && sha256sum -c archipelago.sha256)
@@ -72,11 +80,13 @@ test -s /etc/archipelago/ssl/archipelago.crt
 install -m 0755 "$archy/scripts/setup-node-ca.sh" /opt/archipelago/scripts/setup-node-ca.sh
 /opt/archipelago/scripts/setup-node-ca.sh
 public_ip=$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1)
-openssl x509 -in /etc/archipelago/ssl/archipelago.crt -noout -ext subjectAltName | grep -qF "IP Address:$public_ip" \
+openssl x509 -in /etc/archipelago/ssl/archipelago.crt -noout -ext subjectAltName | grep -qE "IP Address:${public_ip//./\\.}(,|$)" \
   || { echo "leaf certificate does not cover $public_ip" >&2; exit 1; }
 test -s /etc/archipelago/ssl/ca.crt
 
-chown -R archipelago:archipelago /var/lib/archipelago /opt/archipelago /var/log/archipelago
+# Recursive is safe here: nothing under /opt/archipelago or /var/log/archipelago
+# is mounted into containers (manifests reference /opt only as build contexts).
+chown -R archipelago:archipelago /opt/archipelago /var/log/archipelago
 
 # Rootless Podman config, as the ISO lays it out: graphroot on the data volume,
 # netavark for container DNS on archy-net. Every path in the unit's
@@ -124,7 +134,8 @@ systemctl daemon-reload
 # apt already started nginx on the default site; restart to load ours.
 systemctl enable avahi-daemon nginx archipelago
 systemctl restart avahi-daemon nginx
-systemctl start archipelago
+# restart, not start: a re-run with a new binary must take effect.
+systemctl restart archipelago
 systemctl is-active archipelago nginx avahi-daemon
 
 # Self-check: the dashboard answers on the public IP from the node itself,

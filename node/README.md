@@ -10,10 +10,16 @@ rootless Podman layout, without the cost of a full install.
 - The patched backend from this repository's `backend-<ARCHY_RELEASE>-p<BACKEND_PATCH_LEVEL>`
   release, checked against its `.sha256`, at `/usr/local/bin/archipelago`.
 - The upstream release frontend for `ARCHY_RELEASE`, at `/opt/archipelago/web-ui`.
-- From archy at `ARCHY_REF`, unmodified: `archipelago.service`,
+- From archy at `ARCHY_REF`, installed unmodified: `archipelago.service`,
   `nginx-archipelago.conf` and its snippets, `setup-node-ca.sh`, the first-boot
   secrets script (extracted from the archived ISO builder) and
   `tests/lifecycle/lib/rpc.bash` (installed as `/opt/archipelago/rpc.bash`).
+  The backend then manages some of these itself: on every start
+  (`bootstrap::ensure_runtime_assets_ready`) it promotes the frontend's
+  `archipelago-runtime/` payload into `/opt/archipelago/{apps,scripts,docker}`,
+  reinstalls the nginx site from it and installs the `archipelago-doctor` and
+  `archipelago-host-secrets-audit` units (`core/archipelago/src/bootstrap.rs`).
+  What runs is therefore the release's copy of those files, not the installer's.
 - The `archipelago` user (uid 1000, lingering), subuid/subgid ranges, passwordless
   sudo and the rootless Podman configuration the ISO writes (graphroot under
   `/var/lib/archipelago/containers/storage`, netavark, pasta), plus the `archy-net`
@@ -25,12 +31,16 @@ rootless Podman layout, without the cost of a full install.
 
 ## What it leaves out
 
-- The Bitcoin stack and every other first-boot container. The installer touches
-  `/var/lib/archipelago/.first-boot-containers-done` and never runs archy's
-  first-boot container script.
-- Tor, the kiosk, OTA updates and the crash guard (the unit's `ExecStartPre` for it
-  is `-`-prefixed, so its absence is tolerated), WireGuard, FIPS, the nostr relay
-  and the LUKS data volume. `/var/lib/archipelago` sits on the root filesystem.
+- The Bitcoin stack. The installer never runs archy's first-boot container
+  script, which is what creates it on an ISO install. The frontend payload still
+  carries a manifest for every catalogue app, but the boot reconcile only
+  recreates apps that already exist, apart from a fixed baseline allow-list
+  (`is_required_baseline_app`, `core/archipelago/src/container/prod_orchestrator.rs:75`).
+  So `filebrowser` and `fedimint-clientd` **will** appear, as on every real node;
+  Bitcoin, LND, ElectrumX, BTCPay and mempool will not.
+- Tor, the kiosk, OTA updates, WireGuard, FIPS, the nostr relay and the LUKS data
+  volume. `/var/lib/archipelago` sits on the root filesystem. The unit's crash-guard
+  `ExecStartPre` is `-`-prefixed, so it is tolerated if absent.
 - No Rust toolchain or builds on the node: everything arrives in the bundle.
 
 ## Building the node
@@ -74,6 +84,10 @@ rootless Podman layout, without the cost of a full install.
 
    Expect three `active`. The installer finishes by requesting
    `https://<node-ip>/` from the node itself and fails if nothing answers.
+   It is safe to re-run, for example with a new backend release: it restarts the
+   service, keeps the existing keys and CA, and never recursively chowns
+   `/var/lib/archipelago`, where image layers and app volumes belong to
+   subuid-mapped ids.
 
 4. Confirm the running backend is the patched one:
 
@@ -93,8 +107,9 @@ rootless Podman layout, without the cost of a full install.
    ssh root@<node-ip> "runuser -u archipelago -- env XDG_RUNTIME_DIR=/run/user/1000 podman ps -a --format '{{.Names}}'"
    ```
 
-   None of `bitcoin-knots`, `bitcoin-core`, `lnd`, `electrumx`, `mempool*`,
-   `btcpay*` or `fedimint*` should be listed.
+   None of `bitcoin-*`, `lnd`, `electrumx`, `mempool*`, `btcpay*` or `fedimint*`
+   should be listed, except `fedimint-clientd`, which is a baseline app alongside
+   `filebrowser`.
 
 ## Reaching the node
 
