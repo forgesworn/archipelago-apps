@@ -15,6 +15,8 @@ if [ "${ARCHY_FULL:-0}" != 1 ]; then
     /scripts/validate-app-manifest.sh /scripts/setup-node-ca.sh /apps/ /neode-ui/public/nostr-provider.js \
     /image-recipe/configs/ /image-recipe/_archived/build-auto-installer-iso.sh \
     /tests/lifecycle/lib/
+else
+  git -C "$dest" sparse-checkout disable
 fi
 git -C "$dest" fetch -q --depth 1 origin "$ARCHY_REF"
 git -C "$dest" checkout -q --detach FETCH_HEAD
