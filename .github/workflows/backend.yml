@@ -15,9 +15,29 @@ jobs:
         with: { toolchain: stable, rustflags: "" }
       - run: ARCHY_FULL=1 scripts/fetch-archy.sh
       - run: scripts/apply-patches.sh
-      - name: Archipelago tests (patched)
-        working-directory: .cache/archy/core
-        run: cargo test --all-features -p archipelago-container -p archipelago
+      # Upstream's own harness: unit tests run under systemd-run with a private
+      # /var/lib/archipelago, as host-operation tests require.
+      - name: Container tests (isolated)
+        working-directory: .cache/archy
+        run: ARCHY_TEST_PACKAGE=archipelago-container scripts/test-backend-isolated.sh
+      # Skipped, both unrelated to the patch (see docs/upstream-notes.md):
+      # - the runner's Podman 4.9 quadlet generator predates StopTimeout;
+      #   Archipelago targets Debian 13's Podman 5.
+      # - the wallet-ordering test reads the node's real Bitcoin RPC secret,
+      #   which no isolated (or CI) host has.
+      - name: Archipelago tests (isolated)
+        working-directory: .cache/archy
+        run: >-
+          scripts/test-backend-isolated.sh
+          --skip container::quadlet::tests::actual_quadlet_generator_stops_before_forced_removal
+          --skip container::prod_orchestrator::tests::reconcile_wallet_start_precedes_unrelated_failed_image_pull
+      - name: Patch tests (NODE_NOSTR_PUBKEY)
+        working-directory: .cache/archy
+        run: |
+          ARCHY_TEST_PACKAGE=archipelago-container scripts/test-backend-isolated.sh node_nostr_pubkey | tee "$RUNNER_TEMP/container.log"
+          grep -q 'test result: ok. 2 passed' "$RUNNER_TEMP/container.log"
+          scripts/test-backend-isolated.sh node_nostr_pubkey | tee "$RUNNER_TEMP/archipelago.log"
+          grep -q 'test result: ok. 1 passed' "$RUNNER_TEMP/archipelago.log"
       - name: Build backend
         working-directory: .cache/archy/core
         run: cargo build --release -p archipelago

@@ -22,3 +22,32 @@ The `{{NODE_NOSTR_PUBKEY}}` placeholder in
 does not depend on this function. It uses `nostr_discovery::get_nostr_pubkey`,
 which derives the public key from `nostr_secret`, in the same way as the
 `node.nostr-pubkey` RPC.
+
+## Running the backend tests in CI (archy `6d5f3ff`)
+
+Our backend workflow runs the archy unit tests through archy's own harness,
+`scripts/test-backend-isolated.sh`, which gives each run a private
+`/var/lib/archipelago`. A plain `cargo test` on a hosted Ubuntu runner, which is
+what archy's `.github/workflows/ci.yml` runs (`cargo test --all-features`), fails
+five install and manifest-file tests in `container::prod_orchestrator`. Those tests
+create paths under `/var/lib/archipelago` and report that host-operation tests
+require the isolated harness.
+
+Two tests are skipped in our workflow. Neither touches the code our patch
+changes.
+
+- `container::quadlet::tests::actual_quadlet_generator_stops_before_forced_removal`
+  runs the host's real quadlet generator. Ubuntu 24.04 ships Podman 4.9, whose
+  generator rejects the `StopTimeout` key. Archipelago targets Debian 13 with
+  Podman 5, where the key is supported, so the test is correct for its target
+  and simply needs a newer Podman than the runner has.
+- `container::prod_orchestrator::tests::reconcile_wallet_start_precedes_unrelated_failed_image_pull`
+  starts `lnd` through `reconcile_all`. LND's pre-start hook reads
+  `bitcoin-rpc-password` from the orchestrator's `secrets_dir` and writes
+  `lnd.conf` under `lnd_paths`. The test does not redirect either, so both
+  resolve to `/var/lib/archipelago/...`. The secret is absent on a CI host and
+  in the harness's empty private `/var/lib/archipelago`, so `lnd` is never
+  started and the test's `start_container:lnd` lookup finds nothing. Setting
+  `set_secrets_dir` (with a seeded password) and `set_lnd_paths` to temporary
+  directories, as the test around line 7681 does, would likely make it
+  self-contained.
