@@ -12,24 +12,30 @@
 # restart means the orchestrator knows the app.
 set -euo pipefail
 app=${1:?app id}
+[[ $app =~ ^[a-z0-9-]+$ ]] || { echo "invalid app id: $app" >&2; exit 1; }
 : "${NODE:=root@95.216.164.146}" "${ARCHY_PASSWORD:?dashboard password}"
 : "${INSTALL_TIMEOUT:=600}"
 root=$(cd "$(dirname "$0")/.." && pwd)
 manifest=$root/apps/$app/manifest.yml
 [ -f "$manifest" ] || { echo "no manifest at $manifest" >&2; exit 1; }
-image=$(grep -oE 'image: *[^[:space:]]+' "$manifest" | head -1 | awk '{print $2}')
+# The first image: under the container: block.
+image=$(awk '/^[[:space:]]+container:[[:space:]]*$/ {c=1; next}
+  c && /^[[:space:]]+image:[[:space:]]*[^[:space:]]/ {gsub(/["\047]/, "", $2); print $2; exit}' "$manifest")
+[ -n "$image" ] || { echo "no container image in $manifest" >&2; exit 1; }
 dir=/opt/archipelago/web-ui/archipelago-runtime/apps/$app
 
 ssh "$NODE" "install -d -o archipelago -g archipelago '$dir'"
 scp -q "$manifest" "$NODE:$dir/manifest.yml"
 ssh "$NODE" "chown archipelago:archipelago '$dir/manifest.yml' && systemctl restart archipelago"
 
-# The remote script travels as an argument and the password alone on stdin,
-# so the password stays off the ssh command line.
+# The remote script (scripts/lib/archy-login.bash, then the body below) travels
+# as an ssh argument; the password alone travels on stdin, so it is on neither
+# the local nor the remote command line, and archy_login keeps it out of argv on
+# the node too. It is held in a shell variable, not exported. The %q quoting
+# below is bash syntax: it assumes the node's root login shell is bash.
 read -r -d '' remote <<'EOF' || true
 set -euo pipefail
 IFS= read -r ARCHY_PASSWORD
-export ARCHY_PASSWORD ARCHY_FORCE_LOGIN=1
 app=$1 image=$2 timeout=$3
 
 # Wait for the backend to answer RPC again after the restart.
@@ -40,7 +46,8 @@ for _ in $(seq 60); do
 done
 
 source /opt/archipelago/rpc.bash
-rpc_login >/dev/null
+archy_login
+unset ARCHY_PASSWORD
 echo "package.install $app ($image):"
 rpc_result package.install "{\"id\":\"$app\",\"dockerImage\":\"$image\"}"
 
@@ -75,4 +82,5 @@ echo "FAIL: $app not running and healthy within ${timeout}s" >&2
 exit 1
 EOF
 argv=$(printf '%q ' "$app" "$image" "$INSTALL_TIMEOUT")
+remote="$(cat "$root/scripts/lib/archy-login.bash")"$'\n'"$remote"
 printf '%s\n' "$ARCHY_PASSWORD" | ssh "$NODE" "bash -c $(printf '%q' "$remote") remote $argv"

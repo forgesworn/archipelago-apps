@@ -139,3 +139,24 @@ would therefore disappear after an update, leaving an installed app with no
 manifest for the orchestrator to manage. A separate local manifests directory,
 merged at load time like the registry overlay, would give developers and
 operators a sideload path that outlives updates.
+
+## The test RPC helper exposes the password in argv (archy `6d5f3ff`)
+
+`rpc_login` in `tests/lifecycle/lib/rpc.bash` builds the `auth.login` body by
+splicing `$ARCHY_PASSWORD` into a JSON string and passes it to curl with
+`--data-raw`. The password is therefore in curl's argument list, readable by any
+local user through `ps` or `/proc/<pid>/cmdline` while the request runs. A
+password containing `"` or `\` also produces invalid JSON, so the login fails.
+Building the body with jq from stdin and sending it on curl's stdin avoids both:
+
+```bash
+printf '%s' "$ARCHY_PASSWORD" \
+  | jq -Rsc '{jsonrpc:"2.0",method:"auth.login",params:{password:.},id:1}' \
+  | curl -sk -D "$headers" -X POST "${ARCHY_BASE_URL}/rpc/v1" \
+      -H 'Content-Type: application/json' --data-binary @-
+```
+
+(`jq -n --arg p "$ARCHY_PASSWORD"` fixes the escaping but moves the password
+into jq's argument list instead.) Our scripts use this form in
+`scripts/lib/archy-login.bash` and keep the helper's session-file format, so
+`rpc_call` works unchanged afterwards.

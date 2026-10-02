@@ -15,7 +15,7 @@ prompt.
   `backend-v1.8.22-alpha-p1`).
 - `ghcr.io/forgesworn/wildbloom-node:0.2.2-b3b254b` (wildbloom-node `b3b254b`).
 - `ghcr.io/forgesworn/wildbloom:0.0.1-29d382e` (wildbloom `29d382e`).
-- Node identity: `npub1jjtj77mg8hfd3md5ekf39vmks5tt8lvpfrkanqp5w7x4u3gu9yrqjdu535`.
+- Node identity: `<node npub>` (a throwaway test node).
 
 ### Staging
 
@@ -39,16 +39,17 @@ package.install wildbloom (ghcr.io/forgesworn/wildbloom:0.0.1-29d382e):
 wildbloom: state=running health=none
 ```
 
-`health=none` is the dashboard state's `health` field, which was unset for
-both apps throughout this run. Podman reports both containers healthy, and
-check 3 below probes Blossom's health endpoint directly.
+`health=none` is the dashboard state's `health` field, which was unset for both
+apps throughout this run. It hid a real fault: Podman reported `wildbloom`
+unhealthy (see Findings). Check 3 below probes Blossom's health endpoint
+directly.
 
 ### Scripted half
 
 ```
 wildbloom-node: state=running health=none
 wildbloom: state=running health=none
-node=94972f7b683dd2d8edb4cd9312b3768516b3fd8148edd98034778d5e451c2906 env=94972f7b683dd2d8edb4cd9312b3768516b3fd8148edd98034778d5e451c2906 (npub1jjtj77mg8hfd3md5ekf39vmks5tt8lvpfrkanqp5w7x4u3gu9yrqjdu535)
+node=<node hex> env=<node hex> (<node npub>)
 unauthenticated UI :3743 -> 401
 Blossom :3742 healthz via gate -> 200
 unsigned upload :3742 -> 401
@@ -87,8 +88,13 @@ Browser run after reboot: pending.
 
 ### Findings
 
-- The dashboard state's `health` field was unset for both apps throughout
-  this run, although Podman reported their health checks passing. Acceptance relies on `state`
-  and a direct health probe instead.
+- `wildbloom` was unhealthy in Podman for this run. Its in-container health
+  check requests `localhost`, which resolves to `::1`, and the image's nginx
+  listened on IPv4 only. The page itself was served, so checks 1–6 passed. The
+  image is being rebuilt to listen on both families; acceptance must be re-run
+  against the new image.
+- The dashboard state's `health` field was unset for both apps throughout this
+  run, so it did not surface the fault above. Acceptance now records it but
+  cannot rely on it.
 - Sideloaded manifests sit inside the frontend payload and would not survive
   an OTA frontend update. See `docs/upstream-notes.md`.

@@ -8,16 +8,22 @@
 set -euo pipefail
 : "${NODE:=root@95.216.164.146}" "${ARCHY_PASSWORD:?dashboard password}"
 host=${NODE#*@}
-# The remote script travels as an argument and the password alone on stdin,
-# so the password stays off the ssh command line.
+root=$(cd "$(dirname "$0")/.." && pwd)
+# The remote script (scripts/lib/archy-login.bash, then the body below) travels
+# as an ssh argument; the password alone travels on stdin, so it is on neither
+# the local nor the remote command line, and archy_login keeps it out of argv on
+# the node too. It is held in a shell variable, not exported. The %q quoting
+# below is bash syntax: it assumes the node's root login shell is bash.
 read -r -d '' remote <<'EOF' || true
 set -euo pipefail
 IFS= read -r ARCHY_PASSWORD
-export ARCHY_PASSWORD ARCHY_FORCE_LOGIN=1
 host=$1
 source /opt/archipelago/rpc.bash
-rpc_login >/dev/null
+archy_login
+unset ARCHY_PASSWORD
 fail() { echo "FAIL: $*"; exit 1; }
+payload=""
+trap 'rm -f "${payload:-}" "${payload:+$payload.back}"' EXIT
 podman_inspect_env() {
   runuser -u archipelago -- sh -c "cd / && XDG_RUNTIME_DIR=/run/user/1000 \
     DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus \
@@ -45,7 +51,7 @@ echo "node=$node_pk env=$env_pk ($node_npub)"
 # 3. Review Focus #2: the UI is gated; the Blossom port is open but refuses unsigned writes.
 code=$(curl -sk -o /dev/null -w '%{http_code}' "https://$host:3743/")
 echo "unauthenticated UI :3743 -> $code"
-if [ "$code" = 200 ]; then fail "Wildbloom UI served without a session"; fi
+case "$code" in 401|403) ;; *) fail "Wildbloom UI not refused for want of a session (got $code)";; esac
 code=$(curl -sk -o /dev/null -w '%{http_code}' "https://$host:3742/healthz")
 echo "Blossom :3742 healthz via gate -> $code"; [ "$code" = 200 ] || fail "Blossom port not reachable through the gate over TLS"
 x_sha=$(printf x | sha256sum | awk '{print $1}')
@@ -56,7 +62,7 @@ case "$code" in 401|403) ;; *) fail "unsigned upload not refused for want of aut
 
 # 4/5. Upload signed by the node key via node.nostr-sign; the server tag is the
 # mDNS name the orchestrator injected, which must equal this host's (Review Focus #3).
-mdns=$(sed -n 's/^WILDBLOOM_SERVER_NAME=//p' <<<"$wbn_env" | tr ',' '\n' | grep -E '\.local$' | head -1)
+mdns=$(sed -n 's/^WILDBLOOM_SERVER_NAME=//p' <<<"$wbn_env" | tr ',' '\n' | grep -E '\.local$' | head -1 || true)
 [ -n "$mdns" ] && [ "$mdns" = "$(hostname).local" ] || fail "WILDBLOOM_SERVER_NAME has no .local member matching this host"
 echo "server tag: injected mDNS name matches hostname.local"
 payload=$(mktemp); head -c 8192 /dev/urandom > "$payload"
@@ -75,13 +81,15 @@ curl -fsS "http://127.0.0.1:3742/$sha" -o "$payload.back" && cmp "$payload" "$pa
 echo "fetch by sha matches the uploaded bytes"
 echo "$sha" > /root/acceptance-blob.sha
 cp "$payload" /root/acceptance-blob.bin
-rm -f "$payload" "$payload.back"
 
 # 6. Signer script present in the Wildbloom container.
-curl -fsS http://127.0.0.1:3743/ | grep -qF 'nostr-provider.js?v=tab-signer-v4' || fail "no signer injection"
-curl -fsS http://127.0.0.1:3743/nostr-provider.js | grep -q 'NIP-07' || fail "provider not copied from host"
+page=$(curl -fsS http://127.0.0.1:3743/) || fail "Wildbloom page not served on loopback"
+grep -qF 'nostr-provider.js?v=tab-signer-v4' <<<"$page" || fail "no signer injection"
+provider=$(curl -fsS http://127.0.0.1:3743/nostr-provider.js) || fail "provider not served"
+grep -q 'NIP-07' <<<"$provider" || fail "provider not copied from host"
 echo "signer injection and provider present"
 echo "ACCEPTANCE (scripted) PASSED: blob $sha"
 EOF
 argv=$(printf '%q ' "$host")
+remote="$(cat "$root/scripts/lib/archy-login.bash")"$'\n'"$remote"
 printf '%s\n' "$ARCHY_PASSWORD" | ssh "$NODE" "bash -c $(printf '%q' "$remote") remote $argv"
