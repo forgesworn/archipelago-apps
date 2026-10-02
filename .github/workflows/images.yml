@@ -1,6 +1,8 @@
 name: images
 on:
   push:
+    # Branches only: a tag push would otherwise run every workflow again.
+    branches: ['**']
     paths: [apps/**, tests/smoke/**, PINS, scripts/image-plan.sh, scripts/lib/app-image.bash, .github/workflows/images.yml]
   workflow_dispatch:
 # Two runs must not both see a tag as unpublished and push it.

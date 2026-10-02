@@ -9,7 +9,8 @@ rootless Podman layout, without the cost of a full install.
 
 - The patched backend from this repository's `backend-<ARCHY_RELEASE>-p<BACKEND_PATCH_LEVEL>`
   release, checked against its `.sha256`, at `/usr/local/bin/archipelago`.
-- The upstream release frontend for `ARCHY_RELEASE`, at `/opt/archipelago/web-ui`.
+- The upstream release frontend for `ARCHY_RELEASE`, checked against `FRONTEND_SHA256`
+  in `PINS`, at `/opt/archipelago/web-ui`.
 - From archy at `ARCHY_REF`, installed unmodified: `archipelago.service`,
   `nginx-archipelago.conf` and its snippets, `setup-node-ca.sh`, the first-boot
   secrets script (extracted from the archived ISO builder) and
@@ -66,7 +67,7 @@ rootless Podman layout, without the cost of a full install.
    gh release download "backend-${ARCHY_RELEASE}-p${BACKEND_PATCH_LEVEL}" -D "$S"
    curl -fL -o "$S/frontend.tar.gz" \
      "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/${ARCHY_RELEASE}/archipelago-frontend-${ARCHY_RELEASE#v}.tar.gz"
-   scripts/fetch-archy.sh "$S/archy"    # retry if the Gitea fetch resets
+   scripts/fetch-archy.sh "$S/archy"
    sed -n "/<<'SECRETSSCRIPT'/,/^SECRETSSCRIPT\$/p" "$S/archy/image-recipe/_archived/build-auto-installer-iso.sh" \
      | sed '1d;$d' > "$S/first-boot-secrets.sh"
    ssh root@<node-ip> 'rm -rf /root/bundle'
@@ -83,7 +84,8 @@ rootless Podman layout, without the cost of a full install.
    ```
 
    Expect three `active`. The installer finishes by requesting
-   `https://<node-ip>/` from the node itself and fails if nothing answers.
+   `https://<node-ip>/` from the node itself, then the backend's unauthenticated
+   JSON-RPC `health` method through nginx, and fails if either does not answer.
    It is safe to re-run, for example with a new backend release: it restarts the
    service, keeps the existing SSH host keys and CA (a re-run reissues the leaf
    certificate under the same CA, so its fingerprint changes), and never recursively chowns

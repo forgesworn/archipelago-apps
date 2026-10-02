@@ -1,7 +1,16 @@
 name: backend
 on:
   push:
-    paths: [upstream/patches/**, PINS, .github/workflows/backend.yml]
+    # Branches only: a tag push would otherwise run every workflow again.
+    branches: ['**']
+    paths:
+      - upstream/patches/**
+      - PINS
+      - scripts/fetch-archy.sh
+      - scripts/apply-patches.sh
+      - scripts/backend-inputs.sh
+      - scripts/backend-release-plan.sh
+      - .github/workflows/backend.yml
   workflow_dispatch:
 # One run at a time per ref: two runs must not both find no release and publish.
 concurrency:

@@ -4,7 +4,8 @@
 # no Bitcoin stack. See node/README.md.
 #
 # Usage (on the node, as root): ./install-lite.sh <bundle-dir>
-# <bundle-dir> holds: PINS, archipelago, archipelago.sha256, frontend.tar.gz,
+# <bundle-dir> holds: PINS, archipelago, archipelago.sha256, frontend.tar.gz
+#   (checked against PINS FRONTEND_SHA256),
 #   archy/ (sparse checkout at ARCHY_REF), first-boot-secrets.sh
 #
 # Inbound traffic is limited to 22/tcp. The dashboard (443) and app ports are
@@ -65,7 +66,9 @@ mkdir -p /etc/archipelago/ssl /opt/archipelago/bin /opt/archipelago/scripts /opt
 (cd "$bundle" && sha256sum -c archipelago.sha256)
 install -m 0755 "$bundle/archipelago" /usr/local/bin/archipelago
 
-# Frontend: unpack, then flatten a single top-level directory if present.
+# Frontend (release asset, verified against PINS), then unpack and flatten a
+# single top-level directory if present.
+echo "${FRONTEND_SHA256:?PINS has no FRONTEND_SHA256}  frontend.tar.gz" | (cd "$bundle" && sha256sum -c -)
 tmp=$(mktemp -d); tar -xzf "$bundle/frontend.tar.gz" -C "$tmp"
 src=$tmp
 if [ "$(ls -1 "$tmp" | wc -l)" = 1 ] && [ -d "$tmp/$(ls -1 "$tmp")" ]; then src="$tmp/$(ls -1 "$tmp")"; fi
@@ -144,9 +147,24 @@ systemctl restart avahi-daemon nginx
 systemctl restart archipelago
 systemctl is-active archipelago nginx avahi-daemon
 
-# Self-check: the dashboard answers on the public IP from the node itself,
-# which is the path a SOCKS-tunnelled browser takes.
-code=$(curl -sk -m 10 -o /dev/null -w '%{http_code}' "https://$public_ip/")
+# Self-check, on the public IP from the node itself, which is the path a
+# SOCKS-tunnelled browser takes. First nginx answers at all (curl reports 000
+# and fails when nothing does; || true keeps that readable).
+code=$(curl -sk -m 10 -o /dev/null -w '%{http_code}' "https://$public_ip/") || true
 echo "https://$public_ip/ -> HTTP $code"
 [ "$code" != 000 ] || { echo "dashboard not answering on $public_ip:443" >&2; exit 1; }
+# Then the backend behind it. JSON-RPC `health` needs no session (it is in
+# UNAUTHENTICATED_METHODS, core/archipelago/src/api/rpc/middleware.rs; handler
+# handle_health in core/archipelago/src/api/rpc/dispatcher.rs) and returns
+# {status,crash_recovery_complete,uptime_seconds,version}. The RPC listener
+# opens a while after systemd reports the unit active, so poll.
+status=""
+for _ in $(seq 60); do
+  status=$(curl -sk -m 5 -X POST "https://$public_ip/rpc/v1" -H 'Content-Type: application/json' \
+    --data-raw '{"jsonrpc":"2.0","method":"health","id":1}' | jq -r '.result.status // empty' 2>/dev/null) || true
+  [ -n "$status" ] && break
+  sleep 2
+done
+echo "https://$public_ip/rpc/v1 health -> ${status:-no answer}"
+[ -n "$status" ] || { echo "backend not answering JSON-RPC behind nginx on $public_ip:443" >&2; exit 1; }
 echo "lite Archipelago installed at ${ARCHY_RELEASE} (patch level ${BACKEND_PATCH_LEVEL})"

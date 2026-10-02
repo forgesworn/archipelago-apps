@@ -6,7 +6,7 @@
 # for this tag already exists with an identical inputs.sha256. Anything unclear
 # (manual run, unknown "before" sha, no release, no record, gh failing) means
 # "do not skip", so the tests and build run as usual. A change to the workflow
-# file itself is never skipped, so edits to the test steps are exercised.
+# file or to the scripts it runs is never skipped, so such edits are exercised.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 before=${1-}
@@ -19,7 +19,8 @@ no() { echo "skip=false"; echo "reason: $1" >&2; exit 0; }
 [ "$event" = push ] || no "event is $event, not push"
 [ -n "$before" ] && ! [[ "$before" =~ ^0+$ ]] || no "no usable before sha"
 git cat-file -e "$before^{commit}" 2>/dev/null || no "before sha not in the clone"
-git diff --quiet "$before" HEAD -- .github/workflows/backend.yml || no "backend.yml changed"
+git diff --quiet "$before" HEAD -- .github/workflows/backend.yml scripts/fetch-archy.sh scripts/apply-patches.sh \
+  scripts/backend-inputs.sh scripts/backend-release-plan.sh || no "backend.yml or a script it runs changed"
 gh release view "$tag" >/dev/null 2>&1 || no "release $tag does not exist"
 prev=$(mktemp -d)
 gh release download "$tag" -p inputs.sha256 -D "$prev" >/dev/null 2>&1 || no "release $tag has no inputs.sha256"
