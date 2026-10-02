@@ -226,3 +226,48 @@ classifies the catalogue's manifests and then the installed ones from
 Taking the port's auth from the installed manifest, for example by having the
 backend report it alongside the runtime URL, would give sideloaded and
 not-yet-catalogued apps the same https frame as catalogued ones.
+
+## A round-trip test that fails about 2 runs in 256 (archy `6d5f3ff`)
+
+`seal_open_round_trips` (`core/archipelago/src/storage_crypto.rs`, lines
+91-98) asserts `!is_plaintext_json(&sealed)` (line 95). `is_plaintext_json`
+(line 81) is true when the first byte is `{` or `[`, and the first bytes of
+`seal`'s output are a random nonce (the test itself slices at `sealed[12..]`).
+Two of the 256 possible first bytes qualify, so about 1 run in 128 fails
+whatever the code does. We saw it once in our CI, and it passed on re-run.
+Checking the ciphertext after the nonce (`&sealed[12..]`), or asserting that
+`sealed` differs from the plaintext, would remove the dependence on the random
+byte. The negated assertion at line 113 has the same shape.
+
+## The app NIP-07 provider requests a NIP-98 login in every app (archy `6d5f3ff`)
+
+When the user picks an identity, the dashboard posts an `archipelago:identity`
+message to the app frame (`neode-ui/src/views/appSession/useAppIdentity.ts`,
+`sendIdentity`, line 43). The provider's listener for it
+(`neode-ui/public/nostr-provider.js`, lines 372-382) calls `doNip98Auth`
+(line 315) 1.5 seconds later unless a session token is already stored. That
+function probes `/api/nostr-auth/health` on the app's origin, accepts any
+`response.ok` (lines 318-320), and then asks the signer for a kind 27235 event
+(line 327). The user therefore sees a second consent prompt for a login that
+only apps with that endpoint can use.
+
+The opt-out exists: a `data-no-nip98` attribute on the provider's script tag
+(line 15). It has to be set by whoever injects the script, and apps that merely
+copy the provider do not know to. The health probe can also pass for an app
+that answers unknown paths with a catch-all page (we have not checked which
+way it passed for ours). Making the login opt-in, so that an
+app declares support (for example through a manifest field or the attribute's
+opposite), would stop apps without the endpoint showing the extra prompt.
+Checking that the health response is the expected JSON would be a smaller
+step.
+
+## Identity picker hint names the wrong place (archy `6d5f3ff`)
+
+The empty state in `neode-ui/src/components/NostrIdentityPicker.vue` (line 50)
+says "Create one in Settings → Credentials". Identities are created from the
+Web5 page: `Web5.vue` (line 66) mounts `Web5Identities`, whose "Create
+Identity" dialog is at `neode-ui/src/views/web5/Web5Identities.vue` (line
+228). `Settings.vue` has no credentials entry, and the `credentials` route
+(`neode-ui/src/router/index.ts`, line 221) is the verifiable-credentials page
+under `web5/`. Pointing the hint at Web5 → Identities would send a first-time
+user to the right page.
