@@ -3,6 +3,6 @@ ARCHY_REPO=https://source.archipelago-foundation.org/lfg2025/archy.git
 ARCHY_RELEASE=v1.8.22-alpha
 ARCHY_REF=6d5f3ffb850bfd3dcd396bac986ba770935d1daa
 WILDBLOOM_REF=29d382e2d2ba775ed77c7efa8d534b49d22d8dfd
-WILDBLOOM_NODE_REF=PENDING
+WILDBLOOM_NODE_REF=b3b254b10c42e94135f735abebfcbcc9262fef4d
 # Bumped whenever upstream/patches changes; names the backend release asset.
 BACKEND_PATCH_LEVEL=1
