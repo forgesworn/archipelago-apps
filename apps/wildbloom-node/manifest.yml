@@ -25,6 +25,7 @@ app:
 
   resources:
     memory_limit: 256Mi
+    cpu_limit: 1
 
   security:
     capabilities: []

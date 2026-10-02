@@ -3,7 +3,7 @@
 set -euo pipefail
 image=${1:?image}
 here=$(cd "$(dirname "$0")" && pwd)
-(cd "$here" && npm install --silent)
+(cd "$here" && npm ci --silent)
 secret=$(openssl rand -hex 32)
 pubkey=$(cd "$here" && node --input-type=module -e 'import { getPublicKey } from "nostr-tools/pure"; import { hexToBytes } from "nostr-tools/utils"; process.stdout.write(getPublicKey(hexToBytes(process.argv[1])));' "$secret")
 data=$(mktemp -d)
@@ -17,13 +17,17 @@ curl -fsS http://127.0.0.1:3742/healthz
 payload=$(mktemp); head -c 4096 /dev/urandom > "$payload"
 sha=$(sha256sum "$payload" | awk '{print $1}')
 auth=$(cd "$here" && node sign-auth.mjs "$secret" upload "$sha" localhost)
+# The server reads X-SHA-256 (and Content-Length, which curl sets) before it checks authorisation.
 curl -fsS -X PUT --data-binary @"$payload" -H "Authorization: Nostr $auth" \
-  -H "Content-Type: application/octet-stream" http://127.0.0.1:3742/upload
+  -H "X-SHA-256: $sha" -H "Content-Type: application/octet-stream" http://127.0.0.1:3742/upload
 curl -fsS "http://127.0.0.1:3742/$sha" -o "$payload.back"
 cmp "$payload" "$payload.back"
-# A stranger's key must be refused.
+# A stranger's key must be refused. Fresh payload, so the refusal is about auth, not a stored blob.
 stranger=$(openssl rand -hex 32)
-bad=$(cd "$here" && node sign-auth.mjs "$stranger" upload "$sha" localhost)
-code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT --data-binary @"$payload" -H "Authorization: Nostr $bad" http://127.0.0.1:3742/upload)
-[ "$code" -ge 400 ] || { echo "stranger upload was accepted ($code)"; exit 1; }
-echo "smoke OK: $sha"
+payload2=$(mktemp); head -c 4096 /dev/urandom > "$payload2"
+sha2=$(sha256sum "$payload2" | awk '{print $1}')
+bad=$(cd "$here" && node sign-auth.mjs "$stranger" upload "$sha2" localhost)
+code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT --data-binary @"$payload2" -H "Authorization: Nostr $bad" \
+  -H "X-SHA-256: $sha2" -H "Content-Type: application/octet-stream" http://127.0.0.1:3742/upload)
+{ [ "$code" = 401 ] || [ "$code" = 403 ]; } || { echo "stranger upload expected 401 or 403, got $code"; exit 1; }
+echo "smoke OK: $sha (stranger refused with $code)"
