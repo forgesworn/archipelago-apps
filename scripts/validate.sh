@@ -20,6 +20,16 @@ if [ -d "$archy" ]; then
   echo "vendored nostr-provider.js matches the pinned Archipelago copy"
 fi
 [ ${#manifests[@]} -gt 0 ] || { echo "no manifests"; exit 0; }
+# Each manifest names the image tag CI builds from PINS (scripts/lib/app-image.bash).
+. "$root/PINS"
+. "$root/scripts/lib/app-image.bash"
+for m in "${manifests[@]}"; do
+  id=$(basename "$(dirname "$m")")
+  app_image "$id"
+  manifest_tag=$(grep -m1 -oE "ghcr\.io/forgesworn/$id:[^[:space:]\"']+" "$m" || true)
+  [ "$manifest_tag" = "$APP_TAG" ] || { echo "$m names image ${manifest_tag:-<none>}, but PINS gives $APP_TAG"; exit 1; }
+  echo "$id: manifest image tag matches PINS ($APP_TAG)"
+done
 for m in "${manifests[@]}"; do
   out=$("$archy/scripts/validate-app-manifest.sh" "$m" 2>&1) || true
   tail -n 5 <<<"$out"

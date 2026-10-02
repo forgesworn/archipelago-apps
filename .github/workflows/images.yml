@@ -1,8 +1,12 @@
 name: images
 on:
   push:
-    paths: [apps/**, tests/smoke/**, PINS, .github/workflows/images.yml]
+    paths: [apps/**, tests/smoke/**, PINS, scripts/image-plan.sh, scripts/lib/app-image.bash, .github/workflows/images.yml]
   workflow_dispatch:
+# Two runs must not both see a tag as unpublished and push it.
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
 permissions:
   contents: read
   packages: write
@@ -12,81 +16,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      # Build and push only when this app's own inputs changed (see the script).
-      # A manual run, a first push or an unknown "before" sha counts as changed.
-      - id: changed
-        run: scripts/app-inputs-changed.sh wildbloom-node "${{ github.event.before }}" "${{ github.event_name }}" >> "$GITHUB_OUTPUT"
+      # Ask the registry first, then the diff (see the script): an unpublished
+      # tag is built and pushed; a published one is never replaced.
+      - id: plan
+        run: scripts/image-plan.sh wildbloom-node "${{ github.event.before }}" "${{ github.event_name }}"
       - uses: actions/setup-node@v4
-        if: steps.changed.outputs.changed == 'true'
+        if: steps.plan.outputs.build == 'true'
         with: { node-version: "24" }
-      - id: pin
-        if: steps.changed.outputs.changed == 'true'
-        run: |
-          . ./PINS
-          echo "ref=$WILDBLOOM_NODE_REF" >> "$GITHUB_OUTPUT"
-          tag="ghcr.io/forgesworn/wildbloom-node:0.2.2-${WILDBLOOM_NODE_REF:0:7}-${WILDBLOOM_NODE_PKG_REV:?}"
-          manifest_tag=$(grep -m1 -oE 'ghcr.io/forgesworn/wildbloom-node:[^[:space:]]+' apps/wildbloom-node/manifest.yml)
-          [ "$tag" = "$manifest_tag" ] || { echo "manifest tag $manifest_tag does not match PINS $tag"; exit 1; }
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
-        if: steps.changed.outputs.changed == 'true'
+        if: steps.plan.outputs.build == 'true'
       - uses: docker/build-push-action@v6
-        if: steps.changed.outputs.changed == 'true'
+        if: steps.plan.outputs.build == 'true'
         with:
           context: apps/wildbloom-node
-          build-args: WILDBLOOM_NODE_REF=${{ steps.pin.outputs.ref }}
+          build-args: WILDBLOOM_NODE_REF=${{ steps.plan.outputs.ref }}
           load: true
-          tags: ${{ steps.pin.outputs.tag }}
-      - if: steps.changed.outputs.changed == 'true'
-        run: tests/smoke/wildbloom-node.sh "${{ steps.pin.outputs.tag }}"
-      - if: steps.changed.outputs.changed == 'true' && github.ref == 'refs/heads/main'
+          tags: ${{ steps.plan.outputs.tag }}
+      - if: steps.plan.outputs.build == 'true'
+        run: tests/smoke/wildbloom-node.sh "${{ steps.plan.outputs.tag }}"
+      - if: steps.plan.outputs.push == 'true' && github.ref == 'refs/heads/main'
         run: |
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          tag="${{ steps.pin.outputs.tag }}"
-          # Never replace a published tag: the node will not re-pull it. Bump the PKG_REV in PINS.
-          if out=$(docker manifest inspect "$tag" 2>&1); then
-            echo "$tag already exists; bump the packaging revision in PINS"; exit 1
-          fi
-          grep -qiE 'no such manifest|manifest unknown|name unknown|not found' <<<"$out" \
-            || { echo "cannot tell whether $tag exists: $out"; exit 1; }
-          docker push "$tag"
+          docker push "${{ steps.plan.outputs.tag }}"
   wildbloom:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      # Build and push only when this app's own inputs changed (see the script).
-      # A manual run, a first push or an unknown "before" sha counts as changed.
-      - id: changed
-        run: scripts/app-inputs-changed.sh wildbloom "${{ github.event.before }}" "${{ github.event_name }}" >> "$GITHUB_OUTPUT"
-      - id: pin
-        if: steps.changed.outputs.changed == 'true'
-        run: |
-          . ./PINS
-          tag="ghcr.io/forgesworn/wildbloom:0.0.1-${WILDBLOOM_REF:0:7}-${WILDBLOOM_PKG_REV:?}"
-          manifest_tag=$(grep -m1 -oE 'ghcr.io/forgesworn/wildbloom:[^[:space:]]+' apps/wildbloom/manifest.yml)
-          [ "$tag" = "$manifest_tag" ] || { echo "manifest tag $manifest_tag does not match PINS $tag"; exit 1; }
-          echo "ref=$WILDBLOOM_REF" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      # Ask the registry first, then the diff (see the script): an unpublished
+      # tag is built and pushed; a published one is never replaced.
+      - id: plan
+        run: scripts/image-plan.sh wildbloom "${{ github.event.before }}" "${{ github.event_name }}"
       - uses: docker/setup-buildx-action@v3
-        if: steps.changed.outputs.changed == 'true'
+        if: steps.plan.outputs.build == 'true'
       - uses: docker/build-push-action@v6
-        if: steps.changed.outputs.changed == 'true'
+        if: steps.plan.outputs.build == 'true'
         with:
           context: apps/wildbloom
-          build-args: WILDBLOOM_REF=${{ steps.pin.outputs.ref }}
+          build-args: WILDBLOOM_REF=${{ steps.plan.outputs.ref }}
           load: true
-          tags: ${{ steps.pin.outputs.tag }}
-      - if: steps.changed.outputs.changed == 'true'
-        run: tests/smoke/wildbloom.sh "${{ steps.pin.outputs.tag }}"
-      - if: steps.changed.outputs.changed == 'true' && github.ref == 'refs/heads/main'
+          tags: ${{ steps.plan.outputs.tag }}
+      - if: steps.plan.outputs.build == 'true'
+        run: tests/smoke/wildbloom.sh "${{ steps.plan.outputs.tag }}"
+      - if: steps.plan.outputs.push == 'true' && github.ref == 'refs/heads/main'
         run: |
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          tag="${{ steps.pin.outputs.tag }}"
-          # Never replace a published tag: the node will not re-pull it. Bump the PKG_REV in PINS.
-          if out=$(docker manifest inspect "$tag" 2>&1); then
-            echo "$tag already exists; bump the packaging revision in PINS"; exit 1
-          fi
-          grep -qiE 'no such manifest|manifest unknown|name unknown|not found' <<<"$out" \
-            || { echo "cannot tell whether $tag exists: $out"; exit 1; }
-          docker push "$tag"
+          docker push "${{ steps.plan.outputs.tag }}"
