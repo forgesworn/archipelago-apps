@@ -15,11 +15,13 @@ jobs:
         with: { toolchain: stable, rustflags: "" }
       - run: ARCHY_FULL=1 scripts/fetch-archy.sh
       - run: scripts/apply-patches.sh
+      # Plain cargo test: this crate's lan_address tests find apps/ through
+      # CARGO_MANIFEST_DIR, which the harness does not set, and it has no host-operation tests.
+      - name: Container tests
+        working-directory: .cache/archy
+        run: cargo test --manifest-path core/Cargo.toml -p archipelago-container --locked
       # Upstream's own harness: unit tests run under systemd-run with a private
       # /var/lib/archipelago, as host-operation tests require.
-      - name: Container tests (isolated)
-        working-directory: .cache/archy
-        run: ARCHY_TEST_PACKAGE=archipelago-container scripts/test-backend-isolated.sh
       # Skipped, both unrelated to the patch (see docs/upstream-notes.md):
       # - the runner's Podman 4.9 quadlet generator predates StopTimeout;
       #   Archipelago targets Debian 13's Podman 5.
@@ -34,7 +36,7 @@ jobs:
       - name: Patch tests (NODE_NOSTR_PUBKEY)
         working-directory: .cache/archy
         run: |
-          ARCHY_TEST_PACKAGE=archipelago-container scripts/test-backend-isolated.sh node_nostr_pubkey | tee "$RUNNER_TEMP/container.log"
+          cargo test --manifest-path core/Cargo.toml -p archipelago-container --locked --lib node_nostr_pubkey | tee "$RUNNER_TEMP/container.log"
           grep -q 'test result: ok. 2 passed' "$RUNNER_TEMP/container.log"
           scripts/test-backend-isolated.sh node_nostr_pubkey | tee "$RUNNER_TEMP/archipelago.log"
           grep -q 'test result: ok. 1 passed' "$RUNNER_TEMP/archipelago.log"

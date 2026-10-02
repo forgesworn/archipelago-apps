@@ -25,9 +25,12 @@ which derives the public key from `nostr_secret`, in the same way as the
 
 ## Running the backend tests in CI (archy `6d5f3ff`)
 
-Our backend workflow runs the archy unit tests through archy's own harness,
-`scripts/test-backend-isolated.sh`, which gives each run a private
-`/var/lib/archipelago`. A plain `cargo test` on a hosted Ubuntu runner, which is
+Our backend workflow runs the `archipelago` crate's unit tests through archy's
+own harness, `scripts/test-backend-isolated.sh`, which gives each run a private
+`/var/lib/archipelago`. The `archipelago-container` crate runs under plain
+`cargo test`: it has no host-operation tests, and two of its `lan_address`
+tests find `apps/` through `CARGO_MANIFEST_DIR`, which only `cargo test` sets.
+Run from the harness's `core` working directory, they find no manifests. A plain `cargo test` on a hosted Ubuntu runner, which is
 what archy's `.github/workflows/ci.yml` runs (`cargo test --all-features`), fails
 five install and manifest-file tests in `container::prod_orchestrator`. Those tests
 create paths under `/var/lib/archipelago` and report that host-operation tests
