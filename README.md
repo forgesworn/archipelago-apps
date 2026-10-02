@@ -1,0 +1,17 @@
+# archipelago-apps
+
+ForgeSworn apps packaged for [Archipelago](https://source.archipelago-foundation.org/lfg2025/archy) nodes.
+
+Each `apps/<id>/` holds an Archipelago `manifest.yml` and the Dockerfile that
+builds a pinned release of the app. Images are published to
+`ghcr.io/forgesworn/<id>`. `upstream/patches/` holds changes we propose to
+Archipelago itself.
+
+| App | What it is |
+|---|---|
+| `wildbloom-node` | Blossom storage owned by your node's Nostr identity |
+| `wildbloom` | Publish files over Nostr, Blossom and BitTorrent, signed by your node |
+
+Validate locally: `scripts/fetch-archy.sh && scripts/apply-patches.sh && scripts/validate.sh`.
+
+MIT licence.

@@ -1,0 +1,9 @@
+app:
+  id: bad-placeholder
+  name: Bad Placeholder
+  version: 0.0.1
+  container:
+    image: ghcr.io/forgesworn/none:0.0.1
+    derived_env:
+      - key: X
+        template: "{{NOT_A_PLACEHOLDER}}"
