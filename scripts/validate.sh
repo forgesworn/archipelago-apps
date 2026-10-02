@@ -13,6 +13,12 @@ if selftest=$(cargo run -q --manifest-path "$root/tools/manifest-check/Cargo.tom
 fi
 grep -q 'unknown placeholder' <<<"$selftest" || { echo "manifest-check self-test failed for the wrong reason:"; echo "$selftest"; exit 1; }
 echo "manifest-check self-test passed"
+# Wildbloom bakes Archipelago's NIP-07 provider; keep it identical to the pinned copy.
+if [ -d "$archy" ]; then
+  cmp -s "$root/apps/wildbloom/nostr-provider.js" "$archy/neode-ui/public/nostr-provider.js" \
+    || { echo "vendored nostr-provider.js differs from the pinned Archipelago copy; re-vendor it"; exit 1; }
+  echo "vendored nostr-provider.js matches the pinned Archipelago copy"
+fi
 [ ${#manifests[@]} -gt 0 ] || { echo "no manifests"; exit 0; }
 for m in "${manifests[@]}"; do
   out=$("$archy/scripts/validate-app-manifest.sh" "$m" 2>&1) || true

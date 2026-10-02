@@ -160,3 +160,56 @@ printf '%s' "$ARCHY_PASSWORD" \
 into jq's argument list instead.) Our scripts use this form in
 `scripts/lib/archy-login.bash` and keep the helper's session-file format, so
 `rpc_call` works unchanged afterwards.
+
+## `post_install` hooks are not re-applied when a container is recreated (archy `6d5f3ff`)
+
+`hooks::run_post_install` (`core/archipelago/src/container/hooks.rs`, ~line
+62) has one caller, `install_fresh`
+(`core/archipelago/src/container/prod_orchestrator.rs`, ~line 2908), and its
+doc comment says as much: the hooks run only when the install path creates a
+fresh container. The other ways a container comes back do not call it:
+
+- The health monitor's `restart_container`
+  (`core/archipelago/src/health_monitor.rs`, ~line 731, called at ~line 1130)
+  runs `podman restart` (or `start`) on the container directly.
+- The orchestrator's `restart` (`prod_orchestrator.rs`, ~line 4804) calls
+  `quadlet::restart_service` (`core/archipelago/src/container/quadlet.rs`,
+  ~line 784) and then `run_post_start_hooks` (~line 2951), which handles a few
+  built-in apps by id.
+
+Quadlet renders `podman run … --rm` under `Restart=always` (`quadlet.rs`,
+~lines 76–100 and 542), and the unit on our node also ran with `--replace`, so
+a stopped container is deleted and
+systemd starts a new one from the image. Anything a `post_install` step wrote
+into the container is gone after that. We saw this on a node: the health
+monitor logged `Auto-restarting unhealthy container: wildbloom … attempt
+3/10`, and afterwards the `/nostr-provider.js` placed by `copy_from_host` was
+missing, so the app had no `window.nostr`.
+
+IndeeHub avoids the problem by baking the provider into its image and keeping
+the hooks as an idempotent refresh (`apps/indeedhub/manifest.yml`, ~lines
+60–75). We now do the same for Wildbloom. Running `run_post_install` (or a
+subset of idempotent steps such as `copy_from_host`) after a quadlet restart or
+recreation would make the hooks dependable for apps that do not bake.
+
+## Gated sideloaded apps get an `http://` frame on an HTTPS dashboard (archy `6d5f3ff`)
+
+The dashboard decides whether an app frame uses https or http from the signed
+catalogue only. `portAuth` (`neode-ui/src/views/discover/curatedApps.ts`, ~line
+143) reads the port's `auth` from the catalogue's embedded manifests and
+returns `null` for an app the catalogue does not list.
+`appPortIsGateFronted` (`neode-ui/src/views/appSession/appSessionConfig.ts`,
+~line 86) is therefore false for such an app (apart from the
+`PRE_CATALOG_GATED_PORTS` entry for `archipelago-source`), and `resolveAppUrl`
+(~line 170) leaves the backend's `http://` runtime URL as it is.
+
+A sideloaded app whose manifest declares `auth: gated` is still fronted by the
+app gate, which serves TLS on that port. The backend knows this:
+`build_port_map` (`core/archipelago/src/appgate/identity.rs`, ~line 157)
+classifies the catalogue's manifests and then the installed ones from
+`/opt/archipelago/apps`. On a dashboard served over HTTPS the browser blocks the
+`http://` frame as mixed content, and the app session stays on "is starting…".
+
+Taking the port's auth from the installed manifest, for example by having the
+backend report it alongside the runtime URL, would give sideloaded and
+not-yet-catalogued apps the same https frame as catalogued ones.

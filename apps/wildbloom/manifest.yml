@@ -9,7 +9,7 @@ app:
   category: nostr
 
   container:
-    image: ghcr.io/forgesworn/wildbloom:0.0.1-29d382e-3
+    image: ghcr.io/forgesworn/wildbloom:0.0.1-29d382e-4
     pull_policy: if-not-present
     network: archy-net
 
@@ -22,8 +22,8 @@ app:
 
   security:
     capabilities: [CHOWN, SETGID, SETUID]
-    # nginx writes its pid and cache under /var, and post_install copies the
-    # node's provider into the web root, so the root filesystem must be writable.
+    # nginx writes its pid and cache under /var, and post_install refreshes the
+    # node's provider in the web root, so the root filesystem must be writable.
     readonly_root: false
     no_new_privileges: true
     network_policy: isolated
@@ -37,6 +37,10 @@ app:
 
   environment: []
 
+  # The image bakes Archipelago's provider at the pinned version; that copy is
+  # the baseline and survives the health monitor recreating the container,
+  # which does not re-run post_install. This hook refreshes it to the node's
+  # current copy (kept up to date by frontend OTA) after install, as IndeeHub does.
   hooks:
     post_install:
       - copy_from_host:

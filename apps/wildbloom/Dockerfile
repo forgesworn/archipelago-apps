@@ -16,4 +16,11 @@ RUN rm /etc/nginx/conf.d/default.conf
 COPY nginx.conf /etc/nginx/conf.d/wildbloom.conf
 COPY --chmod=755 15-wildbloom-ipv6.sh /docker-entrypoint.d/15-wildbloom-ipv6.sh
 COPY --from=build /src/dist /usr/share/nginx/html
+# Archipelago's NIP-07 provider, vendored byte-identical from archy at ARCHY_REF
+# (neode-ui/public/nostr-provider.js, MIT, (c) Dorian and the Archipelago Project
+# contributors). Baked in, as IndeeHub does, so it survives the node recreating
+# the container; the manifest's copy_from_host hook refreshes it at install.
+# scripts/validate.sh fails if it drifts from the pinned copy. Copied after dist
+# so nothing overwrites it.
+COPY nostr-provider.js /usr/share/nginx/html/nostr-provider.js
 EXPOSE 3743
