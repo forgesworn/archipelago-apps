@@ -1,0 +1,64 @@
+app:
+  id: wildbloom-node
+  name: Wildbloom Node
+  version: 0.2.2
+  upstream:
+    kind: github
+    repo: forgesworn/wildbloom-node
+  description: Blossom storage on your node, owned by your node's Nostr identity. Only your node can upload; anyone who can reach the node and knows a file's hash can read it, as with any Blossom server, so encrypt private files before upload.
+  category: nostr
+
+  container:
+    image: ghcr.io/forgesworn/wildbloom-node:0.2.2-b3b254b
+    pull_policy: if-not-present
+    network: archy-net
+    derived_env:
+      - key: WILDBLOOM_ALLOW_PUBKEYS
+        template: "{{NODE_NOSTR_PUBKEY}}"
+      - key: WILDBLOOM_PUBLIC_URL
+        template: "https://{{HOST_IP}}:3742"
+      - key: WILDBLOOM_SERVER_NAME
+        template: "{{HOST_IP}},{{HOST_MDNS}}"
+
+  dependencies:
+    - storage: 10Gi
+
+  resources:
+    memory_limit: 256Mi
+
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: isolated
+
+  ports:
+    - host: 3742
+      container: 3742
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: open
+      auth_rationale: Blossom server with its own Nostr authorisation. Uploads, mirrors and deletes need an event signed by the node's own key; listings need the lister's own signature; reads are by SHA-256 as the protocol intends. Blossom clients send no cookies, so a dashboard challenge would refuse every one of them. No node credentials are reachable.
+
+  volumes:
+    - type: bind
+      source: /var/lib/archipelago/wildbloom-node
+      target: /data
+      options: [rw]
+
+  environment: []
+
+  health_check:
+    type: http
+    endpoint: http://localhost:3742
+    path: /healthz
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  metadata:
+    author: ForgeSworn
+    website: https://github.com/forgesworn/wildbloom-node
+    repo: https://github.com/forgesworn/wildbloom-node
+    license: MIT
+    tags: [nostr, blossom, storage]
