@@ -1,0 +1,68 @@
+app:
+  id: wildbloom
+  name: Wildbloom
+  version: 0.0.1
+  upstream:
+    kind: github
+    repo: forgesworn/wildbloom
+  description: Publish files over Nostr, Blossom and BitTorrent, signed by your node's identity.
+  category: nostr
+
+  container:
+    image: ghcr.io/forgesworn/wildbloom:0.0.1-29d382e
+    pull_policy: if-not-present
+    network: archy-net
+
+  dependencies:
+    - app_id: wildbloom-node
+
+  resources:
+    memory_limit: 64Mi
+    cpu_limit: 1
+
+  security:
+    capabilities: [CHOWN, SETGID, SETUID]
+    # nginx writes its pid and cache under /var, and post_install copies the
+    # node's provider into the web root, so the root filesystem must be writable.
+    readonly_root: false
+    no_new_privileges: true
+    network_policy: isolated
+
+  ports:
+    - host: 3743
+      container: 3743
+      protocol: tcp
+      bind: 127.0.0.1
+      auth: gated
+
+  environment: []
+
+  hooks:
+    post_install:
+      - copy_from_host:
+          src: "web-ui/nostr-provider.js"
+          dest: "/usr/share/nginx/html/nostr-provider.js"
+
+  health_check:
+    type: http
+    endpoint: http://localhost:3743
+    path: /
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  interfaces:
+    main:
+      name: Web UI
+      description: Publish and fetch files signed by your node
+      type: ui
+      port: 3743
+      protocol: http
+      path: /
+
+  metadata:
+    author: ForgeSworn
+    website: https://github.com/forgesworn/wildbloom
+    repo: https://github.com/forgesworn/wildbloom
+    license: MIT
+    tags: [nostr, blossom, bittorrent]
