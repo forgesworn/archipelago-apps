@@ -12,10 +12,16 @@ pubkey=$(cd "$here" && node --input-type=module -e 'import { getPublicKey } from
 data=$(mktemp -d)
 sudo chown 0:0 "$data"
 # --read-only matches the manifest's readonly_root: true.
-cid=$(docker run -d --cap-drop=ALL --security-opt no-new-privileges --read-only --tmpfs /tmp -p 127.0.0.1:3742:3742 -v "$data:/data" \
+cid=$(docker run -d --sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv6.conf.lo.disable_ipv6=0 --cap-drop=ALL --security-opt no-new-privileges --read-only --tmpfs /tmp -p 127.0.0.1:3742:3742 -v "$data:/data" \
   -e WILDBLOOM_ALLOW_PUBKEYS="$pubkey" -e WILDBLOOM_PUBLIC_URL=http://localhost:3742 \
   -e WILDBLOOM_SERVER_NAME=localhost,127.0.0.1 "$image")
 trap 'docker logs "$cid" | tail -n 50; docker rm -f "$cid" >/dev/null; sudo rm -rf "$data"' EXIT
+# Match the node (Podman/netavark gives containers ::1 on lo): GitHub's Docker disables IPv6.
+ipv6_check() {
+  docker exec "$cid" sh -c 'test -s /proc/net/if_inet6' \
+    || { echo "FAIL: container has no IPv6 loopback; the sysctl did not take effect, so the localhost probe would not match the node" >&2; exit 1; }
+}
+ipv6_check
 for _ in $(seq 30); do curl -fsS http://127.0.0.1:3742/healthz >/dev/null && break; sleep 1; done
 curl -fsS http://127.0.0.1:3742/healthz
 # Archipelago's generated health check (quadlet.rs:610 at the pinned core) runs this exact chain
