@@ -1,0 +1,33 @@
+name: backend
+on:
+  push:
+    paths: [upstream/patches/**, PINS, .github/workflows/backend.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with: { toolchain: stable }
+      - run: ARCHY_FULL=1 scripts/fetch-archy.sh
+      - run: scripts/apply-patches.sh
+      - name: Archipelago tests (patched)
+        working-directory: .cache/archy/core
+        run: cargo test --all-features -p archipelago-container -p archipelago
+      - name: Build backend
+        working-directory: .cache/archy/core
+        run: cargo build --release -p archipelago
+      - name: Publish release asset
+        if: github.ref == 'refs/heads/main'
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          . ./PINS
+          tag="backend-${ARCHY_RELEASE}-p${BACKEND_PATCH_LEVEL}"
+          bin=.cache/archy/core/target/release/archipelago
+          sha256sum "$bin" | awk '{print $1"  archipelago"}' > archipelago.sha256
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
+            --title "$tag" --notes "Archipelago ${ARCHY_RELEASE} backend with upstream/patches applied (test-node use)."
+          gh release upload "$tag" "$bin" archipelago.sha256 --clobber

@@ -1,0 +1,219 @@
+From 372d665d8200daaf9dfd06b0bb944e99f12c2cb7 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 14:33:26 +0200
+Subject: [PATCH] feat: add NODE_NOSTR_PUBKEY derived-env placeholder
+
+---
+ .../src/container/prod_orchestrator.rs        | 41 +++++++++++++
+ core/container/src/manifest.rs                | 60 ++++++++++++++++++-
+ docs/app-developer-guide.md                   |  2 +-
+ docs/app-manifest-spec.md                     |  2 +-
+ 4 files changed, 101 insertions(+), 4 deletions(-)
+
+diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
+index 6542494..9900bf3 100644
+--- a/core/archipelago/src/container/prod_orchestrator.rs
++++ b/core/archipelago/src/container/prod_orchestrator.rs
+@@ -3529,6 +3529,7 @@ impl ProdContainerOrchestrator {
+                 host_mdns: "test.local".to_string(),
+                 disk_gb: self.test_disk_gb.unwrap_or(1000),
+                 bitcoin_host: "bitcoin-knots".to_string(),
++                node_nostr_pubkey: String::new(),
+             };
+         }
+         #[allow(unreachable_code)]
+@@ -3546,6 +3547,9 @@ impl ProdContainerOrchestrator {
+                 // demand (it costs a podman call) only for manifests that use
+                 // {{BITCOIN_HOST}}, rather than every app on every reconcile.
+                 bitcoin_host: "bitcoin-knots".to_string(),
++                // Likewise filled on demand, only for manifests that use
++                // {{NODE_NOSTR_PUBKEY}}.
++                node_nostr_pubkey: String::new(),
+             }
+         }
+     }
+@@ -3817,6 +3821,19 @@ impl ProdContainerOrchestrator {
+         {
+             facts.bitcoin_host = self.bitcoin_host().await;
+         }
++        // The node's Nostr key is read only for manifests that template it, through
++        // the same helper as the `node.nostr-pubkey` RPC so the value always matches
++        // the key the NIP-07 bridge signs with by default.
++        if manifest
++            .app
++            .container
++            .derived_env
++            .iter()
++            .any(|e| e.template.contains("{{NODE_NOSTR_PUBKEY}}"))
++        {
++            facts.node_nostr_pubkey =
++                crate::nostr_discovery::get_nostr_pubkey(&self.data_dir.join("identity")).await?;
++        }
+         let mut env = manifest.app.environment.clone();
+         env.extend(manifest.app.container.resolve_derived_env(&facts));
+         if matches!(manifest.app.id.as_str(), "bitcoin-core" | "bitcoin-knots") {
+@@ -6126,6 +6143,30 @@ app:
+         }
+     }
+ 
++    #[tokio::test]
++    async fn node_nostr_pubkey_placeholder_renders_the_node_key() {
++        // The rendered value must be the key `node.nostr-pubkey` reports, so an
++        // app granting the node owner rights trusts the key that actually signs.
++        let yaml = "app:\n  id: wildbloom-node\n  name: wildbloom-node\n  version: 1.0.0\n  container:\n    image: x:1\n    derived_env:\n      - key: WILDBLOOM_ALLOW_PUBKEYS\n        template: \"{{NODE_NOSTR_PUBKEY}}\"\n";
++
++        let rt = Arc::new(MockRuntime::default());
++        let orch = orch_with(rt).await;
++
++        let mut manifest = AppManifest::parse(yaml).unwrap();
++        orch.resolve_dynamic_env(&mut manifest).await.unwrap();
++
++        let expected = crate::nostr_discovery::get_nostr_pubkey(&orch.data_dir.join("identity"))
++            .await
++            .unwrap();
++        let env = &manifest.app.environment;
++        assert!(
++            env.iter()
++                .any(|e| e == &format!("WILDBLOOM_ALLOW_PUBKEYS={expected}")),
++            "env was {env:?}"
++        );
++        assert_eq!(expected.len(), 64);
++    }
++
+     /// A fedimint-gateway manifest shaped like the real one: a bcrypt
+     /// generated secret plus a secret_env that reads it, which is what makes
+     /// the credential participate in secret_env_hash.
+diff --git a/core/container/src/manifest.rs b/core/container/src/manifest.rs
+index f9ffe10..344d894 100644
+--- a/core/container/src/manifest.rs
++++ b/core/container/src/manifest.rs
+@@ -1428,6 +1428,12 @@ pub struct HostFacts {
+     /// right host. Both are reachable on archy-net by their container name;
+     /// only the name differs. Falls back to `bitcoin-knots` when undetected.
+     pub bitcoin_host: String,
++    /// The node's Nostr public key, 64-char lowercase hex — the key behind
++    /// the `node.nostr-pubkey` RPC and the NIP-07 bridge's default signer.
++    /// Lets an app grant the node owner rights (e.g. a Blossom server's
++    /// allowed uploader). Empty unless a manifest templates it; the
++    /// orchestrator resolves it on demand.
++    pub node_nostr_pubkey: String,
+ }
+ 
+ impl HostFacts {
+@@ -1439,13 +1445,21 @@ impl HostFacts {
+             host_mdns: "test-node.local".to_string(),
+             disk_gb: 2000,
+             bitcoin_host: "bitcoin-knots".to_string(),
++            node_nostr_pubkey: "7e7e9c42a91bfef19fa929e5fda1b72e0ebc1a4c1141673e2794234d86addf4e"
++                .to_string(),
+         }
+     }
+ }
+ 
+ /// Supported placeholder names in `DerivedEnv::template`. Keep in sync
+ /// with `HostFacts`. Centralized so validation and rendering agree.
+-const DERIVED_PLACEHOLDERS: &[&str] = &["HOST_IP", "HOST_MDNS", "DISK_GB", "BITCOIN_HOST"];
++const DERIVED_PLACEHOLDERS: &[&str] = &[
++    "HOST_IP",
++    "HOST_MDNS",
++    "DISK_GB",
++    "BITCOIN_HOST",
++    "NODE_NOSTR_PUBKEY",
++];
+ 
+ fn validate_derived_template(key: &str, template: &str) -> Result<(), ManifestError> {
+     // Walk `{{NAME}}` occurrences and ensure each NAME is recognized.
+@@ -1529,7 +1543,8 @@ impl ContainerConfig {
+                     .replace("{{HOST_IP}}", &facts.host_ip)
+                     .replace("{{HOST_MDNS}}", &facts.host_mdns)
+                     .replace("{{DISK_GB}}", &facts.disk_gb.to_string())
+-                    .replace("{{BITCOIN_HOST}}", &facts.bitcoin_host);
++                    .replace("{{BITCOIN_HOST}}", &facts.bitcoin_host)
++                    .replace("{{NODE_NOSTR_PUBKEY}}", &facts.node_nostr_pubkey);
+                 format!("{}={}", e.key, value)
+             })
+             .collect()
+@@ -2396,6 +2411,46 @@ app:
+         );
+     }
+ 
++    #[test]
++    fn node_nostr_pubkey_placeholder_is_accepted() {
++        let yaml = r#"
++app:
++  id: wildbloom-node
++  name: Wildbloom Node
++  version: 0.2.2
++  container:
++    image: ghcr.io/forgesworn/wildbloom-node:0.2.2
++    derived_env:
++      - key: WILDBLOOM_ALLOW_PUBKEYS
++        template: "{{NODE_NOSTR_PUBKEY}}"
++"#;
++        AppManifest::parse(yaml).expect("NODE_NOSTR_PUBKEY is a supported placeholder");
++    }
++
++    #[test]
++    fn resolve_derived_env_renders_node_nostr_pubkey() {
++        let yaml = r#"
++app:
++  id: wildbloom-node
++  name: Wildbloom Node
++  version: 0.2.2
++  container:
++    image: ghcr.io/forgesworn/wildbloom-node:0.2.2
++    derived_env:
++      - key: WILDBLOOM_ALLOW_PUBKEYS
++        template: "{{NODE_NOSTR_PUBKEY}}"
++"#;
++        let manifest = AppManifest::parse(yaml).unwrap();
++        let facts = HostFacts::sample();
++        assert_eq!(
++            manifest.app.container.resolve_derived_env(&facts),
++            vec![format!(
++                "WILDBLOOM_ALLOW_PUBKEYS={}",
++                facts.node_nostr_pubkey
++            )]
++        );
++    }
++
+     #[test]
+     fn path_traversal_secret_file_is_rejected() {
+         let yaml = r#"
+@@ -2451,6 +2506,7 @@ app:
+             host_mdns: "test-node.local".to_string(),
+             disk_gb: 2000,
+             bitcoin_host: "bitcoin-core".to_string(),
++            node_nostr_pubkey: String::new(),
+         };
+ 
+         let out = c.resolve_derived_env(&facts);
+diff --git a/docs/app-developer-guide.md b/docs/app-developer-guide.md
+index b364e50..44e33f6 100644
+--- a/docs/app-developer-guide.md
++++ b/docs/app-developer-guide.md
+@@ -108,7 +108,7 @@ app:
+ | `app.container.pull_policy` | Pull behavior, usually `if-not-present` |
+ | `app.container.network` | Podman network setting such as `archy-net` or `pasta`; dangerous namespace-sharing modes are rejected |
+ | `app.container.entrypoint` / `custom_args` | Entrypoint and command override |
+-| `app.container.derived_env` | Environment values rendered from host facts. The complete placeholder set is `{{HOST_IP}}`, `{{HOST_MDNS}}`, `{{DISK_GB}}`, `{{BITCOIN_HOST}}`; an unknown name or an unbalanced `{{` is a parse error, so typos fail loudly |
++| `app.container.derived_env` | Environment values rendered from host facts. The complete placeholder set is `{{HOST_IP}}`, `{{HOST_MDNS}}`, `{{DISK_GB}}`, `{{BITCOIN_HOST}}`, `{{NODE_NOSTR_PUBKEY}}`; an unknown name or an unbalanced `{{` is a parse error, so typos fail loudly. `{{NODE_NOSTR_PUBKEY}}` is the node's Nostr public key (64-char hex), as returned by `node.nostr-pubkey` — the key the NIP-07 bridge signs with when no identity is selected |
+ | `app.container.secret_env` | Environment values read from `/var/lib/archipelago/secrets/<secret_file>`, injected as podman secrets (never visible in `podman inspect` or unit files) |
+ | `app.container.generated_secrets` | Secrets the orchestrator creates on first use (`hex16`/`hex32`/`base64`/`bcrypt`) — self-healing, 0600, no host provisioning |
+ | `app.container.generated_certs` | Self-signed TLS certs materialised before create; CN/SANs rendered from host facts |
+diff --git a/docs/app-manifest-spec.md b/docs/app-manifest-spec.md
+index 68ce533..22c06b2 100644
+--- a/docs/app-manifest-spec.md
++++ b/docs/app-manifest-spec.md
+@@ -93,7 +93,7 @@ Exactly **one** of `image` or `build` must be present (image XOR build).
+ | `network_aliases` | list of string | Extra DNS names on `network` (podman `--network-alias`) — lets stack members answer to short baked-in hostnames (`api`, `minio`, `relay`). |
+ | `entrypoint` | list of string | Entrypoint override. |
+ | `custom_args` | list of string | Extra positional args appended after the image. |
+-| `derived_env` | list | `- { key, template }` — template rendered against host facts at apply time. The allow-list is exactly `{{HOST_IP}}`, `{{HOST_MDNS}}`, `{{DISK_GB}}`, `{{BITCOIN_HOST}}` (`DERIVED_PLACEHOLDERS`); an unknown name or unbalanced `{{` fails validation. `{{BITCOIN_HOST}}` resolves to whichever Bitcoin app is running (`bitcoin-knots` or `bitcoin-core`, defaulting to knots). Never hard-code host specifics. |
++| `derived_env` | list | `- { key, template }` — template rendered against host facts at apply time. The allow-list is exactly `{{HOST_IP}}`, `{{HOST_MDNS}}`, `{{DISK_GB}}`, `{{BITCOIN_HOST}}`, `{{NODE_NOSTR_PUBKEY}}` (`DERIVED_PLACEHOLDERS`); an unknown name or unbalanced `{{` fails validation. `{{BITCOIN_HOST}}` resolves to whichever Bitcoin app is running (`bitcoin-knots` or `bitcoin-core`, defaulting to knots). `{{NODE_NOSTR_PUBKEY}}` resolves to the node's Nostr public key (64-char hex), as returned by `node.nostr-pubkey` — the key the NIP-07 bridge signs with when no identity is selected. Never hard-code host specifics. |
+ | `secret_env` | list | `- { key, secret_file }` — value read from `/var/lib/archipelago/secrets/<secret_file>` and injected as a **podman secret**, so it never appears in `podman inspect` or unit files. `secret_file` must be a bare filename (no `/`, no `..`). |
+ | `generated_secrets` | list | `- { name, kind }` — orchestrator materialises the secret on first use (0600, rootless service user, idempotent + self-healing). `kind ∈ hex16 | hex32 | base64 | bcrypt` (bcrypt writes `<name>` = hash and `<name>.pw` = plaintext). |
+ | `generated_certs` | list | `- { crt, key, common_name?, sans? }` — self-signed TLS materialised before create; CN/SANs rendered against host facts. |
+-- 
+2.53.0
+
