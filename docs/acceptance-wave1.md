@@ -78,15 +78,54 @@ What this shows:
 
 ### Browser half
 
-Browser run: pending.
+Run on 2 October 2026, after the fixes listed under Findings, against:
+
+- Lite Archipelago `v1.8.22-alpha` on Debian 13, backend release
+  `backend-v1.8.22-alpha-p3` (our `NODE_IDENTITY_PUBKEYS` patch).
+- `ghcr.io/forgesworn/wildbloom-node:0.2.2-b3b254b-2` and
+  `ghcr.io/forgesworn/wildbloom:0.0.1-29d382e-4`.
+- The injected `WILDBLOOM_ALLOW_PUBKEYS` equalled the node's single signable
+  identity, "Personal" (`<identity npub>`).
+
+The browser was Chromium, reaching the node through an SSH SOCKS tunnel.
+
+1. Wildbloom loaded inside the dashboard's app session iframe.
+2. "Connect NIP-07 signer" opened Archipelago's identity picker. It offered
+   only the user identity; the node identity is hidden, as the patch assumes.
+3. The provider also requested a NIP-98 login (kind 27235) into the app on its
+   own. It was denied. Wildbloom does not use it.
+4. Uploading a small plaintext file raised Archipelago's consent prompt:
+   "Upload blob `<sha>` to `<node address>`", kind 24242, identity Personal.
+   After approval `PUT /upload` returned 201, and `GET /<sha>` returned
+   identical bytes.
+
+Two workarounds were needed only because of the upstream issue described in
+`docs/upstream-notes.md` under
+[Gated sideloaded apps get an `http://` frame on an HTTPS dashboard](upstream-notes.md#gated-sideloaded-apps-get-an-http-frame-on-an-https-dashboard-archy-6d5f3ff):
+
+- The dashboard was opened over plain HTTP, so the app frame was not blocked
+  as mixed content.
+- Chromium was started with `--unsafely-treat-insecure-origin-as-secure` for
+  the dashboard and app origins, because WebCrypto needs a secure context.
+
+Earlier in the same run, three faults were found and fixed (see Findings):
+
+- Wildbloom's nginx listened on IPv4 only, while the health check goes to
+  `localhost`, which resolves to `::1`. Fixed in the image.
+- The `copy_from_host` provider was lost when the health monitor recreated the
+  container. Fixed by baking the provider into the image.
+- The owner was originally the node discovery key, which apps cannot sign with.
+  Fixed by the `NODE_IDENTITY_PUBKEYS` patch.
 
 ### Reboot
 
-Reboot test: pending.
+After a full node reboot, both apps came back healthy.
 
 ### Browser half after reboot
 
-Browser run after reboot: pending.
+- Blobs uploaded before the reboot returned identical bytes.
+- The provider was served.
+- `scripts/acceptance.sh` passed again.
 
 ### Findings
 
