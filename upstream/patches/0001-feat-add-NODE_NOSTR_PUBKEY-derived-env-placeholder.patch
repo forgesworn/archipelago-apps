@@ -1,17 +1,21 @@
-From 372d665d8200daaf9dfd06b0bb944e99f12c2cb7 Mon Sep 17 00:00:00 2001
+From 8e43ac74a6486bde2b9b31535f70ca612108df82 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 14:33:26 +0200
 Subject: [PATCH] feat: add NODE_NOSTR_PUBKEY derived-env placeholder
 
+Lets an app grant the node owner rights, e.g. a Blossom server's allowed
+uploader. The value comes from the same secret-derived helper as the
+`node.nostr-pubkey` RPC, so it always matches the key the NIP-07 bridge
+signs with by default. It is resolved only for manifests that template it.
 ---
- .../src/container/prod_orchestrator.rs        | 41 +++++++++++++
- core/container/src/manifest.rs                | 60 ++++++++++++++++++-
+ .../src/container/prod_orchestrator.rs        | 48 ++++++++++++++
+ core/container/src/manifest.rs                | 63 ++++++++++++++++++-
  docs/app-developer-guide.md                   |  2 +-
  docs/app-manifest-spec.md                     |  2 +-
- 4 files changed, 101 insertions(+), 4 deletions(-)
+ 4 files changed, 110 insertions(+), 5 deletions(-)
 
 diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
-index 6542494..9900bf3 100644
+index 6542494..be2e5e3 100644
 --- a/core/archipelago/src/container/prod_orchestrator.rs
 +++ b/core/archipelago/src/container/prod_orchestrator.rs
 @@ -3529,6 +3529,7 @@ impl ProdContainerOrchestrator {
@@ -32,7 +36,7 @@ index 6542494..9900bf3 100644
              }
          }
      }
-@@ -3817,6 +3821,19 @@ impl ProdContainerOrchestrator {
+@@ -3817,6 +3821,26 @@ impl ProdContainerOrchestrator {
          {
              facts.bitcoin_host = self.bitcoin_host().await;
          }
@@ -47,12 +51,19 @@ index 6542494..9900bf3 100644
 +            .any(|e| e.template.contains("{{NODE_NOSTR_PUBKEY}}"))
 +        {
 +            facts.node_nostr_pubkey =
-+                crate::nostr_discovery::get_nostr_pubkey(&self.data_dir.join("identity")).await?;
++                crate::nostr_discovery::get_nostr_pubkey(&self.data_dir.join("identity"))
++                    .await
++                    .with_context(|| {
++                        format!(
++                            "resolving {{{{NODE_NOSTR_PUBKEY}}}} for {}",
++                            manifest.app.id
++                        )
++                    })?;
 +        }
          let mut env = manifest.app.environment.clone();
          env.extend(manifest.app.container.resolve_derived_env(&facts));
          if matches!(manifest.app.id.as_str(), "bitcoin-core" | "bitcoin-knots") {
-@@ -6126,6 +6143,30 @@ app:
+@@ -6126,6 +6150,30 @@ app:
          }
      }
  
@@ -84,10 +95,20 @@ index 6542494..9900bf3 100644
      /// generated secret plus a secret_env that reads it, which is what makes
      /// the credential participate in secret_env_hash.
 diff --git a/core/container/src/manifest.rs b/core/container/src/manifest.rs
-index f9ffe10..344d894 100644
+index f9ffe10..e50a1ce 100644
 --- a/core/container/src/manifest.rs
 +++ b/core/container/src/manifest.rs
-@@ -1428,6 +1428,12 @@ pub struct HostFacts {
+@@ -263,7 +263,8 @@ pub struct ContainerConfig {
+ 
+ /// Derived-env entry. The template is rendered against `HostFacts` at
+ /// apply time; exactly one `{{PLACEHOLDER}}` occurrence per supported
+-/// fact name is allowed (host_ip, host_mdns, disk_gb).
++/// fact name is allowed (host_ip, host_mdns, disk_gb, bitcoin_host,
++/// node_nostr_pubkey).
+ #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+ pub struct DerivedEnv {
+     pub key: String,
+@@ -1428,6 +1429,12 @@ pub struct HostFacts {
      /// right host. Both are reachable on archy-net by their container name;
      /// only the name differs. Falls back to `bitcoin-knots` when undetected.
      pub bitcoin_host: String,
@@ -100,7 +121,7 @@ index f9ffe10..344d894 100644
  }
  
  impl HostFacts {
-@@ -1439,13 +1445,21 @@ impl HostFacts {
+@@ -1439,13 +1446,21 @@ impl HostFacts {
              host_mdns: "test-node.local".to_string(),
              disk_gb: 2000,
              bitcoin_host: "bitcoin-knots".to_string(),
@@ -123,7 +144,7 @@ index f9ffe10..344d894 100644
  
  fn validate_derived_template(key: &str, template: &str) -> Result<(), ManifestError> {
      // Walk `{{NAME}}` occurrences and ensure each NAME is recognized.
-@@ -1529,7 +1543,8 @@ impl ContainerConfig {
+@@ -1529,7 +1544,8 @@ impl ContainerConfig {
                      .replace("{{HOST_IP}}", &facts.host_ip)
                      .replace("{{HOST_MDNS}}", &facts.host_mdns)
                      .replace("{{DISK_GB}}", &facts.disk_gb.to_string())
@@ -133,7 +154,7 @@ index f9ffe10..344d894 100644
                  format!("{}={}", e.key, value)
              })
              .collect()
-@@ -2396,6 +2411,46 @@ app:
+@@ -2396,6 +2412,46 @@ app:
          );
      }
  
@@ -180,7 +201,7 @@ index f9ffe10..344d894 100644
      #[test]
      fn path_traversal_secret_file_is_rejected() {
          let yaml = r#"
-@@ -2451,6 +2506,7 @@ app:
+@@ -2451,6 +2507,7 @@ app:
              host_mdns: "test-node.local".to_string(),
              disk_gb: 2000,
              bitcoin_host: "bitcoin-core".to_string(),

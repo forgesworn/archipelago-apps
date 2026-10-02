@@ -28,6 +28,18 @@ jobs:
           tag="backend-${ARCHY_RELEASE}-p${BACKEND_PATCH_LEVEL}"
           bin=.cache/archy/core/target/release/archipelago
           sha256sum "$bin" | awk '{print $1"  archipelago"}' > archipelago.sha256
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
-            --title "$tag" --notes "Archipelago ${ARCHY_RELEASE} backend with upstream/patches applied (test-node use)."
-          gh release upload "$tag" "$bin" archipelago.sha256 --clobber
+          # Builds are not bit-reproducible, so guard on the inputs instead: a
+          # tag may only be rebuilt from the same PINS and patches.
+          sha256sum PINS upstream/patches/*.patch | sha256sum | awk '{print $1}' > inputs.sha256
+          if gh release view "$tag" >/dev/null 2>&1; then
+            prev=$(mktemp -d)
+            if gh release download "$tag" -p inputs.sha256 -D "$prev" && \
+               ! cmp -s "$prev/inputs.sha256" inputs.sha256; then
+              echo "::error::$tag was built from different PINS/patches; bump BACKEND_PATCH_LEVEL"
+              exit 1
+            fi
+          else
+            gh release create "$tag" --title "$tag" \
+              --notes "Archipelago ${ARCHY_RELEASE} backend with upstream/patches applied (test-node use)."
+          fi
+          gh release upload "$tag" "$bin" archipelago.sha256 inputs.sha256 --clobber
