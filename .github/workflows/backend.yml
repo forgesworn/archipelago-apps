@@ -10,14 +10,26 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      # A published backend binary is never replaced: builds are not
+      # bit-reproducible, so a node's copy would stop matching the published
+      # sha. When a push left the build inputs unchanged and the release
+      # already records the same inputs, there is nothing to test or publish.
+      - id: plan
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: scripts/backend-release-plan.sh "${{ github.event.before }}" "${{ github.event_name }}" >> "$GITHUB_OUTPUT"
       # The action defaults RUSTFLAGS to -D warnings; build upstream with its own lint settings.
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        if: steps.plan.outputs.skip != 'true'
         with: { toolchain: stable, rustflags: "" }
-      - run: ARCHY_FULL=1 scripts/fetch-archy.sh
-      - run: scripts/apply-patches.sh
+      - if: steps.plan.outputs.skip != 'true'
+        run: ARCHY_FULL=1 scripts/fetch-archy.sh
+      - if: steps.plan.outputs.skip != 'true'
+        run: scripts/apply-patches.sh
       # Plain cargo test: this crate has no host-operation tests, and its
       # lan_address tests find apps/ through CARGO_MANIFEST_DIR, which only cargo sets.
       - name: Container tests
+        if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy
         run: cargo test --manifest-path core/Cargo.toml -p archipelago-container --locked
       # Plain cargo test (default features, as the harness uses): several tests
@@ -31,6 +43,7 @@ jobs:
       # - wallet ordering: reads the node's real Bitcoin RPC secret, which no
       #   CI host has.
       - name: Archipelago tests
+        if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy
         run: >-
           cargo test --manifest-path core/Cargo.toml -p archipelago --locked -- --exact
@@ -44,6 +57,7 @@ jobs:
       # Upstream's harness gives these a private /var/lib/archipelago. Only they
       # run here; the count check fails the step if a rename leaves it vacuous.
       - name: Host-operation tests (isolated)
+        if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy
         run: |
           scripts/test-backend-isolated.sh --exact \
@@ -56,6 +70,7 @@ jobs:
           grep -q 'test result: ok. 5 passed;' "$RUNNER_TEMP/host-ops.log"
       # Our patch's tests, by exact name: a rename gives "0 passed" and fails.
       - name: Patch tests (NODE_IDENTITY_PUBKEYS)
+        if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy
         run: |
           cargo test --manifest-path core/Cargo.toml -p archipelago-container --locked --lib -- --exact \
@@ -72,10 +87,11 @@ jobs:
             container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_needs_the_node_key_and_never_creates_it | tee "$RUNNER_TEMP/archipelago.log"
           grep -q 'test result: ok. 7 passed;' "$RUNNER_TEMP/archipelago.log"
       - name: Build backend
+        if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy/core
         run: cargo build --release -p archipelago
       - name: Publish release asset
-        if: github.ref == 'refs/heads/main'
+        if: steps.plan.outputs.skip != 'true' && github.ref == 'refs/heads/main'
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
           . ./PINS
@@ -83,17 +99,23 @@ jobs:
           bin=.cache/archy/core/target/release/archipelago
           sha256sum "$bin" | awk '{print $1"  archipelago"}' > archipelago.sha256
           # Builds are not bit-reproducible, so guard on the inputs instead: a
-          # tag may only be rebuilt from the same archy pin and patches. Only
-          # the ARCHY_* lines of PINS count, so Wildbloom pin bumps still pass.
-          { grep -E '^(ARCHY_REPO|ARCHY_REF|ARCHY_RELEASE)=' PINS; sha256sum upstream/patches/*.patch; } \
-            | sha256sum | awk '{print $1}' > inputs.sha256
+          # tag may only be built from one archy pin and set of patches, and
+          # once published it is never replaced (a node's installed binary
+          # would stop matching the published sha). Only the ARCHY_* lines of
+          # PINS count, so Wildbloom pin bumps do not matter.
+          scripts/backend-inputs.sh > inputs.sha256
           if gh release view "$tag" >/dev/null 2>&1; then
             prev=$(mktemp -d)
-            if gh release download "$tag" -p inputs.sha256 -D "$prev" && \
-               ! cmp -s "$prev/inputs.sha256" inputs.sha256; then
+            if gh release download "$tag" -p inputs.sha256 -D "$prev"; then
+              if cmp -s "$prev/inputs.sha256" inputs.sha256; then
+                echo "::notice::$tag is already published from these inputs; not replacing its binary or sha"
+                exit 0
+              fi
               echo "::error::$tag was built from a different archy pin or patches; bump BACKEND_PATCH_LEVEL"
               exit 1
             fi
+            # A release with no inputs.sha256 record predates the guard: fall
+            # through and add the record along with the binary.
           else
             gh release create "$tag" --title "$tag" \
               --notes "Archipelago ${ARCHY_RELEASE} backend with upstream/patches applied (test-node use)."
