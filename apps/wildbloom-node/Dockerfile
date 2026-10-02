@@ -12,6 +12,9 @@ RUN git init -q && git remote add origin https://github.com/forgesworn/wildbloom
 RUN cargo build --release --locked -p wildbloomd
 
 FROM debian:trixie-slim
+LABEL org.opencontainers.image.source=https://github.com/forgesworn/archipelago-apps
+LABEL org.opencontainers.image.licenses=MIT
+LABEL org.opencontainers.image.description="Wildbloom Node: Blossom storage on your Archipelago node, owned by your node's Nostr identity."
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/target/release/wildbloomd /usr/local/bin/wildbloomd

@@ -8,7 +8,7 @@ secret=$(openssl rand -hex 32)
 pubkey=$(cd "$here" && node --input-type=module -e 'import { getPublicKey } from "nostr-tools/pure"; import { hexToBytes } from "nostr-tools/utils"; process.stdout.write(getPublicKey(hexToBytes(process.argv[1])));' "$secret")
 data=$(mktemp -d)
 # --read-only matches the manifest's readonly_root: true.
-cid=$(docker run -d --read-only --tmpfs /tmp -p 127.0.0.1:3742:3742 -v "$data:/data" \
+cid=$(docker run -d --cap-drop=ALL --security-opt no-new-privileges --read-only --tmpfs /tmp -p 127.0.0.1:3742:3742 -v "$data:/data" \
   -e WILDBLOOM_ALLOW_PUBKEYS="$pubkey" -e WILDBLOOM_PUBLIC_URL=http://localhost:3742 \
   -e WILDBLOOM_SERVER_NAME=localhost,127.0.0.1 "$image")
 trap 'docker logs "$cid" | tail -n 50; docker rm -f "$cid" >/dev/null' EXIT

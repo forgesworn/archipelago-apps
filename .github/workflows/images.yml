@@ -40,7 +40,7 @@ jobs:
       - id: pin
         run: |
           . ./PINS
-          tag=$(grep -oE 'ghcr.io/forgesworn/wildbloom:[^[:space:]]+' apps/wildbloom/manifest.yml)
+          tag=$(grep -m1 -oE 'ghcr.io/forgesworn/wildbloom:[^[:space:]]+' apps/wildbloom/manifest.yml)
           case "$tag" in *"-${WILDBLOOM_REF:0:7}") ;; *) echo "manifest tag does not match PINS"; exit 1;; esac
           echo "ref=$WILDBLOOM_REF" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"

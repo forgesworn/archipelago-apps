@@ -9,6 +9,9 @@ RUN git init -q && git remote add origin https://github.com/forgesworn/wildbloom
 RUN npm ci && npm run build
 
 FROM nginx:1.29-alpine
+LABEL org.opencontainers.image.source=https://github.com/forgesworn/archipelago-apps
+LABEL org.opencontainers.image.licenses=MIT
+LABEL org.opencontainers.image.description="Wildbloom web app for Archipelago: publish files over Nostr, Blossom and BitTorrent, signed by your node's identity."
 RUN rm /etc/nginx/conf.d/default.conf
 COPY nginx.conf /etc/nginx/conf.d/wildbloom.conf
 COPY --from=build /src/dist /usr/share/nginx/html
