@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Wave 1 acceptance, scripted half. The browser half is in docs/acceptance-wave1.md.
 #
-# Usage: ARCHY_PASSWORD=... scripts/acceptance.sh
+# Usage: read -rs ARCHY_PASSWORD; export ARCHY_PASSWORD
+#        scripts/acceptance.sh
+# (read -s keeps the password out of shell history and off the screen.)
 # Env:   NODE (default root@95.216.164.146), ARCHY_PASSWORD (dashboard password).
 # Every check runs on the node over SSH, through the real RPC and the real signer.
 # Exits 0 only when every check passes.
@@ -19,11 +21,12 @@ set -euo pipefail
 IFS= read -r ARCHY_PASSWORD
 host=$1
 source /opt/archipelago/rpc.bash
+payload=""
+# rpc_logout_local (rpc.bash) removes the session file archy_login writes.
+trap 'rpc_logout_local; rm -f "${payload:-}" "${payload:+$payload.back}"' EXIT
 archy_login
 unset ARCHY_PASSWORD
 fail() { echo "FAIL: $*"; exit 1; }
-payload=""
-trap 'rm -f "${payload:-}" "${payload:+$payload.back}"' EXIT
 podman_inspect_env() {
   runuser -u archipelago -- sh -c "cd / && XDG_RUNTIME_DIR=/run/user/1000 \
     DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus \

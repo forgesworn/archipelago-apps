@@ -137,7 +137,7 @@ step.
 
 ## Sideloaded manifests live inside the frontend payload (archy `6d5f3ff`)
 
-An app that is not in a registry catalog can be installed by placing its
+An app that is not in a registry catalogue can be installed by placing its
 manifest under `/opt/archipelago/web-ui/archipelago-runtime/apps/<id>/`. On
 every start, `run_runtime_assets` (`core/archipelago/src/bootstrap.rs`, ~line
 384) replaces `/opt/archipelago/apps` with that directory, and the orchestrator

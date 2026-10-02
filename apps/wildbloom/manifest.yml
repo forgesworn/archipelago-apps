@@ -5,7 +5,7 @@ app:
   upstream:
     kind: github
     repo: forgesworn/wildbloom
-  description: Publish files over Nostr, Blossom and BitTorrent, signed by your node's identity.
+  description: Publish files over Nostr, Blossom and BitTorrent, signed by your node identities.
   category: nostr
 
   container:
@@ -58,7 +58,7 @@ app:
   interfaces:
     main:
       name: Web UI
-      description: Publish and fetch files signed by your node
+      description: Publish and fetch files signed by your node identities
       type: ui
       port: 3743
       protocol: http

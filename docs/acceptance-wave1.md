@@ -60,7 +60,8 @@ signer injection and provider present
 ACCEPTANCE (scripted) PASSED: blob 6dd4900f36d1e02b18e2740c49a48fccda1c589afa399fb83d7e4a0b7db1db3c
 ```
 
-What this shows:
+What this shows, as five checks (`scripts/acceptance.sh` labels them 1, 2, 3,
+4/5 and 6 in its comments; this document numbers them 1 to 5):
 
 1. Both apps are installed and running.
 2. The owner key injected into `wildbloom-node` (`WILDBLOOM_ALLOW_PUBKEYS`) is
@@ -125,28 +126,32 @@ After a full node reboot, both apps came back healthy.
 
 - Blobs uploaded before the reboot returned identical bytes.
 - The provider was served.
-- `scripts/acceptance.sh` passed again.
+- `scripts/acceptance.sh` passed again, printing "ACCEPTANCE (scripted) PASSED",
+  against backend `backend-v1.8.22-alpha-p3`,
+  `ghcr.io/forgesworn/wildbloom-node:0.2.2-b3b254b-2` and
+  `ghcr.io/forgesworn/wildbloom:0.0.1-29d382e-4`.
 
 ### Findings
 
 - `wildbloom` was unhealthy in Podman for this run. Its in-container health
   check requests `localhost`, which resolves to `::1`, and the image's nginx
-  listened on IPv4 only. The page itself was served, so checks 1–6 passed. The
-  image is being rebuilt to listen on both families; acceptance must be re-run
-  against the new image.
+  listened on IPv4 only. The page itself was served, so all five checks passed.
+  The image now listens on both families (`wildbloom:0.0.1-29d382e-4`), and
+  the post-reboot acceptance run passed against it.
 - The dashboard state's `health` field was unset for both apps throughout this
   run, so it did not surface the fault above. Acceptance now records it but
   cannot rely on it.
 - Sideloaded manifests sit inside the frontend payload and would not survive
   an OTA frontend update. See `docs/upstream-notes.md`.
-- Checks 2 and 4/5 proved the wrong owner. The run-1 backend injected the
+- Checks 2 and 4 proved the wrong owner. The run-1 backend injected the
   node's discovery key (`{{NODE_NOSTR_PUBKEY}}`), but the NIP-07 bridge signs
   app uploads with an identity the user picks, and the picker never offers the
-  node identity. On the test node "Personal" is `a4bbfde0…`, "Node" is
-  `0a8d88…` and the discovery key is `94972f…`, so no upload from Wildbloom's
-  page could be accepted. The owner is now every identity the picker offers,
+  node identity. On the test node "Personal" is `<identity npub>`, "Node" is
+  `<node identity npub>` and the discovery key is `<node npub>`, so no upload
+  from Wildbloom's page could be accepted. The owner is now every identity the picker offers,
   through `{{NODE_IDENTITY_PUBKEYS}}` (backend patch level 3,
   `backend-v1.8.22-alpha-p3`, which supersedes the pre-review p2; image `wildbloom-node:0.2.2-b3b254b-2`). Check 2
   now compares the injected list with `identity.list` filtered as the picker
-  filters it, and checks 4/5 sign with `identity.nostr-sign` as the first such
-  identity. Acceptance must be re-run against that backend and image.
+  filters it, and check 4 signs with `identity.nostr-sign` as the first such
+  identity. The browser half and the post-reboot `scripts/acceptance.sh` run
+  passed against that backend and image ("ACCEPTANCE (scripted) PASSED").

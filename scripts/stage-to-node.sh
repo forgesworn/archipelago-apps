@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Stage an app manifest on a node and install it through the dashboard's JSON-RPC.
 #
-# Usage: ARCHY_PASSWORD=... scripts/stage-to-node.sh <app-id>
+# Usage: read -rs ARCHY_PASSWORD; export ARCHY_PASSWORD
+#        scripts/stage-to-node.sh <app-id>
+# (read -s keeps the password out of shell history and off the screen.)
 # Env:   NODE (default root@95.216.164.146), ARCHY_PASSWORD (dashboard password),
 #        INSTALL_TIMEOUT (seconds to wait for running, default 600).
 #
@@ -46,6 +48,8 @@ for _ in $(seq 60); do
 done
 
 source /opt/archipelago/rpc.bash
+# rpc_logout_local (rpc.bash) removes the session file archy_login writes.
+trap rpc_logout_local EXIT
 archy_login
 unset ARCHY_PASSWORD
 echo "package.install $app ($image):"
