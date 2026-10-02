@@ -25,16 +25,43 @@ which derives the public key from `nostr_secret`, in the same way as the
 
 ## Running the backend tests in CI (archy `6d5f3ff`)
 
-Our backend workflow runs the `archipelago` crate's unit tests through archy's
-own harness, `scripts/test-backend-isolated.sh`, which gives each run a private
-`/var/lib/archipelago`. The `archipelago-container` crate runs under plain
-`cargo test`: it has no host-operation tests, and two of its `lan_address`
-tests find `apps/` through `CARGO_MANIFEST_DIR`, which only `cargo test` sets.
-Run from the harness's `core` working directory, they find no manifests. A plain `cargo test` on a hosted Ubuntu runner, which is
-what archy's `.github/workflows/ci.yml` runs (`cargo test --all-features`), fails
-five install and manifest-file tests in `container::prod_orchestrator`. Those tests
-create paths under `/var/lib/archipelago` and report that host-operation tests
-require the isolated harness.
+Our backend workflow runs both crates' tests with plain `cargo test` (default
+features). Archy's `.github/workflows/ci.yml` does the same
+(`cargo test --all-features`), and on a hosted Ubuntu runner that fails five
+install and manifest-file tests in `container::prod_orchestrator`. They create
+paths under `/var/lib/archipelago` and report that host-operation tests require
+`scripts/test-backend-isolated.sh`. Our plain run skips those five, and a
+second step runs only them through archy's harness, which gives them a private
+`/var/lib/archipelago`:
+
+- `install_applies_data_uid_chown_before_create`
+- `install_resolves_derived_and_secret_env_before_create`
+- `install_writes_manifest_generated_files_before_create`
+- `manifest_generated_files_can_overwrite_when_declared`
+- `manifest_generated_files_do_not_overwrite_by_default`
+
+We do not run the whole suite through the harness because some tests read the
+repository's real `apps/*/manifest.yml` files. They find them at runtime through
+`CARGO_MANIFEST_DIR`, which `cargo test` sets but the harness does not, since it
+runs the test binary directly. Its working directory is `core`, so the relative
+`apps` fallback finds nothing either. Under the harness these six tests in the
+`archipelago` crate fail, although they pass under plain `cargo test`:
+
+- `api::rpc::package::dependencies::tests::manifest_declared_archival_bitcoin_covers_a_new_app_without_a_code_change`
+- `api::rpc::package::dependencies::tests::mempool_api_is_directly_installable_and_covered_by_the_archival_gate`
+- `api::rpc::package::runtime::tests::runtime_host_ports_are_manifest_derived_for_public_apps`
+- `appgate::identity::tests::real_manifests_classify_into_both_sets`
+- `appgate::identity::tests::relay_port_list_respects_local_and_gated_declarations`
+- `appgate::identity::tests::reproduced_open_ports_are_now_gated`
+
+The lookups are `manifest_apps_dirs` in `core/archipelago/src/api/rpc/package/runtime.rs`
+(~line 1811) and `apps_dirs` in `core/archipelago/src/appgate/identity.rs`
+(~line 115). The `lan_address` tests in `archipelago-container` behave the same
+way through `manifest_apps_dirs` in `core/container/src/podman_client.rs`
+(~line 989). These are production lookups, so a compile-time `env!` would be
+the wrong fix. In the harness, `--setenv=CARGO_MANIFEST_DIR=$REPO/core/<package>`
+would cover both crates. `--setenv=ARCHIPELAGO_APPS_DIR=$REPO/apps` would also
+work for the `archipelago` crate, whose two lookups check that variable first.
 
 Two tests are skipped in our workflow. Neither touches the code our patch
 changes.

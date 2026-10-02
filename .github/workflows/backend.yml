@@ -15,31 +15,56 @@ jobs:
         with: { toolchain: stable, rustflags: "" }
       - run: ARCHY_FULL=1 scripts/fetch-archy.sh
       - run: scripts/apply-patches.sh
-      # Plain cargo test: this crate's lan_address tests find apps/ through
-      # CARGO_MANIFEST_DIR, which the harness does not set, and it has no host-operation tests.
+      # Plain cargo test: this crate has no host-operation tests, and its
+      # lan_address tests find apps/ through CARGO_MANIFEST_DIR, which only cargo sets.
       - name: Container tests
         working-directory: .cache/archy
         run: cargo test --manifest-path core/Cargo.toml -p archipelago-container --locked
-      # Upstream's own harness: unit tests run under systemd-run with a private
-      # /var/lib/archipelago, as host-operation tests require.
+      # Plain cargo test (default features, as the harness uses): several tests
+      # read the real apps/*/manifest.yml through CARGO_MANIFEST_DIR, which the
+      # harness does not set. --exact makes each --skip match one full test path.
+      # Host-operation tests, run in the next step under upstream's harness:
+      #   install_* (3) and manifest_generated_files_* (2).
       # Skipped, both unrelated to the patch (see docs/upstream-notes.md):
-      # - the runner's Podman 4.9 quadlet generator predates StopTimeout;
+      # - quadlet: the runner's Podman 4.9 generator predates StopTimeout;
       #   Archipelago targets Debian 13's Podman 5.
-      # - the wallet-ordering test reads the node's real Bitcoin RPC secret,
-      #   which no isolated (or CI) host has.
-      - name: Archipelago tests (isolated)
+      # - wallet ordering: reads the node's real Bitcoin RPC secret, which no
+      #   CI host has.
+      - name: Archipelago tests
         working-directory: .cache/archy
         run: >-
-          scripts/test-backend-isolated.sh
+          cargo test --manifest-path core/Cargo.toml -p archipelago --locked -- --exact
+          --skip container::prod_orchestrator::tests::install_applies_data_uid_chown_before_create
+          --skip container::prod_orchestrator::tests::install_resolves_derived_and_secret_env_before_create
+          --skip container::prod_orchestrator::tests::install_writes_manifest_generated_files_before_create
+          --skip container::prod_orchestrator::tests::manifest_generated_files_can_overwrite_when_declared
+          --skip container::prod_orchestrator::tests::manifest_generated_files_do_not_overwrite_by_default
           --skip container::quadlet::tests::actual_quadlet_generator_stops_before_forced_removal
           --skip container::prod_orchestrator::tests::reconcile_wallet_start_precedes_unrelated_failed_image_pull
+      # Upstream's harness gives these a private /var/lib/archipelago. Only they
+      # run here; the count check fails the step if a rename leaves it vacuous.
+      - name: Host-operation tests (isolated)
+        working-directory: .cache/archy
+        run: |
+          scripts/test-backend-isolated.sh --exact \
+            container::prod_orchestrator::tests::install_applies_data_uid_chown_before_create \
+            container::prod_orchestrator::tests::install_resolves_derived_and_secret_env_before_create \
+            container::prod_orchestrator::tests::install_writes_manifest_generated_files_before_create \
+            container::prod_orchestrator::tests::manifest_generated_files_can_overwrite_when_declared \
+            container::prod_orchestrator::tests::manifest_generated_files_do_not_overwrite_by_default \
+            | tee "$RUNNER_TEMP/host-ops.log"
+          grep -q 'test result: ok. 5 passed;' "$RUNNER_TEMP/host-ops.log"
+      # Our patch's tests, by exact name: a rename gives "0 passed" and fails.
       - name: Patch tests (NODE_NOSTR_PUBKEY)
         working-directory: .cache/archy
         run: |
-          cargo test --manifest-path core/Cargo.toml -p archipelago-container --locked --lib node_nostr_pubkey | tee "$RUNNER_TEMP/container.log"
-          grep -q 'test result: ok. 2 passed' "$RUNNER_TEMP/container.log"
-          scripts/test-backend-isolated.sh node_nostr_pubkey | tee "$RUNNER_TEMP/archipelago.log"
-          grep -q 'test result: ok. 1 passed' "$RUNNER_TEMP/archipelago.log"
+          cargo test --manifest-path core/Cargo.toml -p archipelago-container --locked --lib -- --exact \
+            manifest::tests::node_nostr_pubkey_placeholder_is_accepted \
+            manifest::tests::resolve_derived_env_renders_node_nostr_pubkey | tee "$RUNNER_TEMP/container.log"
+          grep -q 'test result: ok. 2 passed;' "$RUNNER_TEMP/container.log"
+          cargo test --manifest-path core/Cargo.toml -p archipelago --locked --bin archipelago -- --exact \
+            container::prod_orchestrator::tests::node_nostr_pubkey_placeholder_renders_the_node_key | tee "$RUNNER_TEMP/archipelago.log"
+          grep -q 'test result: ok. 1 passed;' "$RUNNER_TEMP/archipelago.log"
       - name: Build backend
         working-directory: .cache/archy/core
         run: cargo build --release -p archipelago
