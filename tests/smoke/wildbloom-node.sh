@@ -6,12 +6,16 @@ here=$(cd "$(dirname "$0")" && pwd)
 (cd "$here" && npm ci --silent)
 secret=$(openssl rand -hex 32)
 pubkey=$(cd "$here" && node --input-type=module -e 'import { getPublicKey } from "nostr-tools/pure"; import { hexToBytes } from "nostr-tools/utils"; process.stdout.write(getPublicKey(hexToBytes(process.argv[1])));' "$secret")
+# Production ownership: rootless Podman maps container uid 0 to the host user that owns the bind
+# directory, so container root owns /data. Reproduce that with a root-owned dir; wildbloomd chmods
+# /data to 0700 on start, which needs ownership (or CAP_FOWNER, which the manifest drops).
 data=$(mktemp -d)
+sudo chown 0:0 "$data"
 # --read-only matches the manifest's readonly_root: true.
 cid=$(docker run -d --cap-drop=ALL --security-opt no-new-privileges --read-only --tmpfs /tmp -p 127.0.0.1:3742:3742 -v "$data:/data" \
   -e WILDBLOOM_ALLOW_PUBKEYS="$pubkey" -e WILDBLOOM_PUBLIC_URL=http://localhost:3742 \
   -e WILDBLOOM_SERVER_NAME=localhost,127.0.0.1 "$image")
-trap 'docker logs "$cid" | tail -n 50; docker rm -f "$cid" >/dev/null' EXIT
+trap 'docker logs "$cid" | tail -n 50; docker rm -f "$cid" >/dev/null; sudo rm -rf "$data"' EXIT
 for _ in $(seq 30); do curl -fsS http://127.0.0.1:3742/healthz >/dev/null && break; sleep 1; done
 curl -fsS http://127.0.0.1:3742/healthz
 payload=$(mktemp); head -c 4096 /dev/urandom > "$payload"
