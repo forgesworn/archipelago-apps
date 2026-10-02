@@ -121,3 +121,21 @@ someone runs `system.node-ca.generate` (Settings → Node certificate), which
 re-runs `setup-node-ca.sh`. Having the rename path reissue through
 `setup-node-ca.sh` whenever a node CA exists would keep the two producers in
 step.
+
+## Sideloaded manifests live inside the frontend payload (archy `6d5f3ff`)
+
+An app that is not in a registry catalog can be installed by placing its
+manifest under `/opt/archipelago/web-ui/archipelago-runtime/apps/<id>/`. On
+every start, `run_runtime_assets` (`core/archipelago/src/bootstrap.rs`, ~line
+384) replaces `/opt/archipelago/apps` with that directory, and the orchestrator
+loads manifests only afterwards (`core/archipelago/src/main.rs`, ~lines 261 and
+299). Writing to `/opt/archipelago/apps` directly does not survive a restart.
+
+The runtime directory is part of the frontend archive. An OTA frontend update
+swaps `/opt/archipelago/web-ui` for the new archive's contents
+(`core/archipelago/src/update.rs`, ~lines 1700–1811), and the next start then
+replaces `/opt/archipelago/apps` from the new payload. A sideloaded manifest
+would therefore disappear after an update, leaving an installed app with no
+manifest for the orchestrator to manage. A separate local manifests directory,
+merged at load time like the registry overlay, would give developers and
+operators a sideload path that outlives updates.
