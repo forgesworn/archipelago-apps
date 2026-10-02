@@ -81,3 +81,27 @@ changes.
   `set_secrets_dir` (with a seeded password) and `set_lnd_paths` to temporary
   directories, as the test around line 7681 does, would likely make it
   self-contained.
+
+## Boot reconcile on a node without the BTCPay stack (archy `6d5f3ff`)
+
+On a fresh node that has never installed BTCPay, every boot reconcile pass
+(every 30 seconds) logs three `ERROR … reconcile failed` lines and ends with
+`reconcile pass completed with failures ok=59 failed=3`:
+
+```
+reconcile failed app_id=btcpay-server error=resolving secret_env for btcpay-server
+from /var/lib/archipelago/secrets: Invalid manifest: required secret
+'btcpay-db-password' is missing …
+```
+
+The same happens for `archy-btcpay-db` and `archy-nbxplorer`. Nothing is
+created; the containers stay absent, as intended. The noise comes from the
+order of operations in `ensure_running_with_mode`
+(`core/archipelago/src/container/prod_orchestrator.rs`, ~line 2264). It calls
+`ensure_app_secrets` and `resolve_dynamic_env`, which resolves `secret_env`,
+before it looks for the container. The `ExistingOnly` rule that leaves an
+absent, non-baseline app alone (~line 2735) is only reached afterwards. A
+missing secret for an app that is not installed is therefore reported as a
+reconcile failure. Checking for an absent container in `ExistingOnly` mode
+before resolving secrets would make a clean node report `failed=0`, and real
+failures easier to spot.
