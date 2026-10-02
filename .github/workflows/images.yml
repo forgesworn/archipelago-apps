@@ -17,10 +17,10 @@ jobs:
         run: |
           . ./PINS
           echo "ref=$WILDBLOOM_NODE_REF" >> "$GITHUB_OUTPUT"
-          echo "tag=ghcr.io/forgesworn/wildbloom-node:0.2.2-${WILDBLOOM_NODE_REF:0:7}" >> "$GITHUB_OUTPUT"
-      - run: |
-          grep -qF "${{ steps.pin.outputs.tag }}" apps/wildbloom-node/manifest.yml \
-            || { echo "manifest image tag does not match PINS"; exit 1; }
+          tag="ghcr.io/forgesworn/wildbloom-node:0.2.2-${WILDBLOOM_NODE_REF:0:7}-${WILDBLOOM_NODE_PKG_REV:?}"
+          manifest_tag=$(grep -m1 -oE 'ghcr.io/forgesworn/wildbloom-node:[^[:space:]]+' apps/wildbloom-node/manifest.yml)
+          [ "$tag" = "$manifest_tag" ] || { echo "manifest tag $manifest_tag does not match PINS $tag"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
@@ -32,7 +32,14 @@ jobs:
       - if: github.ref == 'refs/heads/main'
         run: |
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker push "${{ steps.pin.outputs.tag }}"
+          tag="${{ steps.pin.outputs.tag }}"
+          # Never replace a published tag: the node will not re-pull it. Bump the PKG_REV in PINS.
+          if out=$(docker manifest inspect "$tag" 2>&1); then
+            echo "$tag already exists; bump the packaging revision in PINS"; exit 1
+          fi
+          grep -qiE 'no such manifest|manifest unknown|name unknown|not found' <<<"$out" \
+            || { echo "cannot tell whether $tag exists: $out"; exit 1; }
+          docker push "$tag"
   wildbloom:
     runs-on: ubuntu-24.04
     steps:
@@ -40,8 +47,9 @@ jobs:
       - id: pin
         run: |
           . ./PINS
-          tag=$(grep -m1 -oE 'ghcr.io/forgesworn/wildbloom:[^[:space:]]+' apps/wildbloom/manifest.yml)
-          case "$tag" in *"-${WILDBLOOM_REF:0:7}") ;; *) echo "manifest tag does not match PINS"; exit 1;; esac
+          tag="ghcr.io/forgesworn/wildbloom:0.0.1-${WILDBLOOM_REF:0:7}-${WILDBLOOM_PKG_REV:?}"
+          manifest_tag=$(grep -m1 -oE 'ghcr.io/forgesworn/wildbloom:[^[:space:]]+' apps/wildbloom/manifest.yml)
+          [ "$tag" = "$manifest_tag" ] || { echo "manifest tag $manifest_tag does not match PINS $tag"; exit 1; }
           echo "ref=$WILDBLOOM_REF" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
@@ -55,4 +63,11 @@ jobs:
       - if: github.ref == 'refs/heads/main'
         run: |
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker push "${{ steps.pin.outputs.tag }}"
+          tag="${{ steps.pin.outputs.tag }}"
+          # Never replace a published tag: the node will not re-pull it. Bump the PKG_REV in PINS.
+          if out=$(docker manifest inspect "$tag" 2>&1); then
+            echo "$tag already exists; bump the packaging revision in PINS"; exit 1
+          fi
+          grep -qiE 'no such manifest|manifest unknown|name unknown|not found' <<<"$out" \
+            || { echo "cannot tell whether $tag exists: $out"; exit 1; }
+          docker push "$tag"

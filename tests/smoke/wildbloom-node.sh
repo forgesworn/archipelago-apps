@@ -18,6 +18,10 @@ cid=$(docker run -d --cap-drop=ALL --security-opt no-new-privileges --read-only 
 trap 'docker logs "$cid" | tail -n 50; docker rm -f "$cid" >/dev/null; sudo rm -rf "$data"' EXIT
 for _ in $(seq 30); do curl -fsS http://127.0.0.1:3742/healthz >/dev/null && break; sleep 1; done
 curl -fsS http://127.0.0.1:3742/healthz
+# Archipelago's generated health check (quadlet.rs:610 at the pinned core) runs this exact chain
+# inside the container. debian-slim has neither wget nor curl, so in practice it is the bash
+# /dev/tcp branch against localhost; run the whole command as the node does.
+docker exec "$cid" sh -c "if command -v wget >/dev/null 2>&1; then wget -q -T 5 -O /dev/null http://localhost:3742/healthz; elif command -v curl >/dev/null 2>&1; then curl -fsS -m 5 http://localhost:3742/healthz; elif command -v bash >/dev/null 2>&1; then bash -c 'exec 3<>/dev/tcp/localhost/3742'; else exit 0; fi"
 payload=$(mktemp); head -c 4096 /dev/urandom > "$payload"
 sha=$(sha256sum "$payload" | awk '{print $1}')
 auth=$(cd "$here" && node sign-auth.mjs "$secret" upload "$sha" localhost)

@@ -14,5 +14,6 @@ LABEL org.opencontainers.image.licenses=MIT
 LABEL org.opencontainers.image.description="Wildbloom web app for Archipelago: publish files over Nostr, Blossom and BitTorrent, signed by your node's identity."
 RUN rm /etc/nginx/conf.d/default.conf
 COPY nginx.conf /etc/nginx/conf.d/wildbloom.conf
+COPY --chmod=755 15-wildbloom-ipv6.sh /docker-entrypoint.d/15-wildbloom-ipv6.sh
 COPY --from=build /src/dist /usr/share/nginx/html
 EXPOSE 3743
