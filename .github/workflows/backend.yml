@@ -63,11 +63,14 @@ jobs:
             manifest::tests::resolve_derived_env_renders_node_identity_pubkeys | tee "$RUNNER_TEMP/container.log"
           grep -q 'test result: ok. 2 passed;' "$RUNNER_TEMP/container.log"
           cargo test --manifest-path core/Cargo.toml -p archipelago --locked --bin archipelago -- --exact \
+            identity_manager::tests::is_node_identity_matches_only_the_node_pubkey \
+            identity_manager::tests::is_hidden_from_app_signer_mirrors_the_picker_rules \
             identity_manager::tests::app_signable_nostr_pubkeys_mirror_the_identity_picker \
             identity_manager::tests::app_signable_nostr_pubkeys_is_empty_with_only_the_node_identity \
             container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_renders_the_signable_identities \
-            container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_refuses_an_empty_set | tee "$RUNNER_TEMP/archipelago.log"
-          grep -q 'test result: ok. 4 passed;' "$RUNNER_TEMP/archipelago.log"
+            container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_refuses_an_empty_set \
+            container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_needs_the_node_key_and_never_creates_it | tee "$RUNNER_TEMP/archipelago.log"
+          grep -q 'test result: ok. 7 passed;' "$RUNNER_TEMP/archipelago.log"
       - name: Build backend
         working-directory: .cache/archy/core
         run: cargo build --release -p archipelago

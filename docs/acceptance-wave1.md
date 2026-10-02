@@ -106,8 +106,8 @@ Browser run after reboot: pending.
   node identity. On the test node "Personal" is `a4bbfde0…`, "Node" is
   `0a8d88…` and the discovery key is `94972f…`, so no upload from Wildbloom's
   page could be accepted. The owner is now every identity the picker offers,
-  through `{{NODE_IDENTITY_PUBKEYS}}` (backend patch level 2,
-  `backend-v1.8.22-alpha-p2`; image `wildbloom-node:0.2.2-b3b254b-2`). Check 2
+  through `{{NODE_IDENTITY_PUBKEYS}}` (backend patch level 3,
+  `backend-v1.8.22-alpha-p3`, which supersedes the pre-review p2; image `wildbloom-node:0.2.2-b3b254b-2`). Check 2
   now compares the injected list with `identity.list` filtered as the picker
   filters it, and checks 4/5 sign with `identity.nostr-sign` as the first such
   identity. Acceptance must be re-run against that backend and image.

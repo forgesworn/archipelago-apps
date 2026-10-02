@@ -10,7 +10,7 @@ Archipelago itself.
 | App | What it is |
 |---|---|
 | `wildbloom-node` | Blossom storage owned by your node identities |
-| `wildbloom` | Publish files over Nostr, Blossom and BitTorrent, signed by your node |
+| `wildbloom` | Publish files over Nostr, Blossom and BitTorrent, signed by your node identities |
 
 Validate locally: `scripts/fetch-archy.sh && scripts/apply-patches.sh && scripts/validate.sh`.
 
