@@ -10,8 +10,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # The action defaults RUSTFLAGS to -D warnings; build upstream with its own lint settings.
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with: { toolchain: stable }
+        with: { toolchain: stable, rustflags: "" }
       - run: ARCHY_FULL=1 scripts/fetch-archy.sh
       - run: scripts/apply-patches.sh
       - name: Archipelago tests (patched)
