@@ -14,11 +14,17 @@ bundle=${1:?usage: install-lite.sh <bundle-dir>}
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 . "$bundle/PINS"
 archy=$bundle/archy
-run_user() { runuser -u archipelago -- env XDG_RUNTIME_DIR=/run/user/1000 "$@"; }
+# From /, because the service user cannot enter root's cwd and podman exits on
+# that; with the user's own bus, not one inherited from root's login session.
+run_user() {
+  (cd / && runuser -u archipelago -- env XDG_RUNTIME_DIR=/run/user/1000 \
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus "$@")
+}
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y --no-install-recommends podman netavark aardvark-dns passt uidmap \
+# A fresh cloud image runs apt-daily in the background; wait for its lock.
+apt-get -o DPkg::Lock::Timeout=600 update
+apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends podman netavark aardvark-dns passt uidmap \
   slirp4netns fuse-overlayfs dbus-user-session nginx avahi-daemon openssl curl jq \
   python3 python3-yaml ufw ca-certificates rsync sudo iproute2
 

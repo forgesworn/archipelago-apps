@@ -85,7 +85,8 @@ rootless Podman layout, without the cost of a full install.
    Expect three `active`. The installer finishes by requesting
    `https://<node-ip>/` from the node itself and fails if nothing answers.
    It is safe to re-run, for example with a new backend release: it restarts the
-   service, keeps the existing keys and CA, and never recursively chowns
+   service, keeps the existing SSH host keys and CA (a re-run reissues the leaf
+   certificate under the same CA, so its fingerprint changes), and never recursively chowns
    `/var/lib/archipelago`, where image layers and app volumes belong to
    subuid-mapped ids.
 
@@ -104,7 +105,7 @@ rootless Podman layout, without the cost of a full install.
 
    ```bash
    sleep 120
-   ssh root@<node-ip> "runuser -u archipelago -- env XDG_RUNTIME_DIR=/run/user/1000 podman ps -a --format '{{.Names}}'"
+   ssh root@<node-ip> "cd / && runuser -u archipelago -- env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus podman ps -a --format '{{.Names}}'"
    ```
 
    None of `bitcoin-*`, `lnd`, `electrumx`, `mempool*`, `btcpay*` or `fedimint*`
