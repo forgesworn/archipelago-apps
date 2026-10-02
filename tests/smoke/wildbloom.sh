@@ -2,12 +2,17 @@
 # Serve the wildbloom image and check the signer injection and cache headers.
 set -euo pipefail
 image=${1:?image}
-cid=$(docker run -d --sysctl net.ipv6.conf.all.disable_ipv6=0 --sysctl net.ipv6.conf.lo.disable_ipv6=0 --cap-drop=ALL --cap-add CHOWN --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges -p 127.0.0.1:3743:3743 "$image")
+cid=$(docker run -d --cap-drop=ALL --cap-add CHOWN --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges -p 127.0.0.1:3743:3743 "$image")
 trap 'docker logs "$cid" | tail -n 30; docker rm -f "$cid" >/dev/null' EXIT
-# Match the node (Podman/netavark gives containers ::1 on lo): GitHub's Docker disables IPv6.
+# The node's containers (Podman/netavark) have ::1 on lo, and so do Docker 26+ containers on an
+# IPv4-only network. Assert it so the localhost probe below matches the node. Test the content:
+# procfs files always stat as size 0, so `test -s /proc/net/if_inet6` is always false.
 ipv6_check() {
-  docker exec "$cid" sh -c 'test -s /proc/net/if_inet6' \
-    || { echo "FAIL: container has no IPv6 loopback; the sysctl did not take effect, so the localhost probe would not match the node" >&2; exit 1; }
+  docker exec "$cid" grep -qs '^00000000000000000000000000000001 ' /proc/net/if_inet6 && return 0
+  echo "FAIL: container has no ::1 on lo, so the localhost probe would not match the node" >&2
+  echo "--- /proc/net/if_inet6 in the container:" >&2
+  docker exec "$cid" cat /proc/net/if_inet6 >&2 || true
+  exit 1
 }
 ipv6_check
 echo '// provider stub for smoke test' | docker exec -i "$cid" sh -c 'cat > /usr/share/nginx/html/nostr-provider.js'
