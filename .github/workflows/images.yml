@@ -11,9 +11,16 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      # Build and push only when this app's own inputs changed (see the script).
+      # A manual run, a first push or an unknown "before" sha counts as changed.
+      - id: changed
+        run: scripts/app-inputs-changed.sh wildbloom-node "${{ github.event.before }}" "${{ github.event_name }}" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
+        if: steps.changed.outputs.changed == 'true'
         with: { node-version: "24" }
       - id: pin
+        if: steps.changed.outputs.changed == 'true'
         run: |
           . ./PINS
           echo "ref=$WILDBLOOM_NODE_REF" >> "$GITHUB_OUTPUT"
@@ -22,14 +29,17 @@ jobs:
           [ "$tag" = "$manifest_tag" ] || { echo "manifest tag $manifest_tag does not match PINS $tag"; exit 1; }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
+        if: steps.changed.outputs.changed == 'true'
       - uses: docker/build-push-action@v6
+        if: steps.changed.outputs.changed == 'true'
         with:
           context: apps/wildbloom-node
           build-args: WILDBLOOM_NODE_REF=${{ steps.pin.outputs.ref }}
           load: true
           tags: ${{ steps.pin.outputs.tag }}
-      - run: tests/smoke/wildbloom-node.sh "${{ steps.pin.outputs.tag }}"
-      - if: github.ref == 'refs/heads/main'
+      - if: steps.changed.outputs.changed == 'true'
+        run: tests/smoke/wildbloom-node.sh "${{ steps.pin.outputs.tag }}"
+      - if: steps.changed.outputs.changed == 'true' && github.ref == 'refs/heads/main'
         run: |
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           tag="${{ steps.pin.outputs.tag }}"
@@ -44,7 +54,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      # Build and push only when this app's own inputs changed (see the script).
+      # A manual run, a first push or an unknown "before" sha counts as changed.
+      - id: changed
+        run: scripts/app-inputs-changed.sh wildbloom "${{ github.event.before }}" "${{ github.event_name }}" >> "$GITHUB_OUTPUT"
       - id: pin
+        if: steps.changed.outputs.changed == 'true'
         run: |
           . ./PINS
           tag="ghcr.io/forgesworn/wildbloom:0.0.1-${WILDBLOOM_REF:0:7}-${WILDBLOOM_PKG_REV:?}"
@@ -53,14 +69,17 @@ jobs:
           echo "ref=$WILDBLOOM_REF" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
+        if: steps.changed.outputs.changed == 'true'
       - uses: docker/build-push-action@v6
+        if: steps.changed.outputs.changed == 'true'
         with:
           context: apps/wildbloom
           build-args: WILDBLOOM_REF=${{ steps.pin.outputs.ref }}
           load: true
           tags: ${{ steps.pin.outputs.tag }}
-      - run: tests/smoke/wildbloom.sh "${{ steps.pin.outputs.tag }}"
-      - if: github.ref == 'refs/heads/main'
+      - if: steps.changed.outputs.changed == 'true'
+        run: tests/smoke/wildbloom.sh "${{ steps.pin.outputs.tag }}"
+      - if: steps.changed.outputs.changed == 'true' && github.ref == 'refs/heads/main'
         run: |
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           tag="${{ steps.pin.outputs.tag }}"
