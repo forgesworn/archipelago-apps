@@ -39,8 +39,8 @@ package.install wildbloom (ghcr.io/forgesworn/wildbloom:0.0.1-29d382e):
 wildbloom: state=running health=none
 ```
 
-`health=none` is the dashboard state's `health` field, which this release
-leaves unset for these apps. Podman reports both containers healthy, and
+`health=none` is the dashboard state's `health` field, which was unset for
+both apps throughout this run. Podman reports both containers healthy, and
 check 3 below probes Blossom's health endpoint directly.
 
 ### Scripted half
@@ -87,8 +87,8 @@ Browser run after reboot: pending.
 
 ### Findings
 
-- The dashboard state's `health` field stays unset for both apps, although
-  Podman reports their health checks passing. Acceptance relies on `state`
+- The dashboard state's `health` field was unset for both apps throughout
+  this run, although Podman reported their health checks passing. Acceptance relies on `state`
   and a direct health probe instead.
 - Sideloaded manifests sit inside the frontend payload and would not survive
   an OTA frontend update. See `docs/upstream-notes.md`.
