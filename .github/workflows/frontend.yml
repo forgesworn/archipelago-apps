@@ -1,0 +1,72 @@
+name: frontend
+on:
+  push:
+    # Branches only: a tag push would otherwise run every workflow again.
+    branches: ['**']
+    paths:
+      - upstream/patches/**
+      - PINS
+      - scripts/fetch-archy.sh
+      - scripts/apply-patches.sh
+      - scripts/build-frontend.sh
+      - scripts/frontend-inputs.sh
+      - scripts/frontend-release-plan.sh
+      - .github/workflows/frontend.yml
+  workflow_dispatch:
+# One run at a time per ref: two runs must not both find no release and publish.
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      # A published frontend tarball is never replaced: when a push left the
+      # build inputs unchanged and the release records the same inputs, there
+      # is nothing to build or publish.
+      - id: plan
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: scripts/frontend-release-plan.sh "${{ github.event.before }}" "${{ github.event_name }}" >> "$GITHUB_OUTPUT"
+      - id: pins
+        if: steps.plan.outputs.skip != 'true'
+        run: . ./PINS && echo "node=$FRONTEND_NODE_MAJOR" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        if: steps.plan.outputs.skip != 'true'
+        with: { node-version: "${{ steps.pins.outputs.node }}" }
+      - if: steps.plan.outputs.skip != 'true'
+        run: ARCHY_FULL=1 scripts/fetch-archy.sh .cache/archy-frontend
+      - if: steps.plan.outputs.skip != 'true'
+        run: scripts/apply-patches.sh .cache/archy-frontend
+      - name: Build frontend
+        if: steps.plan.outputs.skip != 'true'
+        run: scripts/build-frontend.sh .cache/archy-frontend
+      - name: Publish release asset
+        if: steps.plan.outputs.skip != 'true' && github.ref == 'refs/heads/main'
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          . ./PINS
+          tag="frontend-${ARCHY_RELEASE}-p${FRONTEND_PATCH_LEVEL}"
+          out=.cache/frontend-out
+          # A tag may only be built from one archy pin, upstream asset, Node
+          # major, set of patches and recipe, and once published it is never
+          # replaced (a node's installed tarball would stop matching the
+          # published sha).
+          if gh release view "$tag" >/dev/null 2>&1; then
+            prev=$(mktemp -d)
+            gh release download "$tag" -p inputs.sha256 -D "$prev" \
+              || { echo "::error::$tag exists but its inputs.sha256 cannot be downloaded; not replacing it. Bump FRONTEND_PATCH_LEVEL"; exit 1; }
+            if cmp -s "$prev/inputs.sha256" "$out/inputs.sha256"; then
+              echo "::notice::$tag is already published from these inputs; not replacing its tarball or sha"
+              exit 0
+            fi
+            echo "::error::$tag was built from different inputs; bump FRONTEND_PATCH_LEVEL"
+            exit 1
+          fi
+          gh release create "$tag" --title "$tag" \
+            --notes "Archipelago ${ARCHY_RELEASE} dashboard frontend built from source with upstream/patches applied (test-node use)."
+          # inputs.sha256 goes last, so its presence implies the tarball and sha landed.
+          gh release upload "$tag" "$out/frontend.tar.gz" "$out/frontend.sha256" "$out/inputs.sha256"
