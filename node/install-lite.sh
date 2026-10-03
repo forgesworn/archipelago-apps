@@ -5,7 +5,8 @@
 #
 # Usage (on the node, as root): ./install-lite.sh <bundle-dir>
 # <bundle-dir> holds: PINS, archipelago, archipelago.sha256, frontend.tar.gz
-#   (checked against PINS FRONTEND_SHA256),
+#   (checked against frontend.sha256 from our frontend release when present,
+#   else against PINS FRONTEND_SHA256, i.e. upstream's own asset),
 #   archy/ (sparse checkout at ARCHY_REF), first-boot-secrets.sh
 #
 # Inbound traffic is limited to 22/tcp. The dashboard (443) and app ports are
@@ -66,9 +67,14 @@ mkdir -p /etc/archipelago/ssl /opt/archipelago/bin /opt/archipelago/scripts /opt
 (cd "$bundle" && sha256sum -c archipelago.sha256)
 install -m 0755 "$bundle/archipelago" /usr/local/bin/archipelago
 
-# Frontend (release asset, verified against PINS), then unpack and flatten a
-# single top-level directory if present.
-echo "${FRONTEND_SHA256:?PINS has no FRONTEND_SHA256}  frontend.tar.gz" | (cd "$bundle" && sha256sum -c -)
+# Frontend, verified, then unpacked (a single top-level directory is flattened).
+# Our frontend release ships frontend.sha256; without it the bundle must be
+# upstream's own asset, pinned by PINS FRONTEND_SHA256.
+if [ -f "$bundle/frontend.sha256" ]; then
+  (cd "$bundle" && sha256sum -c frontend.sha256)
+else
+  echo "${FRONTEND_SHA256:?PINS has no FRONTEND_SHA256}  frontend.tar.gz" | (cd "$bundle" && sha256sum -c -)
+fi
 tmp=$(mktemp -d); tar -xzf "$bundle/frontend.tar.gz" -C "$tmp"
 src=$tmp
 if [ "$(ls -1 "$tmp" | wc -l)" = 1 ] && [ -d "$tmp/$(ls -1 "$tmp")" ]; then src="$tmp/$(ls -1 "$tmp")"; fi
