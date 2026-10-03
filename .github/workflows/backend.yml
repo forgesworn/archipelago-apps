@@ -100,6 +100,26 @@ jobs:
             container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_refuses_an_empty_set \
             container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_needs_the_node_key_and_never_creates_it | tee "$RUNNER_TEMP/archipelago.log"
           grep -q 'test result: ok. 7 passed;' "$RUNNER_TEMP/archipelago.log"
+      # Linked signers (patches 0003-0005), one module
+      # filter at a time. Each count covers the whole module, upstream's tests
+      # included, so a dropped or renamed test changes it. Re-count after an
+      # ARCHY_REF bump.
+      - name: Patch tests (linked signers)
+        if: steps.plan.outputs.skip != 'true'
+        working-directory: .cache/archy
+        run: |
+          check() {
+            cargo test --manifest-path core/Cargo.toml -p archipelago --locked --bin archipelago -- "$1" \
+              | tee "$RUNNER_TEMP/patch.log"
+            grep -q "test result: ok. $2 passed; 0 failed" "$RUNNER_TEMP/patch.log" \
+              || { echo "::error::$1: expected $2 passed"; exit 1; }
+          }
+          check remote_signer::tests:: 37
+          check identity_manager::tests:: 32
+          check api::rpc::nostr_signing_origin_tests:: 3
+          check api::rpc::middleware::sanitize_tests:: 9
+          check rate_limit::tests:: 9
+          check api::rpc::identity::handlers::tests:: 1
       - name: Build backend
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy/core

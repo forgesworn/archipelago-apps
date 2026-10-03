@@ -4,7 +4,9 @@
 # Usage: read -rs ARCHY_PASSWORD; export ARCHY_PASSWORD
 #        scripts/acceptance.sh
 # (read -s keeps the password out of shell history and off the screen.)
-# Env:   NODE (default root@95.216.164.146), ARCHY_PASSWORD (dashboard password).
+# Env:   NODE (default root@95.216.164.146), ARCHY_PASSWORD (dashboard password),
+#        SIGN_AS (name of the identity that signs the upload; default the first
+#        signable one). A linked identity's signer must be online to approve.
 # Every check runs on the node over SSH, through the real RPC and the real signer.
 # Exits 0 only when every check passes.
 set -euo pipefail
@@ -19,7 +21,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 read -r -d '' remote <<'EOF' || true
 set -euo pipefail
 IFS= read -r ARCHY_PASSWORD
-host=$1
+host=$1 sign_as=${2:-}
 source /opt/archipelago/rpc.bash
 payload=""
 # rpc_logout_local (rpc.bash) removes the session file archy_login writes.
@@ -55,8 +57,11 @@ signable=$(rpc_result identity.list | jq -c '[.identities[]
   | select((.name | gsub("^\\s+|\\s+$"; "") | ascii_downcase) != "node")
   | select(.nostr_pubkey != null)]')
 want_pks=$(jq -r '[.[].nostr_pubkey | ascii_downcase] | unique | join(",")' <<<"$signable")
-signer_id=$(jq -r '.[0].id // empty' <<<"$signable")
-signer_pk=$(jq -r '.[0].nostr_pubkey // empty | ascii_downcase' <<<"$signable")
+signer=$(jq -c --arg n "$sign_as" 'if $n == "" then .[0] else (map(select(.name == $n)) | .[0]) end // empty' <<<"$signable")
+[ -n "$signer" ] || fail "no signable identity named '$sign_as'"
+signer_id=$(jq -r '.id' <<<"$signer")
+signer_pk=$(jq -r '.nostr_pubkey | ascii_downcase' <<<"$signer")
+echo "signing as: $(jq -r '"\(.name) (origin \(.origin // "unknown"))"' <<<"$signer")"
 wbn_env=$(podman_inspect_env wildbloom-node)
 env_pks=$(sed -n 's/^WILDBLOOM_ALLOW_PUBKEYS=//p' <<<"$wbn_env")
 echo "signable=$want_pks env=$env_pks"
@@ -109,6 +114,6 @@ grep -q 'NIP-07' <<<"$provider" || fail "provider not copied from host"
 echo "signer injection and provider present"
 echo "ACCEPTANCE (scripted) PASSED: blob $sha"
 EOF
-argv=$(printf '%q ' "$host")
+argv=$(printf '%q ' "$host" "${SIGN_AS:-}")
 remote="$(cat "$root/scripts/lib/archy-login.bash")"$'\n'"$remote"
 printf '%s\n' "$ARCHY_PASSWORD" | ssh "$NODE" "bash -c $(printf '%q' "$remote") remote $argv"

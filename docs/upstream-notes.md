@@ -271,3 +271,40 @@ Identity" dialog is at `neode-ui/src/views/web5/Web5Identities.vue` (line
 (`neode-ui/src/router/index.ts`, line 221) is the verifiable-credentials page
 under `web5/`. Pointing the hint at Web5 → Identities would send a first-time
 user to the right page.
+
+## Signing calls give up before a button-press signer can answer (archy `6d5f3ff`)
+
+The dashboard's RPC client (`neode-ui/src/api/rpc-client.ts`, `callInner`)
+defaults to a 15 s timeout and up to three attempts, and the NIP-07 bridge
+(`neode-ui/src/views/appSession/useNostrBridge.ts`, ~line 154) calls
+`identity.nostr-sign` with those defaults. That suits keys held on the node.
+For an identity whose key is in a remote NIP-46 signer that waits for a human
+tap (patches `0003`–`0005`), each retry is a fresh request, so a slow approval
+could raise up to three prompts on the device, and the app sees "Request
+timeout" after about 47 s. The patches de-duplicate retries on the backend (a
+retry joins the request already in flight, or gets its result for 60 s), so
+the device sees one prompt. A denial that lands between two retries is not
+cached, so the next retry asks again. The frontend would still do better to
+pass `timeout: 90000` and `maxRetries: 1` for the sign and encrypt/decrypt
+calls on linked identities.
+
+## Linking a remote signer has no dashboard UI yet (archy `6d5f3ff`)
+
+Patches `0003`–`0005` implement Phase 3 of `docs/nostr-identity-import-plan.md`
+(NIP-46 "linked" identities) in the backend only: `identity.link-nip46`
+(`bunker://`) and `identity.link-nostrconnect-start` / `-finish`
+(`nostrconnect://`, the "flow B" of `docs/nostr-signer-login-research.md`).
+Here they are driven by `scripts/link-signer.sh`. The plan's "Add existing"
+modal on `Web5Identities.vue` would be the natural home: a paste box for
+`bunker://`, and a QR code for `nostrconnect://` with the finish call polled
+underneath. `identity.list` already reports `origin: "linked"` and the
+signer's public details, which an origin badge could use.
+
+## New identities reach running apps only on restart (archy `6d5f3ff`)
+
+When an identity is added, the backend re-renders the quadlet units of apps
+whose manifests template `{{NODE_IDENTITY_PUBKEYS}}` (patch `0001`), but a
+running container keeps the environment it started with until the app is
+restarted (`package.restart`, the dashboard's Restart button). Restarting
+affected apps when the rendered value changes, or noting it in the identity
+screens, would save users a step.

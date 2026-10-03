@@ -1,0 +1,1099 @@
+From 68068219eaa1606f24f162b4781043ff185e14d5 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 09:29:40 +0200
+Subject: [PATCH 5/5] feat: pair linked signers from a nostrconnect:// link
+
+identity.link-nostrconnect-start takes { name, purpose?, relays } (one
+to 8 relays) and returns { pairing_id, uri }: a nostrconnect:// link
+with a fresh client key, a random secret drawn through the entropy
+guard, the relays, name=Archipelago and the permissions Archipelago
+uses. A spawned listener waits on those relays for the signer's connect
+response carrying the secret; responses with any other secret are
+ignored, since anyone can publish to the relay. The response author is
+the remote signer. The listener then runs the same key proof and
+duplicate checks as bunker:// linking and creates the identity with no
+stored secret; later sessions reuse the client key.
+
+identity.link-nostrconnect-finish takes { pairing_id } and waits at most
+10 s: { status: "pending" } while the signer has not answered or the
+proof is still running, { status: "linked", identity } once done, and
+an error for a failed, expired or unknown pairing. The signer has 5
+minutes to answer; a proof already under way then runs to completion.
+A settled pairing repeats its outcome to every poll for a minute, and
+at most 4 unsettled pairings run at once.
+
+Both methods follow the dashboard-only origin rule and are rate-limited.
+---
+ core/archipelago/src/api/rpc/dispatcher.rs    |   6 +
+ .../src/api/rpc/identity/handlers.rs          | 181 +++++-
+ core/archipelago/src/api/rpc/mod.rs           |  27 +-
+ core/archipelago/src/identity_manager.rs      | 165 +++++-
+ core/archipelago/src/rate_limit.rs            |   4 +
+ core/archipelago/src/remote_signer.rs         | 534 +++++++++++++++++-
+ 6 files changed, 880 insertions(+), 37 deletions(-)
+
+diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
+index 8b01160..e7f12a1 100644
+--- a/core/archipelago/src/api/rpc/dispatcher.rs
++++ b/core/archipelago/src/api/rpc/dispatcher.rs
+@@ -176,6 +176,12 @@ impl RpcHandler {
+             "identity.export-keys" => self.handle_identity_export_keys(params).await,
+             "identity.create-nostr-key" => self.handle_identity_create_nostr_key(params).await,
+             "identity.link-nip46" => self.handle_identity_link_nip46(params).await,
++            "identity.link-nostrconnect-start" => {
++                self.handle_identity_link_nostrconnect_start(params).await
++            }
++            "identity.link-nostrconnect-finish" => {
++                self.handle_identity_link_nostrconnect_finish(params).await
++            }
+             "identity.nostr-sign" => self.handle_identity_nostr_sign(params).await,
+             "identity.nostr-encrypt-nip04" => {
+                 self.handle_identity_nostr_encrypt_nip04(params).await
+diff --git a/core/archipelago/src/api/rpc/identity/handlers.rs b/core/archipelago/src/api/rpc/identity/handlers.rs
+index 65f96f8..430cabe 100644
+--- a/core/archipelago/src/api/rpc/identity/handlers.rs
++++ b/core/archipelago/src/api/rpc/identity/handlers.rs
+@@ -2,11 +2,15 @@ use super::*;
+ use crate::api::rpc::RpcHandler;
+ use crate::identity_manager::{
+     is_node_identity, IdentityManager, IdentityOrigin, IdentityProfile, IdentityPurpose,
++    IdentityRecord,
+ };
+ use crate::network::did_dht;
+-use crate::remote_signer::{parse_bunker_uri, NostrConnectSigner};
++use crate::remote_signer::{
++    parse_bunker_uri, NostrConnectPairing, NostrConnectSigner, Pairings, MAX_RELAYS,
++};
+ use anyhow::{Context, Result};
+ use nostr_sdk::ToBech32;
++use std::sync::Arc;
+ 
+ impl RpcHandler {
+     /// List all identities with their default status.
+@@ -161,21 +165,7 @@ impl RpcHandler {
+             .get("bunker_uri")
+             .and_then(|v| v.as_str())
+             .ok_or_else(|| anyhow::anyhow!("Missing required parameter: bunker_uri"))?;
+-        let name = params
+-            .get("name")
+-            .and_then(|v| v.as_str())
+-            .map(str::trim)
+-            .filter(|n| !n.is_empty())
+-            .ok_or_else(|| anyhow::anyhow!("Missing required parameter: name"))?;
+-        if name.len() > 100 {
+-            anyhow::bail!("Identity name must be 100 characters or fewer");
+-        }
+-        let name = name.to_string();
+-        let purpose = match params.get("purpose").and_then(|v| v.as_str()) {
+-            Some("business") => IdentityPurpose::Business,
+-            Some("anonymous") => IdentityPurpose::Anonymous,
+-            _ => IdentityPurpose::Personal,
+-        };
++        let (name, purpose) = link_name_and_purpose(&params)?;
+         let uri = parse_bunker_uri(bunker_uri)?;
+ 
+         let data_dir = self.config.data_dir.clone();
+@@ -203,19 +193,56 @@ impl RpcHandler {
+         .await
+         .context("Link task failed")??;
+ 
+-        Ok(serde_json::json!({
+-            "id": record.id,
+-            "name": record.name,
+-            "purpose": record.purpose,
+-            "pubkey": record.pubkey_hex,
+-            "did": record.did,
+-            "created_at": record.created_at,
+-            "nostr_pubkey": record.nostr_pubkey,
+-            "nostr_npub": record.nostr_npub,
+-            "profile": record.profile,
+-            "origin": record.origin,
+-            "signer": record.signer,
+-        }))
++        Ok(linked_identity_json(&record))
++    }
++
++    /// Start linking an identity from a `nostrconnect://` link that the
++    /// signer scans: `{ name, purpose?, relays }` gives `{ pairing_id, uri }`.
++    /// The relays must be reachable from the signer's device. Dashboard only,
++    /// like `identity.link-nip46`.
++    pub(in crate::api::rpc) async fn handle_identity_link_nostrconnect_start(
++        &self,
++        params: Option<serde_json::Value>,
++    ) -> Result<serde_json::Value> {
++        let params = params.unwrap_or_default();
++        let (name, purpose) = link_name_and_purpose(&params)?;
++        let relays = pairing_relays(&params)?;
++
++        let identity_dir = self.config.data_dir.join("identity");
++        let node_nostr_pubkey =
++            crate::nostr_discovery::existing_nostr_pubkey(&identity_dir).await?;
++        let manager = Arc::new(IdentityManager::new(&self.config.data_dir).await?);
++        let (pairing_id, uri) = manager.start_nostrconnect_pairing(
++            &Pairings::global(),
++            Arc::new(NostrConnectPairing),
++            name,
++            purpose,
++            relays,
++            node_nostr_pubkey,
++        )?;
++        Ok(serde_json::json!({ "pairing_id": pairing_id, "uri": uri }))
++    }
++
++    /// Poll a `nostrconnect://` pairing: `{ pairing_id }` gives
++    /// `{ status: "pending" }` (within 10 s) or
++    /// `{ status: "linked", identity }`; a failed, expired or unknown pairing
++    /// is an error.
++    pub(in crate::api::rpc) async fn handle_identity_link_nostrconnect_finish(
++        &self,
++        params: Option<serde_json::Value>,
++    ) -> Result<serde_json::Value> {
++        let params = params.unwrap_or_default();
++        let pairing_id = params
++            .get("pairing_id")
++            .and_then(|v| v.as_str())
++            .ok_or_else(|| anyhow::anyhow!("Missing required parameter: pairing_id"))?;
++        Ok(match Pairings::global().finish(pairing_id).await? {
++            Some(record) => serde_json::json!({
++                "status": "linked",
++                "identity": linked_identity_json(&record),
++            }),
++            None => serde_json::json!({ "status": "pending" }),
++        })
+     }
+ 
+     /// Delete an identity.
+@@ -1009,3 +1036,99 @@ impl RpcHandler {
+         }))
+     }
+ }
++
++/// `name` (required, at most 100 characters) and `purpose` (default
++/// personal) for the link methods.
++fn link_name_and_purpose(params: &serde_json::Value) -> Result<(String, IdentityPurpose)> {
++    let name = params
++        .get("name")
++        .and_then(|v| v.as_str())
++        .map(str::trim)
++        .filter(|n| !n.is_empty())
++        .ok_or_else(|| anyhow::anyhow!("Missing required parameter: name"))?;
++    if name.len() > 100 {
++        anyhow::bail!("Identity name must be 100 characters or fewer");
++    }
++    let purpose = match params.get("purpose").and_then(|v| v.as_str()) {
++        Some("business") => IdentityPurpose::Business,
++        Some("anonymous") => IdentityPurpose::Anonymous,
++        _ => IdentityPurpose::Personal,
++    };
++    Ok((name.to_string(), purpose))
++}
++
++/// A newly linked identity, in the shape `identity.get` uses.
++fn linked_identity_json(record: &IdentityRecord) -> serde_json::Value {
++    serde_json::json!({
++        "id": record.id,
++        "name": record.name,
++        "purpose": record.purpose,
++        "pubkey": record.pubkey_hex,
++        "did": record.did,
++        "created_at": record.created_at,
++        "nostr_pubkey": record.nostr_pubkey,
++        "nostr_npub": record.nostr_npub,
++        "profile": record.profile,
++        "origin": record.origin,
++        "signer": record.signer,
++    })
++}
++
++/// The `relays` for a `nostrconnect://` pairing: one to [`MAX_RELAYS`]
++/// `ws(s)://` URLs.
++fn pairing_relays(params: &serde_json::Value) -> Result<Vec<nostr_sdk::RelayUrl>> {
++    let relays = params
++        .get("relays")
++        .and_then(|v| v.as_array())
++        .filter(|r| !r.is_empty())
++        .ok_or_else(|| anyhow::anyhow!("Missing required parameter: relays"))?;
++    if relays.len() > MAX_RELAYS {
++        anyhow::bail!("Invalid relays: at most {MAX_RELAYS}");
++    }
++    relays
++        .iter()
++        .map(|r| {
++            r.as_str()
++                .and_then(|r| nostr_sdk::RelayUrl::parse(r).ok())
++                .ok_or_else(|| {
++                    anyhow::anyhow!("Invalid relay {}: expected a ws:// or wss:// URL", r)
++                })
++        })
++        .collect()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn pairing_relays_are_one_to_eight_websocket_urls() {
++        let relays = |n: usize| {
++            let list: Vec<String> = (0..n)
++                .map(|i| format!("wss://relay{i}.example.com"))
++                .collect();
++            serde_json::json!({ "relays": list })
++        };
++        assert_eq!(pairing_relays(&relays(1)).unwrap().len(), 1);
++        assert_eq!(
++            pairing_relays(&relays(MAX_RELAYS)).unwrap().len(),
++            MAX_RELAYS
++        );
++        assert_eq!(
++            pairing_relays(&relays(MAX_RELAYS + 1))
++                .unwrap_err()
++                .to_string(),
++            "Invalid relays: at most 8"
++        );
++        assert_eq!(
++            pairing_relays(&relays(0)).unwrap_err().to_string(),
++            "Missing required parameter: relays"
++        );
++        assert!(
++            pairing_relays(&serde_json::json!({ "relays": ["https://relay.example.com"] }))
++                .unwrap_err()
++                .to_string()
++                .starts_with("Invalid relay")
++        );
++    }
++}
+diff --git a/core/archipelago/src/api/rpc/mod.rs b/core/archipelago/src/api/rpc/mod.rs
+index ea4f48b..6f507f7 100644
+--- a/core/archipelago/src/api/rpc/mod.rs
++++ b/core/archipelago/src/api/rpc/mod.rs
+@@ -97,6 +97,17 @@ fn nostr_signing_origin_allowed(headers: &hyper::HeaderMap, dev_mode: bool) -> b
+     matches!(url.port_or_known_default(), Some(80 | 443))
+ }
+ 
++/// Methods that link an identity to a remote signer. They follow the signing
++/// origin rule too.
++fn signer_link_method(method: &str) -> bool {
++    matches!(
++        method,
++        "identity.link-nip46"
++            | "identity.link-nostrconnect-start"
++            | "identity.link-nostrconnect-finish"
++    )
++}
++
+ /// Read-only authenticated methods may skip CSRF, but they must still exist in
+ /// the dispatcher. The tab signer uses `system.get-hostname` as its lightweight
+ /// session probe, so keeping the policy in one testable function protects that
+@@ -347,7 +358,7 @@ impl RpcHandler {
+ 
+         // Linking a remote signer adds a key apps may then sign with, so only
+         // the dashboard (or an authenticated non-browser client) may do it.
+-        if rpc_req.method == "identity.link-nip46"
++        if signer_link_method(&rpc_req.method)
+             && !nostr_signing_origin_allowed(&parts.headers, self.config.dev_mode)
+         {
+             return Ok(self.error_response(
+@@ -832,12 +843,20 @@ mod nostr_signing_origin_tests {
+ 
+     #[test]
+     fn link_nip46_is_gated_like_signing() {
+-        // `handle` applies the signing origin rule to `identity.link-nip46`
+-        // too: dashboard and Origin-less (CLI) clients only.
++        // `handle` applies the signing origin rule to the link methods too:
++        // dashboard and Origin-less (CLI) clients only.
+         const HANDLER: &str = include_str!("mod.rs");
+         assert!(HANDLER.contains(
+-            "if rpc_req.method == \"identity.link-nip46\"\n            && !nostr_signing_origin_allowed("
++            "if signer_link_method(&rpc_req.method)\n            && !nostr_signing_origin_allowed("
+         ));
++        for method in [
++            "identity.link-nip46",
++            "identity.link-nostrconnect-start",
++            "identity.link-nostrconnect-finish",
++        ] {
++            assert!(signer_link_method(method), "{method}");
++        }
++        assert!(!signer_link_method("identity.list"));
+         assert!(nostr_signing_origin_allowed(&headers(None), false));
+         assert!(!nostr_signing_origin_allowed(
+             &headers(Some("https://node.local:8337")),
+diff --git a/core/archipelago/src/identity_manager.rs b/core/archipelago/src/identity_manager.rs
+index 9114704..bb03842 100644
+--- a/core/archipelago/src/identity_manager.rs
++++ b/core/archipelago/src/identity_manager.rs
+@@ -12,8 +12,9 @@ use tokio::fs;
+ 
+ use crate::identity::did_key_from_pubkey_hex;
+ use crate::remote_signer::{
+-    verify_remote_event, BunkerUri, CipherOp, RemoteReply, RemoteRequests, RemoteSessions,
+-    RemoteSigner, RemoteSignerSource, RequestKey,
++    nostrconnect_uri, random_token, verify_remote_event, BunkerUri, CipherOp, PairingState,
++    PairingTransport, Pairings, RemoteReply, RemoteRequests, RemoteSessions, RemoteSigner,
++    RemoteSignerSource, RequestKey,
+ };
+ use nostr_sdk::ToBech32;
+ use std::sync::Arc;
+@@ -588,6 +589,70 @@ impl IdentityManager {
+         self.get(&id).await
+     }
+ 
++    /// Start pairing a new linked identity from a `nostrconnect://` link.
++    ///
++    /// Generates a client key and secret, and spawns a listener on `relays`
++    /// for the signer's `connect` response. When it arrives, the signer's key
++    /// goes through the same proof and duplicate checks as a `bunker://`
++    /// link ([`Self::create_linked`]), with no secret to keep. Returns the
++    /// pairing id and the link to show the signer; poll
++    /// [`Pairings::finish`] for the outcome.
++    pub fn start_nostrconnect_pairing(
++        self: &Arc<Self>,
++        pairings: &Arc<Pairings>,
++        transport: Arc<dyn PairingTransport>,
++        name: String,
++        purpose: IdentityPurpose,
++        relays: Vec<nostr_sdk::RelayUrl>,
++        node_nostr_pubkey: Option<String>,
++    ) -> Result<(String, String)> {
++        let client_keys = nostr_sdk::Keys::generate();
++        let secret = random_token()?;
++        let uri = nostrconnect_uri(&client_keys.public_key(), &relays, &secret);
++
++        let manager = Arc::clone(self);
++        let pairing_id = pairings.start(move |state, listen_until| async move {
++            let outcome = async {
++                let remote_signer_pubkey = tokio::time::timeout_at(
++                    listen_until,
++                    transport.wait_for_signer(&client_keys, &relays, &secret),
++                )
++                .await
++                .map_err(|_| {
++                    anyhow::anyhow!(
++                        "linked signer pairing expired: no signer answered within 5 minutes"
++                    )
++                })??;
++                // From here the proof runs to completion, past the deadline
++                // if need be: its own requests are bounded.
++                state.send_replace(PairingState::Proving);
++                let signer =
++                    transport.signer(client_keys.clone(), remote_signer_pubkey, relays.clone());
++                let target = BunkerUri {
++                    remote_signer_pubkey,
++                    relays,
++                    secret: None,
++                };
++                manager
++                    .create_linked(
++                        name,
++                        purpose,
++                        &target,
++                        &client_keys,
++                        signer.as_ref(),
++                        node_nostr_pubkey.as_deref(),
++                    )
++                    .await
++            }
++            .await;
++            state.send_replace(match outcome {
++                Ok(record) => PairingState::Linked(Box::new(record)),
++                Err(e) => PairingState::Failed(e.to_string()),
++            });
++        })?;
++        Ok((pairing_id, uri))
++    }
++
+     /// Refuse `user_pubkey_hex` if the node already has it: the node discovery
+     /// key `node_nostr_pubkey` or any identity's Nostr key.
+     async fn ensure_new_nostr_key(
+@@ -1379,7 +1444,9 @@ impl IdentityManager {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-    use crate::remote_signer::tests::{fake_sessions, FakeMode, FakeSigner, FakeSource};
++    use crate::remote_signer::tests::{
++        fake_sessions, FakeMode, FakePairing, FakeSigner, FakeSource,
++    };
+     use tempfile::tempdir;
+ 
+     #[tokio::test]
+@@ -2325,6 +2392,98 @@ mod tests {
+         assert_eq!(sessions.len(), 0);
+     }
+ 
++    #[tokio::test]
++    async fn nostrconnect_pairing_links_after_the_signer_answers() {
++        let dir = tempdir().unwrap();
++        let mgr = Arc::new(IdentityManager::new(dir.path()).await.unwrap());
++        let pairings = Arc::new(Pairings::default());
++        let user_keys = nostr_sdk::Keys::generate();
++        let remote = nostr_sdk::Keys::generate().public_key();
++        let transport = Arc::new(FakePairing {
++            remote,
++            answer: tokio::sync::Notify::new(),
++            signer: Arc::new(FakeSigner::new(user_keys.clone(), FakeMode::Honest)),
++        });
++        let relays = vec![nostr_sdk::RelayUrl::parse("wss://relay.example.com").unwrap()];
++        let pair = |name: &str| {
++            mgr.start_nostrconnect_pairing(
++                &pairings,
++                transport.clone(),
++                name.to_string(),
++                IdentityPurpose::Personal,
++                relays.clone(),
++                None,
++            )
++            .unwrap()
++        };
++
++        let (id, uri) = pair("Phone");
++        assert!(uri.starts_with("nostrconnect://"));
++        // Nothing yet: still waiting (`finish` answers pending after 10 s;
++        // `remote_signer::tests` pins that under a paused clock).
++        assert!(
++            tokio::time::timeout(Duration::from_millis(50), pairings.finish(&id))
++                .await
++                .is_err()
++        );
++
++        transport.answer.notify_one();
++        let record = pairings.finish(&id).await.unwrap().expect("linked");
++        assert_eq!(record.origin, IdentityOrigin::Linked);
++        assert_eq!(record.nostr_pubkey, Some(user_keys.public_key().to_hex()));
++        assert_eq!(
++            record.signer.as_ref().unwrap().remote_signer_pubkey,
++            remote.to_hex()
++        );
++        let linked = mgr.linked_signer(&record.id).await.unwrap().unwrap();
++        assert!(linked.bunker_secret.is_none());
++        // A repeated poll gets the same answer.
++        let again = pairings.finish(&id).await.unwrap().expect("still linked");
++        assert_eq!(again.id, record.id);
++
++        // The same signer again fails the shared duplicate check.
++        let (again, _) = pair("Phone again");
++        transport.answer.notify_one();
++        let err = pairings.finish(&again).await.unwrap_err();
++        assert!(
++            err.to_string()
++                .contains("already belongs to identity 'Phone'"),
++            "{err}"
++        );
++        assert_eq!(mgr.list().await.unwrap().0.len(), 1);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn nostrconnect_pairing_reports_a_signer_that_never_answers() {
++        let dir = tempdir().unwrap();
++        let mgr = Arc::new(IdentityManager::new(dir.path()).await.unwrap());
++        let pairings = Arc::new(Pairings::default());
++        let transport = Arc::new(FakePairing {
++            remote: nostr_sdk::Keys::generate().public_key(),
++            answer: tokio::sync::Notify::new(),
++            signer: Arc::new(FakeSigner::new(
++                nostr_sdk::Keys::generate(),
++                FakeMode::Honest,
++            )),
++        });
++        let (id, _) = mgr
++            .start_nostrconnect_pairing(
++                &pairings,
++                transport,
++                "Phone".to_string(),
++                IdentityPurpose::Personal,
++                vec![nostr_sdk::RelayUrl::parse("wss://relay.example.com").unwrap()],
++                None,
++            )
++            .unwrap();
++        tokio::time::sleep(crate::remote_signer::PAIRING_TTL).await;
++        let err = pairings.finish(&id).await.unwrap_err();
++        assert_eq!(
++            err.to_string(),
++            "linked signer pairing expired: no signer answered within 5 minutes"
++        );
++    }
++
+     #[tokio::test]
+     async fn test_delete_default_shifts() {
+         let dir = tempdir().unwrap();
+diff --git a/core/archipelago/src/rate_limit.rs b/core/archipelago/src/rate_limit.rs
+index 0bffc72..8fc725c 100644
+--- a/core/archipelago/src/rate_limit.rs
++++ b/core/archipelago/src/rate_limit.rs
+@@ -91,6 +91,10 @@ impl EndpointRateLimiter {
+         // Identity/credential operations
+         limits.insert("identity.create".to_string(), (10, 300));
+         limits.insert("identity.link-nip46".to_string(), (10, 300));
++        limits.insert("identity.link-nostrconnect-start".to_string(), (10, 300));
++        // Polled: each call waits up to 10 s, so a 5-minute pairing makes
++        // about 30, and up to four pairings can run at once.
++        limits.insert("identity.link-nostrconnect-finish".to_string(), (150, 300));
+         limits.insert("identity.issue-credential".to_string(), (20, 300));
+         // Backup operations (resource-intensive)
+         limits.insert("backup.create".to_string(), (10, 600));
+diff --git a/core/archipelago/src/remote_signer.rs b/core/archipelago/src/remote_signer.rs
+index 42d6cba..fecc241 100644
+--- a/core/archipelago/src/remote_signer.rs
++++ b/core/archipelago/src/remote_signer.rs
+@@ -31,7 +31,7 @@ use std::time::Duration;
+ use tokio::sync::broadcast::error::RecvError;
+ use tokio::time::Instant;
+ 
+-use crate::identity_manager::LinkedSigner;
++use crate::identity_manager::{IdentityRecord, LinkedSigner};
+ 
+ /// How long to wait for the signer's relays to accept a connection.
+ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+@@ -349,6 +349,18 @@ impl NostrConnectSigner {
+         }
+     }
+ 
++    /// Signer for a client key the signer has just paired with through a
++    /// `nostrconnect://` link: its `connect` response opened the session.
++    pub fn paired(
++        client_keys: Keys,
++        remote_signer_pubkey: PublicKey,
++        relays: Vec<RelayUrl>,
++    ) -> Self {
++        let mut signer = Self::new(client_keys, remote_signer_pubkey, relays, None);
++        signer.session.accept();
++        signer
++    }
++
+     fn new(
+         client_keys: Keys,
+         remote_signer_pubkey: PublicKey,
+@@ -1348,6 +1360,278 @@ impl RemoteRequests {
+     }
+ }
+ 
++/// How long a `nostrconnect://` pairing waits for the signer.
++pub const PAIRING_TTL: Duration = Duration::from_secs(5 * 60);
++/// How long a proof that started before [`PAIRING_TTL`] ran out may still
++/// take. Its own requests are bounded well within this; it is a backstop.
++pub const PROOF_ALLOWANCE: Duration = Duration::from_secs(3 * 60);
++/// How long a settled pairing keeps answering `finish` with its outcome, so a
++/// poll whose response was lost can ask again.
++pub const OUTCOME_GRACE: Duration = Duration::from_secs(60);
++/// The most pairings waiting at once.
++pub const MAX_PAIRINGS: usize = 4;
++/// The longest one `finish` call waits before answering `pending`, below the
++/// dashboard RPC client's 15 s timeout.
++pub const FINISH_WAIT: Duration = Duration::from_secs(10);
++/// Permissions requested in a `nostrconnect://` link.
++const PAIRING_PERMS: &str = "sign_event,nip44_encrypt,nip44_decrypt,nip04_encrypt,nip04_decrypt";
++
++/// Build the `nostrconnect://` link a signer scans to pair with
++/// `client_pubkey`.
++pub fn nostrconnect_uri(client_pubkey: &PublicKey, relays: &[RelayUrl], secret: &str) -> String {
++    let mut url = reqwest::Url::parse(&format!("nostrconnect://{}", client_pubkey.to_hex()))
++        .expect("a hex public key is a valid host");
++    {
++        let mut query = url.query_pairs_mut();
++        for relay in relays {
++            query.append_pair("relay", relay.as_str());
++        }
++        query
++            .append_pair("secret", secret)
++            .append_pair("name", "Archipelago")
++            .append_pair("perms", PAIRING_PERMS);
++    }
++    url.to_string()
++}
++
++/// The signer's key if `event` is its `connect` response to our
++/// `nostrconnect://` link: a NIP-46 response to `client_keys` whose result
++/// is `secret`. Anyone can publish to the relay, so anything else is `None`.
++pub fn pairing_response(client_keys: &Keys, event: &Event, secret: &str) -> Option<PublicKey> {
++    // Checked before decryption, as in `reply_to`: the author we return
++    // becomes the identity's remote signer.
++    if event.kind != Kind::NostrConnect || event.verify().is_err() {
++        return None;
++    }
++    let secret_key = client_keys.secret_key();
++    let json = nostr_sdk::nips::nip44::decrypt(secret_key, &event.pubkey, &event.content)
++        .ok()
++        .or_else(|| {
++            nostr_sdk::nips::nip04::decrypt(secret_key, &event.pubkey, &event.content).ok()
++        })?;
++    match NostrConnectMessage::from_json(json) {
++        Ok(NostrConnectMessage::Response {
++            result: Some(result),
++            ..
++        }) if result == secret => Some(event.pubkey),
++        _ => None,
++    }
++}
++
++/// The relay side of `nostrconnect://` pairing. A seam so tests can swap
++/// the network for a fake.
++#[async_trait]
++pub trait PairingTransport: Send + Sync {
++    /// Wait for the signer's `connect` response carrying `secret`; returns
++    /// the remote-signer key (its author). Runs until it arrives.
++    async fn wait_for_signer(
++        &self,
++        client_keys: &Keys,
++        relays: &[RelayUrl],
++        secret: &str,
++    ) -> Result<PublicKey, RemoteSignerError>;
++    /// A signer session for the client key the signer just paired with.
++    fn signer(
++        &self,
++        client_keys: Keys,
++        remote_signer_pubkey: PublicKey,
++        relays: Vec<RelayUrl>,
++    ) -> Arc<dyn RemoteSigner>;
++}
++
++/// The real pairing transport: NIP-46 over the given relays.
++pub struct NostrConnectPairing;
++
++/// A random 16-byte token as hex, drawn through the KEY-05 entropy guard:
++/// whoever holds a pairing secret can pair a signer to this node.
++pub(crate) fn random_token() -> Result<String> {
++    let mut bytes = [0u8; 16];
++    crate::entropy::draw_key_bytes(&mut OsRng, &mut bytes).map_err(|e| {
++        anyhow::anyhow!("refusing to mint a pairing token from degenerate entropy: {e}")
++    })?;
++    Ok(hex::encode(bytes))
++}
++
++#[async_trait]
++impl PairingTransport for NostrConnectPairing {
++    async fn wait_for_signer(
++        &self,
++        client_keys: &Keys,
++        relays: &[RelayUrl],
++        secret: &str,
++    ) -> Result<PublicKey, RemoteSignerError> {
++        let offline = || {
++            let list: Vec<String> = relays.iter().map(|r| r.to_string()).collect();
++            RemoteSignerError::Offline(list.join(", "))
++        };
++        let client = ShutdownGuard::new(Client::new(client_keys.clone()));
++        for relay in relays {
++            client
++                .client()
++                .add_relay(relay.clone())
++                .await
++                .map_err(|_| offline())?;
++        }
++        if client
++            .client()
++            .try_connect(CONNECT_TIMEOUT)
++            .await
++            .success
++            .is_empty()
++        {
++            return Err(offline());
++        }
++        let filter = Filter::new()
++            .kind(Kind::NostrConnect)
++            .pubkey(client_keys.public_key());
++        let started = Timestamp::now();
++        let mut notifications = client.client().notifications();
++        let subscribed = client
++            .client()
++            .subscribe(filter.clone().limit(0), None)
++            .await;
++        if !subscribed.is_ok_and(|out| !out.success.is_empty()) {
++            return Err(offline());
++        }
++        loop {
++            match notifications.recv().await {
++                Ok(RelayPoolNotification::Event { event, .. }) => {
++                    if let Some(pubkey) = pairing_response(client_keys, &event, secret) {
++                        return Ok(pubkey);
++                    }
++                }
++                Ok(_) => {}
++                // Notifications were dropped: look on the relays instead.
++                Err(RecvError::Lagged(_)) => {
++                    let since = filter.clone().since(started - LAG_LOOKBACK);
++                    if let Ok(events) = client.client().fetch_events(since, CONNECT_TIMEOUT).await {
++                        if let Some(pubkey) = events
++                            .iter()
++                            .find_map(|e| pairing_response(client_keys, e, secret))
++                        {
++                            return Ok(pubkey);
++                        }
++                    }
++                }
++                Err(RecvError::Closed) => return Err(offline()),
++            }
++        }
++    }
++
++    fn signer(
++        &self,
++        client_keys: Keys,
++        remote_signer_pubkey: PublicKey,
++        relays: Vec<RelayUrl>,
++    ) -> Arc<dyn RemoteSigner> {
++        Arc::new(NostrConnectSigner::paired(
++            client_keys,
++            remote_signer_pubkey,
++            relays,
++        ))
++    }
++}
++
++/// Where a pairing has got to.
++#[derive(Debug, Clone)]
++pub enum PairingState {
++    /// Waiting for the signer to scan the link and answer.
++    Waiting,
++    /// The signer answered; its key is being proven.
++    Proving,
++    Linked(Box<IdentityRecord>),
++    Failed(String),
++}
++
++struct Pairing {
++    state: tokio::sync::watch::Receiver<PairingState>,
++}
++
++fn settled(state: &PairingState) -> bool {
++    matches!(state, PairingState::Linked(_) | PairingState::Failed(_))
++}
++
++/// Pairings waiting on a `nostrconnect://` link, each with a task that
++/// listens for the signer and then links the identity. The signer has
++/// [`PAIRING_TTL`] to answer; a proof under way then runs to completion. A
++/// settled pairing is kept for [`OUTCOME_GRACE`] so `finish` can report it
++/// again, then removed. At most [`MAX_PAIRINGS`] unsettled pairings run at
++/// once.
++#[derive(Default)]
++pub struct Pairings {
++    pending: Mutex<HashMap<String, Pairing>>,
++}
++
++impl Pairings {
++    /// The process-wide pairings.
++    pub fn global() -> Arc<Self> {
++        static GLOBAL: OnceLock<Arc<Pairings>> = OnceLock::new();
++        Arc::clone(GLOBAL.get_or_init(|| Arc::new(Self::default())))
++    }
++
++    /// Start a pairing that runs `work` until it settles. `work` is given
++    /// the sender to report progress through and the deadline for the signer
++    /// to answer ([`PAIRING_TTL`] from now); a proof already running at that
++    /// deadline is left to finish. Returns the pairing id.
++    pub fn start<F, Fut>(self: &Arc<Self>, work: F) -> Result<String>
++    where
++        F: FnOnce(tokio::sync::watch::Sender<PairingState>, Instant) -> Fut,
++        Fut: Future<Output = ()> + Send + 'static,
++    {
++        let mut pending = lock(&self.pending);
++        let unsettled = pending
++            .values()
++            .filter(|p| !settled(&p.state.borrow()))
++            .count();
++        if unsettled >= MAX_PAIRINGS {
++            anyhow::bail!(
++                "linked signer pairings are at their limit of {MAX_PAIRINGS}; finish one or wait for it to expire"
++            );
++        }
++        let id = random_token()?;
++        let (state_tx, state_rx) = tokio::sync::watch::channel(PairingState::Waiting);
++        let listen_until = Instant::now() + PAIRING_TTL;
++        let work = work(state_tx, listen_until);
++        let pairings = Arc::clone(self);
++        let task_id = id.clone();
++        tokio::spawn(async move {
++            let _ = tokio::time::timeout_at(listen_until + PROOF_ALLOWANCE, work).await;
++            tokio::time::sleep(OUTCOME_GRACE).await;
++            lock(&pairings.pending).remove(&task_id);
++        });
++        pending.insert(id.clone(), Pairing { state: state_rx });
++        Ok(id)
++    }
++
++    /// Wait up to [`FINISH_WAIT`] for the pairing to settle: `Ok(None)` while
++    /// it is still waiting or proving, the new identity once linked, and an
++    /// error if it failed, expired or never existed. A settled pairing gives
++    /// the same answer to every poll for [`OUTCOME_GRACE`].
++    pub async fn finish(&self, id: &str) -> Result<Option<IdentityRecord>> {
++        let gone = || anyhow::anyhow!("linked signer pairing is unknown or has expired");
++        let mut state = lock(&self.pending)
++            .get(id)
++            .map(|p| p.state.clone())
++            .ok_or_else(gone)?;
++        let outcome = match tokio::time::timeout(FINISH_WAIT, state.wait_for(settled)).await {
++            Err(_) => return Ok(None),
++            // The pairing's task ended without an outcome.
++            Ok(Err(_)) => return Err(gone()),
++            Ok(Ok(outcome)) => outcome.clone(),
++        };
++        match outcome {
++            PairingState::Linked(record) => Ok(Some(*record)),
++            PairingState::Failed(message) => Err(anyhow::anyhow!(message)),
++            PairingState::Waiting | PairingState::Proving => Ok(None),
++        }
++    }
++
++    #[cfg(test)]
++    pub fn len(&self) -> usize {
++        lock(&self.pending).len()
++    }
++}
++
+ #[cfg(test)]
+ pub(crate) mod tests {
+     use super::*;
+@@ -2449,4 +2733,252 @@ pub(crate) mod tests {
+         retry.await.unwrap().unwrap();
+         assert_eq!(signer.calls(), 1);
+     }
++
++    #[test]
++    fn nostrconnect_uri_carries_the_pairing_fields() {
++        let client = Keys::generate().public_key();
++        let relays = vec![
++            RelayUrl::parse("wss://relay.example.com").unwrap(),
++            RelayUrl::parse("ws://192.168.1.5:7777").unwrap(),
++        ];
++        let uri = nostrconnect_uri(&client, &relays, "s3cret");
++        assert!(uri.starts_with(&format!("nostrconnect://{}?", client.to_hex())));
++        assert!(uri.contains("relay=wss%3A%2F%2Frelay.example.com"), "{uri}");
++
++        let url = reqwest::Url::parse(&uri).unwrap();
++        assert_eq!(url.scheme(), "nostrconnect");
++        assert_eq!(url.host_str(), Some(client.to_hex().as_str()));
++        let pairs: Vec<(String, String)> = url.query_pairs().into_owned().collect();
++        let get = |k: &str| -> Vec<&str> {
++            pairs
++                .iter()
++                .filter(|(n, _)| n == k)
++                .map(|(_, v)| v.as_str())
++                .collect()
++        };
++        assert_eq!(
++            get("relay"),
++            vec!["wss://relay.example.com", "ws://192.168.1.5:7777"]
++        );
++        assert_eq!(get("secret"), vec!["s3cret"]);
++        assert_eq!(get("name"), vec!["Archipelago"]);
++        assert_eq!(
++            get("perms"),
++            vec!["sign_event,nip44_encrypt,nip44_decrypt,nip04_encrypt,nip04_decrypt"]
++        );
++    }
++
++    /// A kind-24133 event from `from` to `to` carrying `message`.
++    fn nip46_event(from: &Keys, to: &PublicKey, message: NostrConnectMessage) -> Event {
++        EventBuilder::nostr_connect(from, *to, message)
++            .unwrap()
++            .sign_with_keys(from)
++            .unwrap()
++    }
++
++    fn response(result: &str) -> NostrConnectMessage {
++        NostrConnectMessage::Response {
++            id: "abc".to_string(),
++            result: Some(result.to_string()),
++            error: None,
++        }
++    }
++
++    #[test]
++    fn pairing_accepts_only_a_connect_response_with_the_secret() {
++        let client = Keys::generate();
++        let signer = Keys::generate();
++        let right = nip46_event(&signer, &client.public_key(), response("s3cret"));
++        assert_eq!(
++            pairing_response(&client, &right, "s3cret"),
++            Some(signer.public_key())
++        );
++
++        // Anyone can publish to the relay: none of these pairs.
++        let wrong_secret = nip46_event(&signer, &client.public_key(), response("guess"));
++        let ack_only = nip46_event(&signer, &client.public_key(), response("ack"));
++        let request = nip46_event(
++            &signer,
++            &client.public_key(),
++            NostrConnectMessage::Request {
++                id: "abc".to_string(),
++                method: NostrConnectMethod::Connect,
++                params: vec![client.public_key().to_hex(), "s3cret".to_string()],
++            },
++        );
++        let for_someone_else =
++            nip46_event(&signer, &Keys::generate().public_key(), response("s3cret"));
++        // The right answer with its signed fields altered: it still decrypts,
++        // but no longer verifies.
++        let mut altered = right.clone();
++        altered.created_at = Timestamp::from(altered.created_at.as_secs() + 1);
++        for (name, event) in [
++            ("wrong secret", wrong_secret),
++            ("ack without the secret", ack_only),
++            ("a request", request),
++            ("encrypted to another key", for_someone_else),
++            ("altered after signing", altered),
++        ] {
++            assert_eq!(pairing_response(&client, &event, "s3cret"), None, "{name}");
++        }
++    }
++
++    /// Pairing work that never settles.
++    async fn forever(state: tokio::sync::watch::Sender<PairingState>, _listen_until: Instant) {
++        let _state = state;
++        std::future::pending::<()>().await
++    }
++
++    /// Pairing work that settles at once with `state`.
++    fn settles(
++        state: PairingState,
++    ) -> impl FnOnce(tokio::sync::watch::Sender<PairingState>, Instant) -> std::future::Ready<()>
++    {
++        move |tx, _| {
++            tx.send_replace(state);
++            std::future::ready(())
++        }
++    }
++
++    fn linked_record() -> IdentityRecord {
++        IdentityRecord {
++            id: "linked-1".to_string(),
++            name: "Phone".to_string(),
++            purpose: crate::identity_manager::IdentityPurpose::Personal,
++            pubkey_hex: String::new(),
++            did: String::new(),
++            dht_did: None,
++            created_at: String::new(),
++            nostr_pubkey: None,
++            nostr_npub: None,
++            profile: None,
++            origin: crate::identity_manager::IdentityOrigin::Linked,
++            signer: None,
++        }
++    }
++
++    #[tokio::test]
++    async fn pairings_are_capped() {
++        let pairings = Arc::new(Pairings::default());
++        for _ in 0..MAX_PAIRINGS {
++            pairings.start(forever).unwrap();
++        }
++        let err = pairings.start(forever).unwrap_err();
++        assert!(err.to_string().contains("limit of 4"), "{err}");
++        assert_eq!(pairings.len(), MAX_PAIRINGS);
++
++        // Settled pairings kept only to repeat their outcome do not count.
++        let pairings = Arc::new(Pairings::default());
++        for _ in 0..MAX_PAIRINGS {
++            let id = pairings
++                .start(settles(PairingState::Failed(
++                    "linked signer denied the request".into(),
++                )))
++                .unwrap();
++            assert!(pairings.finish(&id).await.is_err());
++        }
++        pairings.start(forever).unwrap();
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn finish_answers_pending_within_its_bound() {
++        let pairings = Arc::new(Pairings::default());
++        let id = pairings.start(forever).unwrap();
++        let started = Instant::now();
++        assert!(pairings.finish(&id).await.unwrap().is_none());
++        assert_eq!(started.elapsed(), FINISH_WAIT);
++        assert_eq!(pairings.len(), 1);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn an_expired_or_unknown_pairing_is_an_error() {
++        let pairings = Arc::new(Pairings::default());
++        let err = pairings.finish("nope").await.unwrap_err();
++        assert_eq!(
++            err.to_string(),
++            "linked signer pairing is unknown or has expired"
++        );
++
++        // Work that never settles is dropped after the deadline, the proof
++        // allowance and the grace period.
++        let id = pairings.start(forever).unwrap();
++        tokio::time::sleep(PAIRING_TTL + PROOF_ALLOWANCE + OUTCOME_GRACE + Duration::from_secs(1))
++            .await;
++        assert_eq!(pairings.len(), 0);
++        let err = pairings.finish(&id).await.unwrap_err();
++        assert_eq!(
++            err.to_string(),
++            "linked signer pairing is unknown or has expired"
++        );
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn finish_repeats_the_outcome_until_it_is_dropped() {
++        let pairings = Arc::new(Pairings::default());
++        let id = pairings
++            .start(settles(PairingState::Failed(
++                "linked signer denied the request".into(),
++            )))
++            .unwrap();
++        // A poll whose answer was lost can ask again.
++        for _ in 0..2 {
++            let err = pairings.finish(&id).await.unwrap_err();
++            assert_eq!(err.to_string(), "linked signer denied the request");
++        }
++        tokio::time::sleep(OUTCOME_GRACE + Duration::from_secs(1)).await;
++        assert_eq!(pairings.len(), 0);
++        assert!(pairings.finish(&id).await.is_err());
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_proof_running_at_the_deadline_is_left_to_finish() {
++        let pairings = Arc::new(Pairings::default());
++        let id = pairings
++            .start(|tx, listen_until| async move {
++                // The signer answers just in time; the proof outlasts the
++                // deadline by half a minute.
++                tokio::time::sleep_until(listen_until - Duration::from_secs(1)).await;
++                tx.send_replace(PairingState::Proving);
++                tokio::time::sleep(Duration::from_secs(31)).await;
++                tx.send_replace(PairingState::Linked(Box::new(linked_record())));
++            })
++            .unwrap();
++        tokio::time::sleep(PAIRING_TTL + Duration::from_secs(5)).await;
++        assert!(pairings.finish(&id).await.unwrap().is_none());
++        tokio::time::sleep(Duration::from_secs(30)).await;
++        let record = pairings.finish(&id).await.unwrap().expect("linked");
++        assert_eq!(record.id, "linked-1");
++        // And again, for a poll whose answer was lost.
++        assert!(pairings.finish(&id).await.unwrap().is_some());
++    }
++
++    /// A [`PairingTransport`] whose signer answers when `answer` is notified,
++    /// as `remote`, and whose sessions are `signer`.
++    pub(crate) struct FakePairing {
++        pub remote: PublicKey,
++        pub answer: tokio::sync::Notify,
++        pub signer: Arc<FakeSigner>,
++    }
++
++    #[async_trait]
++    impl PairingTransport for FakePairing {
++        async fn wait_for_signer(
++            &self,
++            _client_keys: &Keys,
++            _relays: &[RelayUrl],
++            _secret: &str,
++        ) -> Result<PublicKey, RemoteSignerError> {
++            self.answer.notified().await;
++            Ok(self.remote)
++        }
++
++        fn signer(
++            &self,
++            _client_keys: Keys,
++            _remote_signer_pubkey: PublicKey,
++            _relays: Vec<RelayUrl>,
++        ) -> Arc<dyn RemoteSigner> {
++            self.signer.clone()
++        }
++    }
+ }
+-- 
+2.53.0
+

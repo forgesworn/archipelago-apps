@@ -12,4 +12,4 @@ WILDBLOOM_NODE_REF=b3b254b10c42e94135f735abebfcbcc9262fef4d
 WILDBLOOM_PKG_REV=4
 WILDBLOOM_NODE_PKG_REV=2
 # Bumped whenever upstream/patches changes; names the backend release asset.
-BACKEND_PATCH_LEVEL=3
+BACKEND_PATCH_LEVEL=4

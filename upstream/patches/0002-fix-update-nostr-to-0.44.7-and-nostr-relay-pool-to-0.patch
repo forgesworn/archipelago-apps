@@ -1,0 +1,46 @@
+From 2ad920114a7c2e9ed42ada9e9fb53012c6bbb22f Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 08:33:15 +0200
+Subject: [PATCH 2/5] fix: update nostr to 0.44.7 and nostr-relay-pool to
+ 0.44.3
+
+Patch releases within 0.44 that clear eleven RustSec advisories against
+the versions in the lock: RUSTSEC-2026-0216, -0219, -0224 to -0232.
+They cover NIP-04 and NIP-44 decryption panics and resource exhaustion,
+Debug output exposing NIP-46 and NIP-60 credentials, and the relay pool's
+handling of unverified events. No other package changes.
+---
+ core/Cargo.lock | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/core/Cargo.lock b/core/Cargo.lock
+index dd5637d..7a6109f 100644
+--- a/core/Cargo.lock
++++ b/core/Cargo.lock
+@@ -3636,9 +3636,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "nostr"
+-version = "0.44.2"
++version = "0.44.7"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "3aa5e3b6a278ed061835fe1ee293b71641e6bf8b401cfe4e1834bbf4ef0a34e1"
++checksum = "c7d3d987ea7078dc36947cde532637c472a229426702e4331dd7667325378bd9"
+ dependencies = [
+  "aes",
+  "base64 0.22.1",
+@@ -3681,9 +3681,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "nostr-relay-pool"
+-version = "0.44.0"
++version = "0.44.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "4b1073ccfbaea5549fb914a9d52c68dab2aecda61535e5143dd73e95445a804b"
++checksum = "c85c54d6ca9aae4ae2bf19a7663ba9db5f45f783f1d24aff55f006386b8b99a1"
+ dependencies = [
+  "async-utility",
+  "async-wsocket",
+-- 
+2.53.0
+

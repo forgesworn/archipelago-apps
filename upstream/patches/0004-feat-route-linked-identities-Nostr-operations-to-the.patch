@@ -1,0 +1,2939 @@
+From 9c4deb163383a6d7e0b8fe20adcf43fe1034f0fb Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 08:05:26 +0200
+Subject: [PATCH 4/5] feat: route linked identities' Nostr operations to their
+ signer
+
+identity.nostr-sign for a linked identity sends the full event to the
+remote signer as sign_event and returns it only after checking it
+against the request; a bare event_hash is refused. An event without
+created_at is timestamped once, when the request first goes to the
+signer. The four NIP-04 and NIP-44 methods go to the matching NIP-46
+methods, and refusals come back as typed errors with a clear message.
+publish-profile signs kind 0 through the signer too.
+
+Signer sessions are kept open per linked identity, so requests share a
+relay connection. Until the signer accepts the session's connect (sent
+from the stored client key, with the stored secret if the URI had one),
+each request first sends it, waits up to 5 s for a reply (any reply
+ends the wait) and goes ahead either way; a request the signer serves
+also marks the session accepted. Once accepted, a request answered as unauthorised (a
+signer that restarted and forgot the client) gets one more connect and,
+if that is accepted, one retry; a person's refusal is never retried. A
+session closes after five idle minutes, after a transport failure (the
+next request reconnects), when its identity is deleted or re-linked,
+and when 32 are open and it is the least recently used.
+
+Any verified reply from the signer, a refusal included, counts as it
+being there. Before a request, unless the signer has replied within the
+last 30 s, the session sends a NIP-46 ping, timed once the relays are
+connected. Any reply, a refusal included, lets
+the request through; no reply within 5 s fails it as offline without
+sending it. While a request is out, no reply within 5 s sends a ping
+too: silence to that fails the request as offline, while an answer
+(the signer is there, likely waiting on a person) keeps the request
+waiting and is repeated every 30 s. A signer that is gone behind a
+working relay is so reported within seconds rather than after the 60 s
+request timeout, and signers answer ping while an approval is pending,
+so a person deciding is not cut off.
+
+A reply is taken as soon as it arrives, without waiting for every relay
+to acknowledge the request: a relay that is slow to answer, or that asks
+for authentication first, no longer holds up a signer that has already
+replied on another relay.
+
+Remote requests run on their own task, so a dropped HTTP request cannot
+cancel a prompt that is already on the device. A retry with the same
+identity, method and request digest joins the pending request, and a
+success keeps answering identical retries for 60 s before it is
+dropped, so the dashboard's 15 s retry loop no longer raises extra
+prompts. The digest is the event id, or for an event that arrived
+without created_at, its pubkey, kind, tags and content. Failures,
+panics included, are not cached, and at most 256 completed requests are
+kept.
+
+Anything that needs the Nostr secret of a linked identity refuses:
+create-nostr-key, local hash signing and loading the keys. export-keys
+omits the Nostr part and never exports the signer client key.
+---
+ .../src/api/rpc/identity/handlers.rs          |   72 +-
+ core/archipelago/src/identity_manager.rs      |  699 ++++++-
+ core/archipelago/src/remote_signer.rs         | 1683 ++++++++++++++++-
+ 3 files changed, 2375 insertions(+), 79 deletions(-)
+
+diff --git a/core/archipelago/src/api/rpc/identity/handlers.rs b/core/archipelago/src/api/rpc/identity/handlers.rs
+index 117e659..65f96f8 100644
+--- a/core/archipelago/src/api/rpc/identity/handlers.rs
++++ b/core/archipelago/src/api/rpc/identity/handlers.rs
+@@ -1,7 +1,7 @@
+ use super::*;
+ use crate::api::rpc::RpcHandler;
+ use crate::identity_manager::{
+-    is_node_identity, IdentityManager, IdentityProfile, IdentityPurpose,
++    is_node_identity, IdentityManager, IdentityOrigin, IdentityProfile, IdentityPurpose,
+ };
+ use crate::network::did_dht;
+ use crate::remote_signer::{parse_bunker_uri, NostrConnectSigner};
+@@ -447,7 +447,8 @@ impl RpcHandler {
+     /// Accepts either:
+     ///   - `event_hash` (hex) + `id` — sign a pre-computed hash
+     ///   - `event` (full event object) — compute NIP-01 hash, fill pubkey, sign
+-    /// If `id` is omitted, uses the default identity.
++    /// If `id` is omitted, uses the default identity. Linked identities take
++    /// only `event`: their remote signer signs it and the result is verified.
+     pub(in crate::api::rpc) async fn handle_identity_nostr_sign(
+         &self,
+         params: Option<serde_json::Value>,
+@@ -477,6 +478,11 @@ impl RpcHandler {
+             .clone()
+             .ok_or_else(|| anyhow::anyhow!("Identity has no Nostr key"))?;
+ 
++        let linked = identity.origin == IdentityOrigin::Linked;
++        if linked && params.get("event_hash").is_some() {
++            anyhow::bail!("linked identities sign full events only");
++        }
++
+         if let Some(event_hash) = params.get("event_hash").and_then(|v| v.as_str()) {
+             // Direct hash signing
+             let signature = manager.nostr_sign(&id, event_hash).await?;
+@@ -490,20 +496,64 @@ impl RpcHandler {
+ 
+         let kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(1);
+         let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
+-        let created_at = event
+-            .get("created_at")
+-            .and_then(|v| v.as_u64())
+-            .unwrap_or_else(|| {
+-                std::time::SystemTime::now()
+-                    .duration_since(std::time::UNIX_EPOCH)
+-                    .unwrap_or_default()
+-                    .as_secs()
+-            });
++        let given_created_at = event.get("created_at").and_then(|v| v.as_u64());
++        let created_at = given_created_at.unwrap_or_else(|| {
++            std::time::SystemTime::now()
++                .duration_since(std::time::UNIX_EPOCH)
++                .unwrap_or_default()
++                .as_secs()
++        });
+         let tags = event
+             .get("tags")
+             .cloned()
+             .unwrap_or_else(|| serde_json::json!([]));
+ 
++        if linked {
++            let pubkey = nostr_sdk::PublicKey::from_hex(&pubkey_hex)
++                .context("Invalid Nostr key on identity")?;
++            let kind = u16::try_from(kind).map_err(|_| anyhow::anyhow!("Invalid event kind"))?;
++            let tag_list: Vec<Vec<String>> = serde_json::from_value(tags.clone())
++                .map_err(|_| anyhow::anyhow!("Invalid event tags: expected arrays of strings"))?;
++            let tag_list = tag_list
++                .into_iter()
++                .map(nostr_sdk::Tag::parse)
++                .collect::<Result<Vec<_>, _>>()
++                .map_err(|_| anyhow::anyhow!("Invalid event tags: a tag is empty"))?;
++            // Without a created_at, the timestamp is fixed by the first
++            // attempt, so the dashboard's retries share one signer prompt.
++            let signed = match given_created_at {
++                Some(created_at) => {
++                    let unsigned = nostr_sdk::UnsignedEvent::new(
++                        pubkey,
++                        nostr_sdk::Timestamp::from(created_at),
++                        nostr_sdk::Kind::from(kind),
++                        tag_list,
++                        content,
++                    );
++                    manager.sign_linked_event(&id, unsigned).await?
++                }
++                None => {
++                    manager
++                        .sign_linked_event_now(
++                            &id,
++                            nostr_sdk::Kind::from(kind),
++                            tag_list,
++                            content.to_string(),
++                        )
++                        .await?
++                }
++            };
++            return Ok(serde_json::json!({
++                "id": signed.id.to_hex(),
++                "pubkey": pubkey_hex,
++                "created_at": signed.created_at.as_secs(),
++                "kind": kind,
++                "tags": tags,
++                "content": content,
++                "sig": signed.sig.to_string(),
++            }));
++        }
++
+         // NIP-01 serialization: [0, pubkey, created_at, kind, tags, content]
+         let serialized = serde_json::json!([0, pubkey_hex, created_at, kind, tags, content]);
+         let serialized_str = serde_json::to_string(&serialized)?;
+diff --git a/core/archipelago/src/identity_manager.rs b/core/archipelago/src/identity_manager.rs
+index 739c68c..9114704 100644
+--- a/core/archipelago/src/identity_manager.rs
++++ b/core/archipelago/src/identity_manager.rs
+@@ -11,14 +11,20 @@ use std::time::Duration;
+ use tokio::fs;
+ 
+ use crate::identity::did_key_from_pubkey_hex;
+-use crate::remote_signer::{verify_remote_event, BunkerUri, RemoteSigner};
++use crate::remote_signer::{
++    verify_remote_event, BunkerUri, CipherOp, RemoteReply, RemoteRequests, RemoteSessions,
++    RemoteSigner, RemoteSignerSource, RequestKey,
++};
+ use nostr_sdk::ToBech32;
++use std::sync::Arc;
+ 
+ const IDENTITIES_DIR: &str = "identities";
+ const DEFAULT_MARKER: &str = ".default";
+ /// Held across the last duplicate check and the write of a linked identity,
+ /// so two links of the same signer cannot both pass the check.
+ static LINK_WRITE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
++/// Refusal for anything that needs the Nostr secret of a linked identity.
++const KEY_IS_REMOTE: &str = "this identity's key lives in a linked signer";
+ /// Kind of the throwaway event a signer signs to prove it holds the key at
+ /// link time (the NIP-98 HTTP-auth kind; it is never published).
+ const LINK_CHALLENGE_KIND: u16 = 27235;
+@@ -167,6 +173,10 @@ struct IdentityFile {
+ 
+ pub struct IdentityManager {
+     identities_dir: PathBuf,
++    /// Opens the remote signer of a linked identity.
++    remote_signers: Arc<dyn RemoteSignerSource>,
++    /// In-flight and recent remote requests, shared process-wide.
++    remote_requests: Arc<RemoteRequests>,
+ }
+ 
+ /// Result of a multi-relay profile broadcast.
+@@ -208,7 +218,25 @@ impl IdentityManager {
+         fs::create_dir_all(&identities_dir)
+             .await
+             .context("Failed to create identities directory")?;
+-        Ok(Self { identities_dir })
++        Ok(Self {
++            identities_dir,
++            remote_signers: RemoteSessions::global(),
++            remote_requests: RemoteRequests::global(),
++        })
++    }
++
++    /// A manager whose linked identities talk to `remote_signers`.
++    #[cfg(test)]
++    pub(crate) async fn with_remote_signers(
++        data_dir: &Path,
++        remote_signers: Arc<dyn RemoteSignerSource>,
++        remote_requests: Arc<RemoteRequests>,
++    ) -> Result<Self> {
++        Ok(Self {
++            remote_signers,
++            remote_requests,
++            ..Self::new(data_dir).await?
++        })
+     }
+ 
+     /// List all identities (without secret keys).
+@@ -633,6 +661,8 @@ impl IdentityManager {
+         fs::remove_file(&file_path)
+             .await
+             .context("Failed to delete identity file")?;
++        // Close a linked identity's signer session along with its client key.
++        self.remote_signers.forget(id);
+ 
+         // If this was the default, clear the marker
+         if let Some(default_id) = self.get_default_id().await {
+@@ -711,6 +741,9 @@ impl IdentityManager {
+         let mut file: IdentityFile =
+             serde_json::from_slice(&data).context("Failed to parse identity file")?;
+ 
++        if file.linked_signer.is_some() {
++            anyhow::bail!(KEY_IS_REMOTE);
++        }
+         if file.nostr_secret_hex.is_some() {
+             return Err(anyhow::anyhow!(
+                 "Nostr key already exists for this identity"
+@@ -751,6 +784,10 @@ impl IdentityManager {
+         let file: IdentityFile =
+             serde_json::from_slice(&data).context("Failed to parse identity file")?;
+ 
++        // A bunker signs events, never bare hashes: it must see what it signs.
++        if file.linked_signer.is_some() {
++            anyhow::bail!("linked identities sign full events only");
++        }
+         let secret_hex = file
+             .nostr_secret_hex
+             .ok_or_else(|| anyhow::anyhow!("No Nostr key for this identity"))?;
+@@ -781,19 +818,178 @@ impl IdentityManager {
+             .context("Failed to read identity file")?;
+         let file: IdentityFile =
+             serde_json::from_slice(&data).context("Failed to parse identity file")?;
++        if file.linked_signer.is_some() {
++            anyhow::bail!(KEY_IS_REMOTE);
++        }
+         let secret_hex = file
+             .nostr_secret_hex
+             .ok_or_else(|| anyhow::anyhow!("No Nostr key for this identity"))?;
+         nostr_sdk::Keys::parse(&secret_hex).context("Invalid Nostr secret key")
+     }
+ 
+-    /// NIP-04 encrypt plaintext for a peer pubkey.
++    /// The remote signer holding this identity's Nostr key, if it is linked.
++    pub async fn linked_signer(&self, id: &str) -> Result<Option<LinkedSigner>> {
++        let file_path = self.identities_dir.join(format!("{}.json", id));
++        if !file_path.exists() {
++            return Err(anyhow::anyhow!("Identity not found: {}", id));
++        }
++        let data = fs::read(&file_path)
++            .await
++            .context("Failed to read identity file")?;
++        let file: IdentityFile =
++            serde_json::from_slice(&data).context("Failed to parse identity file")?;
++        Ok(file.linked_signer)
++    }
++
++    /// Have a linked identity's remote signer sign `unsigned`, whose pubkey
++    /// must be the identity's. The result has been checked against the
++    /// request with `verify_remote_event`. Retries of the same event (same
++    /// id) join the pending request rather than prompting again.
++    pub async fn sign_linked_event(
++        &self,
++        id: &str,
++        mut unsigned: nostr_sdk::UnsignedEvent,
++    ) -> Result<nostr_sdk::Event> {
++        let digest = unsigned.id().to_hex();
++        let pubkey = unsigned.pubkey;
++        self.remote_sign(id, digest, Some(pubkey), move |_| unsigned)
++            .await
++    }
++
++    /// Like [`Self::sign_linked_event`] for an event that arrived without
++    /// `created_at`. The timestamp is filled in once, when the request first
++    /// goes to the signer, and the request is keyed on the pubkey, kind, tags
++    /// and content, so a retry joins it (or gets its result) instead of
++    /// prompting again. The signed event carries the timestamp used.
++    pub async fn sign_linked_event_now(
++        &self,
++        id: &str,
++        kind: nostr_sdk::Kind,
++        tags: Vec<nostr_sdk::Tag>,
++        content: String,
++    ) -> Result<nostr_sdk::Event> {
++        let linked = self
++            .linked_signer(id)
++            .await?
++            .ok_or_else(|| anyhow::anyhow!("Identity is not linked to a remote signer"))?;
++        let digest = {
++            use sha2::{Digest, Sha256};
++            let tag_values: Vec<&[String]> = tags.iter().map(|t| t.as_slice()).collect();
++            let fields =
++                serde_json::json!([linked.user_pubkey, kind.as_u16(), tag_values, content]);
++            format!(
++                "undated:{}",
++                hex::encode(Sha256::digest(fields.to_string()))
++            )
++        };
++        self.remote_sign(id, digest, None, move |pubkey| {
++            nostr_sdk::UnsignedEvent::new(pubkey, nostr_sdk::Timestamp::now(), kind, tags, content)
++        })
++        .await
++    }
++
++    /// Sign through the remote signer, de-duplicated on `digest`. `make`
++    /// builds the event from the identity's key when the request first runs;
++    /// `expected_pubkey`, if given, must be that key.
++    async fn remote_sign<F>(
++        &self,
++        id: &str,
++        digest: String,
++        expected_pubkey: Option<nostr_sdk::PublicKey>,
++        make: F,
++    ) -> Result<nostr_sdk::Event>
++    where
++        F: FnOnce(nostr_sdk::PublicKey) -> nostr_sdk::UnsignedEvent + Send + 'static,
++    {
++        let linked = self
++            .linked_signer(id)
++            .await?
++            .ok_or_else(|| anyhow::anyhow!("Identity is not linked to a remote signer"))?;
++        let user_pubkey = nostr_sdk::PublicKey::from_hex(&linked.user_pubkey)
++            .context("Invalid linked signer user key")?;
++        if expected_pubkey.is_some_and(|pk| pk != user_pubkey) {
++            anyhow::bail!("Invalid event: its pubkey is not this identity's Nostr key");
++        }
++        let signer = self.remote_signers.open(id, &linked)?;
++        let key = RequestKey {
++            identity_id: id.to_string(),
++            method: "sign_event",
++            digest,
++        };
++        let reply = self
++            .remote_requests
++            .run(key, async move {
++                let unsigned = make(user_pubkey);
++                let signed = signer.sign_event(unsigned.clone()).await?;
++                verify_remote_event(&user_pubkey, &unsigned, &signed)?;
++                Ok(RemoteReply::Event(Box::new(signed)))
++            })
++            .await?;
++        match reply {
++            RemoteReply::Event(event) => Ok(*event),
++            RemoteReply::Text(_) => anyhow::bail!("linked signer sent a bad response"),
++        }
++    }
++
++    /// Run a NIP-04/NIP-44 operation on a linked identity's remote signer,
++    /// de-duplicated on the peer and text.
++    async fn remote_cipher(
++        &self,
++        id: &str,
++        linked: LinkedSigner,
++        op: CipherOp,
++        peer_pubkey_hex: &str,
++        text: &str,
++    ) -> Result<String> {
++        let peer_pk =
++            nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
++        let digest = {
++            use sha2::{Digest, Sha256};
++            let mut hasher = Sha256::new();
++            hasher.update(peer_pk.to_hex().as_bytes());
++            hasher.update(b"\n");
++            hasher.update(text.as_bytes());
++            hex::encode(hasher.finalize())
++        };
++        let signer = self.remote_signers.open(id, &linked)?;
++        let key = RequestKey {
++            identity_id: id.to_string(),
++            method: op.method(),
++            digest,
++        };
++        let text = text.to_string();
++        let reply = self
++            .remote_requests
++            .run(key, async move {
++                let out = op.apply(signer.as_ref(), &peer_pk, &text).await?;
++                Ok(RemoteReply::Text(out))
++            })
++            .await?;
++        match reply {
++            RemoteReply::Text(out) => Ok(out),
++            RemoteReply::Event(_) => anyhow::bail!("linked signer sent a bad response"),
++        }
++    }
++
++    /// NIP-04 encrypt plaintext for a peer pubkey. Linked identities ask
++    /// their remote signer (as do the three methods below).
+     pub async fn nostr_encrypt_nip04(
+         &self,
+         id: &str,
+         peer_pubkey_hex: &str,
+         plaintext: &str,
+     ) -> Result<String> {
++        if let Some(linked) = self.linked_signer(id).await? {
++            return self
++                .remote_cipher(
++                    id,
++                    linked,
++                    CipherOp::Nip04Encrypt,
++                    peer_pubkey_hex,
++                    plaintext,
++                )
++                .await;
++        }
+         let keys = self.load_nostr_keys(id).await?;
+         let peer_pk =
+             nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
+@@ -808,6 +1004,17 @@ impl IdentityManager {
+         peer_pubkey_hex: &str,
+         ciphertext: &str,
+     ) -> Result<String> {
++        if let Some(linked) = self.linked_signer(id).await? {
++            return self
++                .remote_cipher(
++                    id,
++                    linked,
++                    CipherOp::Nip04Decrypt,
++                    peer_pubkey_hex,
++                    ciphertext,
++                )
++                .await;
++        }
+         let keys = self.load_nostr_keys(id).await?;
+         let peer_pk =
+             nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
+@@ -822,6 +1029,17 @@ impl IdentityManager {
+         peer_pubkey_hex: &str,
+         plaintext: &str,
+     ) -> Result<String> {
++        if let Some(linked) = self.linked_signer(id).await? {
++            return self
++                .remote_cipher(
++                    id,
++                    linked,
++                    CipherOp::Nip44Encrypt,
++                    peer_pubkey_hex,
++                    plaintext,
++                )
++                .await;
++        }
+         let keys = self.load_nostr_keys(id).await?;
+         let peer_pk =
+             nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
+@@ -841,6 +1059,17 @@ impl IdentityManager {
+         peer_pubkey_hex: &str,
+         ciphertext: &str,
+     ) -> Result<String> {
++        if let Some(linked) = self.linked_signer(id).await? {
++            return self
++                .remote_cipher(
++                    id,
++                    linked,
++                    CipherOp::Nip44Decrypt,
++                    peer_pubkey_hex,
++                    ciphertext,
++                )
++                .await;
++        }
+         let keys = self.load_nostr_keys(id).await?;
+         let peer_pk =
+             nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
+@@ -880,7 +1109,11 @@ impl IdentityManager {
+         relay_urls: &[String],
+     ) -> Result<ProfilePublishOutcome> {
+         let record = self.get(id).await?;
+-        let keys = self.load_nostr_keys(id).await?;
++        let linked = self.linked_signer(id).await?;
++        let local_keys = match linked {
++            Some(_) => None,
++            None => Some(self.load_nostr_keys(id).await?),
++        };
+         let profile = record.profile.unwrap_or_default();
+ 
+         if relay_urls.is_empty() {
+@@ -915,7 +1148,34 @@ impl IdentityManager {
+         let content_str =
+             serde_json::to_string(&content).context("Failed to serialize profile content")?;
+ 
+-        let client = nostr_sdk::Client::new(keys);
++        // Sign before connecting. A linked identity's signer is asked to sign
++        // kind 0, timestamped when that request first runs and keyed on the
++        // content, so a retry while the prompt is open joins it instead of
++        // prompting again.
++        let event = match &local_keys {
++            Some(keys) => nostr_sdk::prelude::EventBuilder::new(
++                nostr_sdk::prelude::Kind::Metadata,
++                &content_str,
++            )
++            .sign_with_keys(keys)
++            .context("Failed to sign profile event")?,
++            None => {
++                self.sign_linked_event_now(
++                    id,
++                    nostr_sdk::Kind::Metadata,
++                    Vec::new(),
++                    content_str.clone(),
++                )
++                .await?
++            }
++        };
++
++        // With a local key the client can still answer NIP-42 AUTH; a linked
++        // identity has no local key to answer with.
++        let client = match local_keys {
++            Some(keys) => nostr_sdk::Client::new(keys),
++            None => nostr_sdk::Client::default(),
++        };
+         for url in relay_urls {
+             if let Err(e) = client.add_relay(url).await {
+                 tracing::warn!(relay = %url, error = %e, "Failed to add relay; continuing");
+@@ -933,9 +1193,7 @@ impl IdentityManager {
+             tracing::warn!("Nostr relay connection timed out after 15s, continuing anyway");
+         }
+ 
+-        let builder =
+-            nostr_sdk::prelude::EventBuilder::new(nostr_sdk::prelude::Kind::Metadata, &content_str);
+-        let output = match client.send_event_builder(builder).await {
++        let output = match client.send_event(&event).await {
+             Ok(o) => o,
+             Err(e) => {
+                 client.disconnect().await;
+@@ -998,7 +1256,13 @@ impl IdentityManager {
+ 
+         let ed25519_secret_hex = hex::encode(&file.secret_key);
+ 
+-        let nostr_nsec = file.nostr_secret_hex.as_ref().and_then(|h| {
++        // A linked identity's Nostr key is on its signer: export only the
++        // node-local Ed25519 key, never the signer client key.
++        let nostr_secret_hex = match file.linked_signer {
++            Some(_) => None,
++            None => file.nostr_secret_hex,
++        };
++        let nostr_nsec = nostr_secret_hex.as_ref().and_then(|h| {
+             nostr_sdk::SecretKey::from_hex(h)
+                 .ok()
+                 .and_then(|sk| sk.to_bech32().ok())
+@@ -1006,7 +1270,7 @@ impl IdentityManager {
+ 
+         Ok(serde_json::json!({
+             "ed25519_secret_hex": ed25519_secret_hex,
+-            "nostr_secret_hex": file.nostr_secret_hex,
++            "nostr_secret_hex": nostr_secret_hex,
+             "nostr_nsec": nostr_nsec,
+         }))
+     }
+@@ -1115,7 +1379,7 @@ impl IdentityManager {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-    use crate::remote_signer::tests::{FakeMode, FakeSigner};
++    use crate::remote_signer::tests::{fake_sessions, FakeMode, FakeSigner, FakeSource};
+     use tempfile::tempdir;
+ 
+     #[tokio::test]
+@@ -1480,9 +1744,14 @@ mod tests {
+                 .join(format!("{}.json", record.id)),
+         )
+         .unwrap();
+-        let file: IdentityFile = serde_json::from_str(&raw).unwrap();
+-        assert!(file.linked_signer.unwrap().bunker_secret.is_none());
+         assert!(!raw.contains("bunker_secret"));
++        assert!(mgr
++            .linked_signer(&record.id)
++            .await
++            .unwrap()
++            .unwrap()
++            .bunker_secret
++            .is_none());
+     }
+ 
+     #[tokio::test]
+@@ -1652,6 +1921,410 @@ mod tests {
+         assert!(!debug.contains("one-time"));
+     }
+ 
++    /// A manager with one linked identity whose signer is `signer`, and its
++    /// own de-duplication state.
++    async fn linked_manager(
++        dir: &Path,
++        signer: Arc<FakeSigner>,
++    ) -> (IdentityManager, IdentityRecord) {
++        let mgr = IdentityManager::with_remote_signers(
++            dir,
++            Arc::new(FakeSource(signer.clone())),
++            Arc::new(RemoteRequests::default()),
++        )
++        .await
++        .unwrap();
++        // The challenge goes through ungated.
++        signer.release();
++        let (record, _) = link(&mgr, &signer, None).await.unwrap();
++        signer.calls.store(0, std::sync::atomic::Ordering::SeqCst);
++        (mgr, record)
++    }
++
++    fn note(record: &IdentityRecord, content: &str) -> nostr_sdk::UnsignedEvent {
++        nostr_sdk::UnsignedEvent::new(
++            nostr_sdk::PublicKey::from_hex(record.nostr_pubkey.as_deref().unwrap()).unwrap(),
++            nostr_sdk::Timestamp::from(1_700_000_000),
++            nostr_sdk::Kind::TextNote,
++            [nostr_sdk::Tag::parse(["t", "archipelago"]).unwrap()],
++            content,
++        )
++    }
++
++    #[tokio::test]
++    async fn linked_identities_refuse_hash_signing() {
++        let dir = tempdir().unwrap();
++        let signer = Arc::new(FakeSigner::new(
++            nostr_sdk::Keys::generate(),
++            FakeMode::Honest,
++        ));
++        let (mgr, record) = linked_manager(dir.path(), signer.clone()).await;
++        let err = mgr
++            .nostr_sign(&record.id, &"00".repeat(32))
++            .await
++            .unwrap_err();
++        assert_eq!(err.to_string(), "linked identities sign full events only");
++        assert_eq!(signer.calls(), 0);
++    }
++
++    #[tokio::test]
++    async fn linked_full_events_come_back_verified() {
++        let dir = tempdir().unwrap();
++        let signer = Arc::new(FakeSigner::new(
++            nostr_sdk::Keys::generate(),
++            FakeMode::Honest,
++        ));
++        let (mgr, record) = linked_manager(dir.path(), signer.clone()).await;
++
++        let mut request = note(&record, "hello");
++        let signed = mgr
++            .sign_linked_event(&record.id, request.clone())
++            .await
++            .unwrap();
++        assert_eq!(signed.id, request.id());
++        assert!(signed.verify().is_ok());
++        assert_eq!(signed.pubkey.to_hex(), record.nostr_pubkey.clone().unwrap());
++
++        signer.set_mode(FakeMode::Tamper);
++        let err = mgr
++            .sign_linked_event(&record.id, note(&record, "tampered"))
++            .await
++            .unwrap_err();
++        assert!(
++            err.to_string()
++                .starts_with("linked signer sent a bad response"),
++            "{err}"
++        );
++
++        // An event for another key is refused before the signer sees it.
++        let calls = signer.calls();
++        let mut foreign = note(&record, "hello");
++        foreign.pubkey = nostr_sdk::Keys::generate().public_key();
++        assert!(mgr.sign_linked_event(&record.id, foreign).await.is_err());
++        assert_eq!(signer.calls(), calls);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn linked_signing_is_de_duplicated() {
++        let dir = tempdir().unwrap();
++        let signer = Arc::new(FakeSigner::gated(
++            nostr_sdk::Keys::generate(),
++            FakeMode::Honest,
++        ));
++        let (mgr, record) = linked_manager(dir.path(), signer.clone()).await;
++        let mgr = Arc::new(mgr);
++
++        // Two identical requests in flight at once: one prompt.
++        let sign = |content: &'static str| {
++            let (mgr, record) = (mgr.clone(), record.clone());
++            tokio::spawn(async move {
++                mgr.sign_linked_event(&record.id, note(&record, content))
++                    .await
++            })
++        };
++        let (first, second) = (sign("hello"), sign("hello"));
++        while signer.calls() == 0 {
++            tokio::task::yield_now().await;
++        }
++        signer.release();
++        let first = first.await.unwrap().unwrap();
++        let second = second.await.unwrap().unwrap();
++        assert_eq!(first.sig, second.sig);
++        assert_eq!(signer.calls(), 1);
++
++        // A retry just after completion gets the same answer, no prompt.
++        tokio::time::advance(std::time::Duration::from_secs(59)).await;
++        let retry = sign("hello").await.unwrap().unwrap();
++        assert_eq!(retry.sig, first.sig);
++        assert_eq!(signer.calls(), 1);
++
++        // A failure is not cached: the next attempt reaches the signer.
++        signer.set_mode(FakeMode::Deny);
++        signer.release();
++        let err = sign("other").await.unwrap().unwrap_err();
++        assert_eq!(err.to_string(), "linked signer denied the request");
++        signer.set_mode(FakeMode::Honest);
++        signer.release();
++        sign("other").await.unwrap().unwrap();
++        assert_eq!(signer.calls(), 3);
++    }
++
++    #[tokio::test]
++    async fn linked_events_without_created_at_share_one_prompt() {
++        let dir = tempdir().unwrap();
++        let signer = Arc::new(FakeSigner::gated(
++            nostr_sdk::Keys::generate(),
++            FakeMode::Honest,
++        ));
++        let (mgr, record) = linked_manager(dir.path(), signer.clone()).await;
++        let mgr = Arc::new(mgr);
++        let sign = || {
++            let (mgr, record) = (mgr.clone(), record.clone());
++            tokio::spawn(async move {
++                let tags = vec![nostr_sdk::Tag::parse(["t", "archipelago"]).unwrap()];
++                mgr.sign_linked_event_now(
++                    &record.id,
++                    nostr_sdk::Kind::TextNote,
++                    tags,
++                    "undated".to_string(),
++                )
++                .await
++            })
++        };
++
++        // Two attempts without a created_at, as the dashboard's retry makes.
++        let (first, second) = (sign(), sign());
++        while signer.calls() == 0 {
++            tokio::task::yield_now().await;
++        }
++        signer.release();
++        let first = first.await.unwrap().unwrap();
++        let second = second.await.unwrap().unwrap();
++        assert_eq!(signer.calls(), 1);
++        assert_eq!(first, second);
++        assert!(first.verify().is_ok());
++
++        // A retry after it completed gets the same event, with no prompt.
++        let third = sign().await.unwrap().unwrap();
++        assert_eq!(third, first);
++        assert_eq!(signer.calls(), 1);
++    }
++
++    #[tokio::test]
++    async fn linked_events_without_created_at_differ_by_content() {
++        let dir = tempdir().unwrap();
++        let signer = Arc::new(FakeSigner::gated(
++            nostr_sdk::Keys::generate(),
++            FakeMode::Honest,
++        ));
++        let (mgr, record) = linked_manager(dir.path(), signer.clone()).await;
++        let mgr = Arc::new(mgr);
++        let sign = |content: &'static str| {
++            let (mgr, record) = (mgr.clone(), record.clone());
++            tokio::spawn(async move {
++                mgr.sign_linked_event_now(
++                    &record.id,
++                    nostr_sdk::Kind::TextNote,
++                    Vec::new(),
++                    content.to_string(),
++                )
++                .await
++            })
++        };
++
++        // Two different undated events in flight at once: two requests.
++        let (first, second) = (sign("first"), sign("second"));
++        while signer.calls() < 2 {
++            tokio::task::yield_now().await;
++        }
++        signer.release();
++        signer.release();
++        let first = first.await.unwrap().unwrap();
++        let second = second.await.unwrap().unwrap();
++        assert_eq!(signer.calls(), 2);
++        assert_ne!(first.id, second.id);
++        assert_eq!(first.content, "first");
++        assert_eq!(second.content, "second");
++    }
++
++    #[tokio::test]
++    async fn linked_signing_survives_a_dropped_caller() {
++        let dir = tempdir().unwrap();
++        let signer = Arc::new(FakeSigner::gated(
++            nostr_sdk::Keys::generate(),
++            FakeMode::Honest,
++        ));
++        let (mgr, record) = linked_manager(dir.path(), signer.clone()).await;
++        let mgr = Arc::new(mgr);
++        let sign = || {
++            let (mgr, record) = (mgr.clone(), record.clone());
++            tokio::spawn(
++                async move { mgr.sign_linked_event(&record.id, note(&record, "hi")).await },
++            )
++        };
++
++        let caller = sign();
++        while signer.calls() == 0 {
++            tokio::task::yield_now().await;
++        }
++        caller.abort();
++        assert!(caller.await.unwrap_err().is_cancelled());
++
++        let joiner = sign();
++        signer.release();
++        let signed = joiner.await.unwrap().unwrap();
++        assert!(signed.verify().is_ok());
++        assert_eq!(signer.calls(), 1);
++    }
++
++    #[tokio::test]
++    async fn linked_encryption_routes_to_the_signer() {
++        let dir = tempdir().unwrap();
++        let user_keys = nostr_sdk::Keys::generate();
++        let signer = Arc::new(FakeSigner::new(user_keys.clone(), FakeMode::Honest));
++        let (mgr, record) = linked_manager(dir.path(), signer.clone()).await;
++        let peer = nostr_sdk::Keys::generate();
++        let peer_hex = peer.public_key().to_hex();
++
++        let c44 = mgr
++            .nostr_encrypt_nip44(&record.id, &peer_hex, "hello 44")
++            .await
++            .unwrap();
++        // Really encrypted with the user's key, so the peer can read it.
++        assert_eq!(
++            nostr_sdk::nips::nip44::decrypt(peer.secret_key(), &user_keys.public_key(), &c44)
++                .unwrap(),
++            "hello 44"
++        );
++        assert_eq!(
++            mgr.nostr_decrypt_nip44(&record.id, &peer_hex, &c44)
++                .await
++                .unwrap(),
++            "hello 44"
++        );
++        let c04 = mgr
++            .nostr_encrypt_nip04(&record.id, &peer_hex, "hello 04")
++            .await
++            .unwrap();
++        assert_eq!(
++            mgr.nostr_decrypt_nip04(&record.id, &peer_hex, &c04)
++                .await
++                .unwrap(),
++            "hello 04"
++        );
++        assert_eq!(signer.calls(), 4);
++
++        signer.set_mode(FakeMode::Deny);
++        let err = mgr
++            .nostr_encrypt_nip44(&record.id, &peer_hex, "again")
++            .await
++            .unwrap_err();
++        assert_eq!(err.to_string(), "linked signer denied the request");
++        signer.set_mode(FakeMode::Unsupported);
++        let err = mgr
++            .nostr_encrypt_nip44(&record.id, &peer_hex, "again")
++            .await
++            .unwrap_err();
++        assert_eq!(err.to_string(), "the linked signer refused nip44_encrypt");
++    }
++
++    #[tokio::test]
++    async fn linked_identities_refuse_local_key_operations() {
++        let dir = tempdir().unwrap();
++        let signer = Arc::new(FakeSigner::new(
++            nostr_sdk::Keys::generate(),
++            FakeMode::Honest,
++        ));
++        let (mgr, record) = linked_manager(dir.path(), signer.clone()).await;
++
++        let err = mgr.create_nostr_key(&record.id).await.unwrap_err();
++        assert_eq!(
++            err.to_string(),
++            "this identity's key lives in a linked signer"
++        );
++        let err = mgr.load_nostr_keys(&record.id).await.unwrap_err();
++        assert_eq!(
++            err.to_string(),
++            "this identity's key lives in a linked signer"
++        );
++
++        // Export keeps the node-local Ed25519 key and omits the Nostr part,
++        // even if a file somehow carried a Nostr secret too.
++        let path = dir
++            .path()
++            .join(IDENTITIES_DIR)
++            .join(format!("{}.json", record.id));
++        let mut file: serde_json::Value =
++            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
++        let client_secret = file["linked_signer"]["client_secret_hex"]
++            .as_str()
++            .unwrap()
++            .to_string();
++        file["nostr_secret_hex"] = serde_json::json!("11".repeat(32));
++        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
++        let exported = mgr.export_keys(&record.id).await.unwrap();
++        assert!(exported["ed25519_secret_hex"].is_string());
++        assert!(exported["nostr_secret_hex"].is_null());
++        assert!(exported["nostr_nsec"].is_null());
++        assert!(!exported.to_string().contains(&client_secret));
++        assert!(!exported.to_string().contains("one-time"));
++        assert_eq!(signer.calls(), 0);
++
++        // Deleting it removes the file, client key and all.
++        mgr.delete(&record.id).await.unwrap();
++        assert!(!path.exists());
++    }
++
++    #[tokio::test]
++    async fn concurrent_duplicates_send_one_ping_and_one_request() {
++        let dir = tempdir().unwrap();
++        let fake = Arc::new(FakeSigner::gated(
++            nostr_sdk::Keys::generate(),
++            FakeMode::Honest,
++        ));
++        let (sessions, _) = fake_sessions(fake.clone());
++        let mgr = IdentityManager::with_remote_signers(
++            dir.path(),
++            sessions,
++            Arc::new(RemoteRequests::default()),
++        )
++        .await
++        .unwrap();
++        // The link's challenge goes through the fake directly, ungated.
++        fake.release();
++        let (record, _) = link(&mgr, &fake, None).await.unwrap();
++        fake.calls.store(0, std::sync::atomic::Ordering::SeqCst);
++        let mgr = Arc::new(mgr);
++
++        let sign = || {
++            let (mgr, record) = (mgr.clone(), record.clone());
++            tokio::spawn(async move {
++                mgr.sign_linked_event(&record.id, note(&record, "twice"))
++                    .await
++            })
++        };
++        let (first, second) = (sign(), sign());
++        while fake.calls() == 0 {
++            tokio::task::yield_now().await;
++        }
++        fake.release();
++        assert_eq!(
++            first.await.unwrap().unwrap(),
++            second.await.unwrap().unwrap()
++        );
++        assert_eq!(fake.pings.load(std::sync::atomic::Ordering::SeqCst), 1);
++        assert_eq!(fake.calls(), 1);
++    }
++
++    #[tokio::test]
++    async fn deleting_a_linked_identity_closes_its_session() {
++        let dir = tempdir().unwrap();
++        let fake = Arc::new(FakeSigner::new(
++            nostr_sdk::Keys::generate(),
++            FakeMode::Honest,
++        ));
++        let (sessions, opened) = fake_sessions(fake.clone());
++        let mgr = IdentityManager::with_remote_signers(
++            dir.path(),
++            sessions.clone(),
++            Arc::new(RemoteRequests::default()),
++        )
++        .await
++        .unwrap();
++        let (record, _) = link(&mgr, &fake, None).await.unwrap();
++        mgr.sign_linked_event(&record.id, note(&record, "one"))
++            .await
++            .unwrap();
++        mgr.sign_linked_event(&record.id, note(&record, "two"))
++            .await
++            .unwrap();
++        assert_eq!(opened.load(std::sync::atomic::Ordering::SeqCst), 1);
++        assert_eq!(sessions.len(), 1);
++
++        mgr.delete(&record.id).await.unwrap();
++        assert_eq!(sessions.len(), 0);
++    }
++
+     #[tokio::test]
+     async fn test_delete_default_shifts() {
+         let dir = tempdir().unwrap();
+diff --git a/core/archipelago/src/remote_signer.rs b/core/archipelago/src/remote_signer.rs
+index 306b9cb..42d6cba 100644
+--- a/core/archipelago/src/remote_signer.rs
++++ b/core/archipelago/src/remote_signer.rs
+@@ -3,16 +3,19 @@
+ //! A linked identity keeps its Nostr secret key on a separate device. The node
+ //! holds only a per-identity client keypair, which the signer authorises when
+ //! the identity is linked. Requests are kind-24133 events from that client
+-//! key, NIP-44 encrypted and p-tagged to the signer. Each new session (after
+-//! a restart, for example) first sends `connect` from the stored client key,
+-//! with the bunker URI's secret if it had one, and goes ahead whether or not
+-//! the signer answers it: the client key is what the signer authorised.
++//! key, NIP-44 encrypted and p-tagged to the signer. A new session (after a
++//! restart, for example) sends `connect` from the stored client key, with the
++//! bunker URI's secret if it had one, until the signer accepts it, and goes
++//! ahead with each request either way: the client key is what the signer
++//! authorised. See [`ConnectGate`].
+ //!
+ //! Nothing a remote signer returns is trusted: signed events are checked
+ //! against the request with [`verify_remote_event`] before anyone sees them.
+ 
+-use anyhow::Result;
++use anyhow::{Context, Result};
+ use async_trait::async_trait;
++use futures_util::future::{BoxFuture, Shared};
++use futures_util::FutureExt;
+ use nostr_sdk::nips::nip46::{NostrConnectMessage, NostrConnectMethod, NostrConnectRequest};
+ use nostr_sdk::{
+     Client, Event, EventBuilder, Filter, JsonUtil, Keys, Kind, PublicKey, RelayPoolNotification,
+@@ -20,8 +23,15 @@ use nostr_sdk::{
+ };
+ use rand::rngs::OsRng;
+ use rand::RngCore;
++use std::collections::{HashMap, HashSet};
++use std::future::Future;
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::sync::{Arc, Mutex, OnceLock};
+ use std::time::Duration;
+ use tokio::sync::broadcast::error::RecvError;
++use tokio::time::Instant;
++
++use crate::identity_manager::LinkedSigner;
+ 
+ /// How long to wait for the signer's relays to accept a connection.
+ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+@@ -29,6 +39,15 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+ /// included. Long enough for a person to read a prompt on the device and
+ /// press a button.
+ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
++/// How recently the signer must have replied for a request to skip the
++/// liveness `ping`.
++pub const LIVENESS_WINDOW: Duration = Duration::from_secs(30);
++/// How long the liveness `ping` waits. Signers answer `ping` without asking
++/// anyone, so silence this long means the signer is offline.
++pub const PING_TIMEOUT: Duration = Duration::from_secs(5);
++/// While a request waits on a signer that answered its `ping` (most likely a
++/// person deciding), how often to `ping` again.
++pub const PROBE_INTERVAL: Duration = Duration::from_secs(30);
+ /// The most relays a linked signer may use. Each is a connection per session.
+ pub const MAX_RELAYS: usize = 8;
+ /// How long a new session waits for the reply to its `connect` before
+@@ -127,6 +146,11 @@ pub enum RemoteSignerError {
+     Offline(String),
+     #[error("linked signer denied the request")]
+     Denied,
++    /// The signer does not recognise or authorise this client, as after it
++    /// restarts and forgets the client. Not a person's refusal: answered
++    /// without a prompt, and worth a fresh `connect`.
++    #[error("linked signer denied the request")]
++    Unauthorised,
+     /// The signer does not implement this NIP-46 method.
+     #[error("the linked signer refused {0}")]
+     Unsupported(String),
+@@ -150,6 +174,37 @@ pub trait RemoteSigner: Send + Sync {
+     /// Sign `unsigned`. The result is untrusted until checked with
+     /// [`verify_remote_event`].
+     async fn sign_event(&self, unsigned: UnsignedEvent) -> Result<Event, RemoteSignerError>;
++    async fn nip04_encrypt(
++        &self,
++        peer: &PublicKey,
++        plaintext: &str,
++    ) -> Result<String, RemoteSignerError>;
++    async fn nip04_decrypt(
++        &self,
++        peer: &PublicKey,
++        ciphertext: &str,
++    ) -> Result<String, RemoteSignerError>;
++    async fn nip44_encrypt(
++        &self,
++        peer: &PublicKey,
++        plaintext: &str,
++    ) -> Result<String, RemoteSignerError>;
++    async fn nip44_decrypt(
++        &self,
++        peer: &PublicKey,
++        ciphertext: &str,
++    ) -> Result<String, RemoteSignerError>;
++    /// NIP-46 `ping`. Any reply, even a refusal, shows the signer is there.
++    async fn ping(&self) -> Result<(), RemoteSignerError>;
++    /// Get the transport ready (connect the relays), so that timing a
++    /// `ping` measures only its own round trip.
++    async fn ready(&self) -> Result<(), RemoteSignerError> {
++        Ok(())
++    }
++    /// When the signer last sent a verified reply, if this signer tracks it.
++    fn last_reply(&self) -> Option<Instant> {
++        None
++    }
+ }
+ 
+ /// Check that `signed` is exactly `requested`, signed by `expected_pubkey`:
+@@ -204,19 +259,21 @@ fn classify_signer_error(method: &NostrConnectMethod, error: &str) -> RemoteSign
+         "not implemented",
+         "no such method",
+     ];
+-    let refused = [
+-        "denied",
++    // Refusals of the client itself, which signers send without asking
++    // anyone. Everything else that refuses is treated as a person's choice.
++    let unauthorised = [
+         "not authorized",
+         "not authorised",
+         "unauthorized",
+         "unauthorised",
+-        "rejected",
+-        "refused",
+-        "forbidden",
+-        "permission",
++        "unknown client",
++        "not connected",
+     ];
++    let refused = ["denied", "rejected", "refused", "forbidden", "permission"];
+     if unsupported.iter().any(|p| lower.contains(p)) {
+         RemoteSignerError::Unsupported(method.to_string())
++    } else if unauthorised.iter().any(|p| lower.contains(p)) {
++        RemoteSignerError::Unauthorised
+     } else if refused.iter().any(|p| lower.contains(p)) {
+         RemoteSignerError::Denied
+     } else {
+@@ -240,18 +297,41 @@ pub struct NostrConnectSigner {
+     /// The bunker URI's connection secret, if it had one. Never logged.
+     secret: Option<String>,
+     client: tokio::sync::OnceCell<Client>,
+-    /// Set once `connect` has been answered on this signer's relays.
+-    session: tokio::sync::OnceCell<()>,
++    /// Whether the signer has accepted this session's `connect`.
++    session: ConnectGate,
++    /// When the signer last sent a verified reply to one of our requests.
++    last_reply: std::sync::Mutex<Option<Instant>>,
+ }
+ 
+ impl NostrConnectSigner {
++    /// Signer for an identity that is already linked. Its first request
++    /// opens the session with `connect` from the stored client key, carrying
++    /// the stored secret if the bunker URI had one.
++    pub fn from_linked(linked: &LinkedSigner) -> Result<Self> {
++        let client_keys =
++            Keys::parse(&linked.client_secret_hex).context("Invalid linked signer client key")?;
++        let remote_signer_pubkey = PublicKey::from_hex(&linked.remote_signer_pubkey)
++            .context("Invalid linked signer public key")?;
++        let relays = linked
++            .relays
++            .iter()
++            .map(|r| RelayUrl::parse(r).context("Invalid linked signer relay"))
++            .collect::<Result<Vec<_>>>()?;
++        Ok(Self::new(
++            client_keys,
++            remote_signer_pubkey,
++            relays,
++            linked.bunker_secret.clone(),
++        ))
++    }
++
+     /// Introduce `client_keys` to the bunker with `connect` (carrying the
+     /// URI's one-time secret). Fails with `Offline` if no relay accepts a
+     /// connection within [`CONNECT_TIMEOUT`], and with `Timeout` if the signer
+     /// does not answer within [`REQUEST_TIMEOUT`]: a person may have to
+     /// approve the new client on the device first.
+     pub async fn connect(uri: &BunkerUri, client_keys: Keys) -> Result<Self, RemoteSignerError> {
+-        let signer = Self::new(
++        let mut signer = Self::new(
+             client_keys,
+             uri.remote_signer_pubkey,
+             uri.relays.clone(),
+@@ -260,7 +340,7 @@ impl NostrConnectSigner {
+         match signer.send_connect(REQUEST_TIMEOUT).await? {
+             // Bunkers answer "ack"; some echo the secret instead.
+             result if result == "ack" || Some(&result) == uri.secret.as_ref() => {
+-                let _ = signer.session.set(());
++                signer.session.accept();
+                 Ok(signer)
+             }
+             _ => Err(RemoteSignerError::BadResponse(
+@@ -281,7 +361,8 @@ impl NostrConnectSigner {
+             relays,
+             secret,
+             client: tokio::sync::OnceCell::new(),
+-            session: tokio::sync::OnceCell::new(),
++            session: ConnectGate::default(),
++            last_reply: std::sync::Mutex::default(),
+         }
+     }
+ 
+@@ -294,33 +375,22 @@ impl NostrConnectSigner {
+         self.round_trip(request, wait).await
+     }
+ 
+-    /// Open the session once per signer, as Cambium does with Heartwood:
+-    /// `connect` from the stored client key (and secret, if any) before the
+-    /// first request. Only unreachable relays fail the session. A refusal,
+-    /// or no reply within [`SESSION_CONNECT_WAIT`], does not: a bunker may
+-    /// refuse or ignore a second use of its one-time secret and still serve
+-    /// the client key it authorised, and the request itself says whether it
+-    /// does.
+-    async fn session(&self) -> Result<(), RemoteSignerError> {
+-        self.session
+-            .get_or_try_init(|| async {
+-                match self.send_connect(SESSION_CONNECT_WAIT).await {
+-                    Ok(_) => Ok(()),
+-                    Err(e @ RemoteSignerError::Offline(_)) => Err(e),
+-                    Err(e) => {
+-                        tracing::debug!(error = %e, "Linked signer did not accept connect; trying the request anyway");
+-                        Ok(())
+-                    }
+-                }
+-            })
+-            .await
+-            .map(|_| ())
++    /// `connect` for a session, waiting [`SESSION_CONNECT_WAIT`]: whether
++    /// the signer accepted it ("ack", or the secret echoed back).
++    async fn session_connect(&self) -> Result<bool, RemoteSignerError> {
++        let result = self.send_connect(SESSION_CONNECT_WAIT).await?;
++        Ok(result == "ack" || Some(&result) == self.secret.as_ref())
+     }
+ 
+-    /// One request within an open session, waiting [`REQUEST_TIMEOUT`].
++    /// One request within the session, waiting [`REQUEST_TIMEOUT`]. The
++    /// session's `connect` rules are in [`ConnectGate`].
+     async fn request(&self, request: NostrConnectRequest) -> Result<String, RemoteSignerError> {
+-        self.session().await?;
+-        self.round_trip(request, REQUEST_TIMEOUT).await
++        self.session
++            .run(
++                || self.session_connect(),
++                || self.round_trip(request.clone(), REQUEST_TIMEOUT),
++            )
++            .await
+     }
+ 
+     fn offline(&self) -> RemoteSignerError {
+@@ -396,19 +466,18 @@ impl NostrConnectSigner {
+         // Listen before sending, so a fast reply cannot slip past.
+         let mut notifications = client.notifications();
+         let sent_at = Timestamp::now();
+-        let sent = client
+-            .send_event(&event)
+-            .await
+-            .map_err(|_| self.offline())?;
+-        if sent.success.is_empty() {
+-            return Err(self.offline());
+-        }
++        let send = async {
++            client
++                .send_event(&event)
++                .await
++                .is_ok_and(|sent| !sent.success.is_empty())
++        };
+ 
+         let reply = async {
+             loop {
+                 match notifications.recv().await {
+                     Ok(RelayPoolNotification::Event { event, .. }) => {
+-                        if let Some(reply) = self.reply_to(&event, &request_id, &method) {
++                        if let Some(reply) = self.matched_reply(&event, &request_id, &method) {
+                             return reply;
+                         }
+                     }
+@@ -424,7 +493,9 @@ impl NostrConnectSigner {
+                             .since(since);
+                         if let Ok(events) = client.fetch_events(filter, CONNECT_TIMEOUT).await {
+                             for event in events {
+-                                if let Some(reply) = self.reply_to(&event, &request_id, &method) {
++                                if let Some(reply) =
++                                    self.matched_reply(&event, &request_id, &method)
++                                {
+                                     return reply;
+                                 }
+                             }
+@@ -434,7 +505,7 @@ impl NostrConnectSigner {
+                 }
+             }
+         };
+-        tokio::time::timeout(wait, reply)
++        tokio::time::timeout(wait, first_reply(send, reply, self.offline()))
+             .await
+             .map_err(|_| RemoteSignerError::Timeout)?
+     }
+@@ -453,15 +524,21 @@ impl NostrConnectSigner {
+         // Check the id and signature ourselves before any decryption: a NIP-04
+         // reply carries no MAC, so the signature is its only tamper check.
+         if event.verify().is_err() {
++            tracing::debug!(%method, "Ignoring a signer event that does not verify");
+             return None;
+         }
+-        let json = self.decrypt(&event.content)?;
++        let Some(json) = self.decrypt(&event.content) else {
++            tracing::debug!(%method, "Ignoring a signer event that does not decrypt");
++            return None;
++        };
+         let Ok(NostrConnectMessage::Response { id, result, error }) =
+             NostrConnectMessage::from_json(json)
+         else {
++            tracing::debug!(%method, "Ignoring a signer event that is not a NIP-46 response");
+             return None;
+         };
+         if id != request_id {
++            tracing::debug!(%method, "Ignoring a signer response to another request");
+             return None;
+         }
+         // NIP-46 `auth_url`: the signer wants the person to approve in a
+@@ -478,6 +555,19 @@ impl NostrConnectSigner {
+         )
+     }
+ 
++    /// [`Self::reply_to`], noting the time of any reply it accepts: every
++    /// verified reply (a refusal included) shows the signer is there.
++    fn matched_reply(
++        &self,
++        event: &Event,
++        request_id: &str,
++        method: &NostrConnectMethod,
++    ) -> Option<Result<String, RemoteSignerError>> {
++        let reply = self.reply_to(event, request_id, method)?;
++        *lock(&self.last_reply) = Some(Instant::now());
++        Some(reply)
++    }
++
+     /// Decrypt a reply. NIP-46 now uses NIP-44; some bunkers still send NIP-04.
+     fn decrypt(&self, content: &str) -> Option<String> {
+         let secret_key = self.client_keys.secret_key();
+@@ -490,6 +580,118 @@ impl NostrConnectSigner {
+     }
+ }
+ 
++/// Whether a session's `connect` has been accepted, and when to send it
++/// again, as Cambium does with Heartwood:
++///
++/// - Until the signer accepts `connect`, each request first sends it (from
++///   the stored client key, with the stored secret if any) and goes ahead
++///   whatever the outcome: a refusal, or silence within
++///   [`SESSION_CONNECT_WAIT`], may still come from a signer that serves the
++///   client key it authorised before, and the request itself says whether it
++///   does. Only unreachable relays fail the request.
++/// - Any reply to `connect` ends its wait at once. A request that succeeds
++///   marks the session accepted too: the signer evidently knows the client,
++///   so a signer that refuses a second use of its secret is not sent
++///   `connect` before every request.
++/// - Once accepted, a request answered `Unauthorised` (the signer no longer
++///   knows this client, as after a restart) sends `connect` once more and,
++///   if that is accepted, retries the request once. An unauthorised answer
++///   comes without a prompt, so the retry raises at most the one prompt the
++///   request was going to raise anyway. A person's refusal (`Denied`) is
++///   never retried.
++#[derive(Default)]
++pub(crate) struct ConnectGate {
++    accepted: tokio::sync::Mutex<bool>,
++}
++
++impl ConnectGate {
++    /// Mark `connect` as accepted (it was, at link or pairing time).
++    pub(crate) fn accept(&mut self) {
++        *self.accepted.get_mut() = true;
++    }
++
++    /// Send `connect` unless it has been accepted; whether it now is.
++    async fn ensure<C, CF>(&self, connect: &C) -> Result<bool, RemoteSignerError>
++    where
++        C: Fn() -> CF,
++        CF: Future<Output = Result<bool, RemoteSignerError>>,
++    {
++        let mut accepted = self.accepted.lock().await;
++        if !*accepted {
++            match connect().await {
++                Ok(ok) => *accepted = ok,
++                Err(e @ RemoteSignerError::Offline(_)) => return Err(e),
++                Err(e) => {
++                    tracing::debug!(error = %e, "Linked signer did not accept connect; trying the request anyway");
++                }
++            }
++        }
++        Ok(*accepted)
++    }
++
++    /// Run `request` under the rules above.
++    pub(crate) async fn run<C, CF, R, RF, T>(
++        &self,
++        connect: C,
++        request: R,
++    ) -> Result<T, RemoteSignerError>
++    where
++        C: Fn() -> CF,
++        CF: Future<Output = Result<bool, RemoteSignerError>>,
++        R: Fn() -> RF,
++        RF: Future<Output = Result<T, RemoteSignerError>>,
++    {
++        let accepted = self.ensure(&connect).await?;
++        let result = match request().await {
++            Err(RemoteSignerError::Unauthorised) if accepted => {
++                *self.accepted.lock().await = false;
++                if self.ensure(&connect).await? {
++                    request().await
++                } else {
++                    Err(RemoteSignerError::Unauthorised)
++                }
++            }
++            other => other,
++        };
++        if result.is_ok() {
++            *self.accepted.lock().await = true;
++        }
++        result
++    }
++}
++
++/// Wait for the signer's reply while the request is still being sent.
++///
++/// Sending finishes only when every relay has acknowledged the event (or
++/// failed to): a relay may take up to 10 s to do so, or ask for NIP-42 AUTH
++/// first, while the signer has long since answered on another relay. So the
++/// reply is taken as soon as it arrives. `send` reports whether any relay
++/// accepted the request; if none did and no reply has come, the signer is
++/// offline.
++async fn first_reply<S, R>(
++    send: S,
++    reply: R,
++    offline: RemoteSignerError,
++) -> Result<String, RemoteSignerError>
++where
++    S: Future<Output = bool>,
++    R: Future<Output = Result<String, RemoteSignerError>>,
++{
++    tokio::pin!(send);
++    tokio::pin!(reply);
++    tokio::select! {
++        biased;
++        answer = &mut reply => answer,
++        accepted = &mut send => {
++            if accepted {
++                reply.await
++            } else {
++                Err(offline)
++            }
++        }
++    }
++}
++
+ /// Shuts a relay client down when dropped, however the code holding it ends,
+ /// unless [`ShutdownGuard::keep`] hands the client on.
+ pub(crate) struct ShutdownGuard(Option<Client>);
+@@ -541,6 +743,22 @@ impl RemoteSigner for NostrConnectSigner {
+         })
+     }
+ 
++    /// Sent outside the session (no `connect` first), so a dead signer is
++    /// found in [`PING_TIMEOUT`] rather than after `connect`'s wait as well.
++    async fn ping(&self) -> Result<(), RemoteSignerError> {
++        self.round_trip(NostrConnectRequest::Ping, PING_TIMEOUT)
++            .await
++            .map(|_| ())
++    }
++
++    async fn ready(&self) -> Result<(), RemoteSignerError> {
++        self.client().await.map(|_| ())
++    }
++
++    fn last_reply(&self) -> Option<Instant> {
++        *lock(&self.last_reply)
++    }
++
+     async fn sign_event(&self, unsigned: UnsignedEvent) -> Result<Event, RemoteSignerError> {
+         let result = self
+             .request(NostrConnectRequest::SignEvent(unsigned))
+@@ -549,6 +767,585 @@ impl RemoteSigner for NostrConnectSigner {
+             RemoteSignerError::BadResponse("sign_event returned an invalid event".to_string())
+         })
+     }
++
++    async fn nip04_encrypt(
++        &self,
++        peer: &PublicKey,
++        plaintext: &str,
++    ) -> Result<String, RemoteSignerError> {
++        let request = NostrConnectRequest::Nip04Encrypt {
++            public_key: *peer,
++            text: plaintext.to_string(),
++        };
++        self.request(request).await
++    }
++
++    async fn nip04_decrypt(
++        &self,
++        peer: &PublicKey,
++        ciphertext: &str,
++    ) -> Result<String, RemoteSignerError> {
++        let request = NostrConnectRequest::Nip04Decrypt {
++            public_key: *peer,
++            ciphertext: ciphertext.to_string(),
++        };
++        self.request(request).await
++    }
++
++    async fn nip44_encrypt(
++        &self,
++        peer: &PublicKey,
++        plaintext: &str,
++    ) -> Result<String, RemoteSignerError> {
++        let request = NostrConnectRequest::Nip44Encrypt {
++            public_key: *peer,
++            text: plaintext.to_string(),
++        };
++        self.request(request).await
++    }
++
++    async fn nip44_decrypt(
++        &self,
++        peer: &PublicKey,
++        ciphertext: &str,
++    ) -> Result<String, RemoteSignerError> {
++        let request = NostrConnectRequest::Nip44Decrypt {
++            public_key: *peer,
++            ciphertext: ciphertext.to_string(),
++        };
++        self.request(request).await
++    }
++}
++
++/// Hands out the [`RemoteSigner`] for a linked identity. A seam so tests can
++/// swap the network for a fake.
++pub trait RemoteSignerSource: Send + Sync {
++    fn open(&self, identity_id: &str, linked: &LinkedSigner) -> Result<Arc<dyn RemoteSigner>>;
++    /// The identity is gone: drop anything kept open for it.
++    fn forget(&self, _identity_id: &str) {}
++}
++
++/// How long an unused signer session stays open.
++pub const SESSION_IDLE: Duration = Duration::from_secs(5 * 60);
++/// The most signer sessions kept open at once.
++pub const MAX_SESSIONS: usize = 32;
++
++type OpenSigner = dyn Fn(&LinkedSigner) -> Result<Arc<dyn RemoteSigner>> + Send + Sync;
++
++struct Session {
++    id: u64,
++    /// Digest of the linked-signer record the session was opened for, so a
++    /// re-link under the same identity id gets a fresh session.
++    fingerprint: String,
++    signer: Arc<dyn RemoteSigner>,
++    last_used: Instant,
++    /// When a request through this session last got a verified reply.
++    last_reply: Arc<Mutex<Option<Instant>>>,
++}
++
++type SessionMap = Arc<Mutex<HashMap<String, Session>>>;
++
++/// Open signer sessions, one per linked identity, so requests share a relay
++/// connection and `connect` is sent once per session rather than once per
++/// request. A session is closed after [`SESSION_IDLE`] unused, after a
++/// transport failure (the next request reconnects), when its identity is
++/// deleted or re-linked, and when [`MAX_SESSIONS`] are open and it is the
++/// least recently used.
++pub struct RemoteSessions {
++    open: Box<OpenSigner>,
++    sessions: SessionMap,
++    /// Identities deleted while this process runs. A request that read the
++    /// identity just before its deletion must not reopen a session for it.
++    /// Identity ids are fresh UUIDs, so an id never comes back.
++    forgotten: Mutex<HashSet<String>>,
++    next_id: AtomicU64,
++}
++
++impl RemoteSessions {
++    pub fn new<F>(open: F) -> Self
++    where
++        F: Fn(&LinkedSigner) -> Result<Arc<dyn RemoteSigner>> + Send + Sync + 'static,
++    {
++        Self {
++            open: Box::new(open),
++            sessions: Arc::default(),
++            forgotten: Mutex::default(),
++            next_id: AtomicU64::new(0),
++        }
++    }
++
++    /// The process-wide NIP-46 sessions, with a sweeper that closes idle
++    /// ones. The sweeper is spawned on the runtime of the first caller, which
++    /// is always inside one (`IdentityManager::new` is async). Without it,
++    /// an idle session would still be replaced on its next use, but not
++    /// closed until then.
++    pub fn global() -> Arc<Self> {
++        static GLOBAL: OnceLock<Arc<RemoteSessions>> = OnceLock::new();
++        Arc::clone(GLOBAL.get_or_init(|| {
++            let sessions = Arc::new(Self::new(|linked| {
++                Ok(Arc::new(NostrConnectSigner::from_linked(linked)?))
++            }));
++            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
++                let sweeper = Arc::downgrade(&sessions);
++                runtime.spawn(async move {
++                    let mut tick = tokio::time::interval(Duration::from_secs(60));
++                    loop {
++                        tick.tick().await;
++                        match sweeper.upgrade() {
++                            Some(sessions) => sessions.close_idle(),
++                            None => break,
++                        }
++                    }
++                });
++            }
++            sessions
++        }))
++    }
++
++    /// Close sessions unused for [`SESSION_IDLE`].
++    pub fn close_idle(&self) {
++        let now = Instant::now();
++        lock(&self.sessions).retain(|_, s| now - s.last_used < SESSION_IDLE);
++    }
++
++    #[cfg(test)]
++    pub fn len(&self) -> usize {
++        lock(&self.sessions).len()
++    }
++}
++
++fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
++    mutex.lock().unwrap_or_else(|e| e.into_inner())
++}
++
++/// Digest of everything a session depends on.
++fn fingerprint(linked: &LinkedSigner) -> String {
++    use sha2::{Digest, Sha256};
++    let mut hasher = Sha256::new();
++    for part in [
++        linked.remote_signer_pubkey.as_str(),
++        linked.user_pubkey.as_str(),
++        linked.client_secret_hex.as_str(),
++        linked.bunker_secret.as_deref().unwrap_or(""),
++        linked.linked_at.as_str(),
++    ]
++    .into_iter()
++    .chain(linked.relays.iter().map(String::as_str))
++    {
++        hasher.update(part.as_bytes());
++        hasher.update([0]);
++    }
++    hex::encode(hasher.finalize())
++}
++
++impl RemoteSignerSource for RemoteSessions {
++    fn open(&self, identity_id: &str, linked: &LinkedSigner) -> Result<Arc<dyn RemoteSigner>> {
++        let fingerprint = fingerprint(linked);
++        let now = Instant::now();
++        // `sessions` first, then `forgotten`, as in `forget`: holding
++        // `sessions` across the check means a concurrent `forget` either
++        // runs before it (and is seen) or after the insert (and removes it).
++        let mut sessions = lock(&self.sessions);
++        if lock(&self.forgotten).contains(identity_id) {
++            anyhow::bail!("Identity not found: {}", identity_id);
++        }
++        let current = sessions
++            .get_mut(identity_id)
++            .filter(|s| s.fingerprint == fingerprint && now - s.last_used < SESSION_IDLE);
++        let (id, signer, last_reply) = match current {
++            Some(session) => {
++                session.last_used = now;
++                (
++                    session.id,
++                    Arc::clone(&session.signer),
++                    Arc::clone(&session.last_reply),
++                )
++            }
++            None => {
++                let signer = (self.open)(linked)?;
++                let id = self.next_id.fetch_add(1, Ordering::Relaxed);
++                sessions.remove(identity_id);
++                if sessions.len() >= MAX_SESSIONS {
++                    let oldest = sessions
++                        .iter()
++                        .min_by_key(|(_, s)| s.last_used)
++                        .map(|(k, _)| k.clone());
++                    if let Some(oldest) = oldest {
++                        sessions.remove(&oldest);
++                    }
++                }
++                let last_reply = Arc::new(Mutex::new(None));
++                sessions.insert(
++                    identity_id.to_string(),
++                    Session {
++                        id,
++                        fingerprint,
++                        signer: Arc::clone(&signer),
++                        last_used: now,
++                        last_reply: Arc::clone(&last_reply),
++                    },
++                );
++                (id, signer, last_reply)
++            }
++        };
++        Ok(Arc::new(SessionSigner {
++            identity_id: identity_id.to_string(),
++            session_id: id,
++            inner: signer,
++            sessions: Arc::clone(&self.sessions),
++            relays: linked.relays.join(", "),
++            last_reply,
++        }))
++    }
++
++    fn forget(&self, identity_id: &str) {
++        let mut sessions = lock(&self.sessions);
++        lock(&self.forgotten).insert(identity_id.to_string());
++        sessions.remove(identity_id);
++    }
++}
++
++/// A session's signer as handed to one caller. Before a request it makes
++/// sure the signer is there: unless it replied within [`LIVENESS_WINDOW`], a
++/// `ping` must get some reply within [`PING_TIMEOUT`], or the request fails
++/// as offline without being sent. While the request is out it keeps
++/// checking: no reply within [`PING_TIMEOUT`] sends a `ping`, and silence to
++/// that fails the request as offline; an answered `ping` (the signer is
++/// there, likely waiting on a person) is repeated every [`PROBE_INTERVAL`].
++/// Signers answer `ping` while an approval is pending, so a person deciding
++/// is never cut off. A transport failure closes the session, so the next
++/// request reconnects.
++struct SessionSigner {
++    identity_id: String,
++    session_id: u64,
++    inner: Arc<dyn RemoteSigner>,
++    sessions: SessionMap,
++    /// For the offline message.
++    relays: String,
++    last_reply: Arc<Mutex<Option<Instant>>>,
++}
++
++impl SessionSigner {
++    /// Record a reply (any answer, refusals included), and close the session
++    /// on a transport failure.
++    fn check<T>(&self, result: Result<T, RemoteSignerError>) -> Result<T, RemoteSignerError> {
++        match &result {
++            Err(RemoteSignerError::Offline(_) | RemoteSignerError::Timeout) => {
++                let mut sessions = lock(&self.sessions);
++                if sessions
++                    .get(&self.identity_id)
++                    .is_some_and(|s| s.id == self.session_id)
++                {
++                    sessions.remove(&self.identity_id);
++                }
++            }
++            _ => *lock(&self.last_reply) = Some(Instant::now()),
++        }
++        result
++    }
++
++    /// Ping the signer unless it replied within [`LIVENESS_WINDOW`].
++    async fn ensure_alive(&self) -> Result<(), RemoteSignerError> {
++        let seen = (*lock(&self.last_reply)).max(self.inner.last_reply());
++        if seen.is_some_and(|at| Instant::now() - at < LIVENESS_WINDOW) {
++            return Ok(());
++        }
++        self.probe().await
++    }
++
++    /// `ping` with [`PING_TIMEOUT`]: `Ok` for any answer (a refusal
++    /// included), the offline error for silence.
++    async fn probe(&self) -> Result<(), RemoteSignerError> {
++        // Relays first, so PING_TIMEOUT times only the ping itself.
++        if let Err(e) = self.inner.ready().await {
++            return self.check(Err(e));
++        }
++        let pinged = match tokio::time::timeout(PING_TIMEOUT, self.inner.ping()).await {
++            Ok(Err(RemoteSignerError::Timeout)) | Err(_) => {
++                Err(RemoteSignerError::Offline(self.relays.clone()))
++            }
++            Ok(other) => other,
++        };
++        match self.check(pinged) {
++            Err(e @ RemoteSignerError::Offline(_)) => Err(e),
++            _ => Ok(()),
++        }
++    }
++
++    /// Run a request, probing the signer while it is out (see the type's
++    /// documentation), and record its outcome.
++    async fn watched<T>(
++        &self,
++        request: impl Future<Output = Result<T, RemoteSignerError>>,
++    ) -> Result<T, RemoteSignerError> {
++        self.ensure_alive().await?;
++        tokio::pin!(request);
++        let mut next_probe = Instant::now() + PING_TIMEOUT;
++        let result = loop {
++            tokio::select! {
++                result = &mut request => break result,
++                _ = tokio::time::sleep_until(next_probe) => {
++                    let probe = self.probe();
++                    tokio::pin!(probe);
++                    tokio::select! {
++                        result = &mut request => break result,
++                        alive = &mut probe => match alive {
++                            Ok(()) => next_probe = Instant::now() + PROBE_INTERVAL,
++                            Err(offline) => break Err(offline),
++                        },
++                    }
++                }
++            }
++        };
++        self.check(result)
++    }
++}
++
++#[async_trait]
++impl RemoteSigner for SessionSigner {
++    async fn get_public_key(&self) -> Result<PublicKey, RemoteSignerError> {
++        self.check(self.inner.get_public_key().await)
++    }
++
++    async fn sign_event(&self, unsigned: UnsignedEvent) -> Result<Event, RemoteSignerError> {
++        self.watched(self.inner.sign_event(unsigned)).await
++    }
++
++    async fn nip04_encrypt(
++        &self,
++        peer: &PublicKey,
++        plaintext: &str,
++    ) -> Result<String, RemoteSignerError> {
++        self.watched(self.inner.nip04_encrypt(peer, plaintext))
++            .await
++    }
++
++    async fn nip04_decrypt(
++        &self,
++        peer: &PublicKey,
++        ciphertext: &str,
++    ) -> Result<String, RemoteSignerError> {
++        self.watched(self.inner.nip04_decrypt(peer, ciphertext))
++            .await
++    }
++
++    async fn nip44_encrypt(
++        &self,
++        peer: &PublicKey,
++        plaintext: &str,
++    ) -> Result<String, RemoteSignerError> {
++        self.watched(self.inner.nip44_encrypt(peer, plaintext))
++            .await
++    }
++
++    async fn nip44_decrypt(
++        &self,
++        peer: &PublicKey,
++        ciphertext: &str,
++    ) -> Result<String, RemoteSignerError> {
++        self.watched(self.inner.nip44_decrypt(peer, ciphertext))
++            .await
++    }
++
++    async fn ping(&self) -> Result<(), RemoteSignerError> {
++        self.check(self.inner.ping().await)
++    }
++
++    fn last_reply(&self) -> Option<Instant> {
++        (*lock(&self.last_reply)).max(self.inner.last_reply())
++    }
++}
++
++/// The four NIP-46 encryption methods.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum CipherOp {
++    Nip04Encrypt,
++    Nip04Decrypt,
++    Nip44Encrypt,
++    Nip44Decrypt,
++}
++
++impl CipherOp {
++    /// The NIP-46 method name.
++    pub fn method(self) -> &'static str {
++        match self {
++            CipherOp::Nip04Encrypt => "nip04_encrypt",
++            CipherOp::Nip04Decrypt => "nip04_decrypt",
++            CipherOp::Nip44Encrypt => "nip44_encrypt",
++            CipherOp::Nip44Decrypt => "nip44_decrypt",
++        }
++    }
++
++    pub async fn apply(
++        self,
++        signer: &dyn RemoteSigner,
++        peer: &PublicKey,
++        text: &str,
++    ) -> Result<String, RemoteSignerError> {
++        match self {
++            CipherOp::Nip04Encrypt => signer.nip04_encrypt(peer, text).await,
++            CipherOp::Nip04Decrypt => signer.nip04_decrypt(peer, text).await,
++            CipherOp::Nip44Encrypt => signer.nip44_encrypt(peer, text).await,
++            CipherOp::Nip44Decrypt => signer.nip44_decrypt(peer, text).await,
++        }
++    }
++}
++
++/// How long a completed request's result answers retries of it.
++pub const RESULT_TTL: Duration = Duration::from_secs(60);
++/// The most requests kept before completed ones are dropped, oldest first.
++/// Pending requests are never dropped, so they can take the map past this;
++/// they are bounded by the request timeouts instead.
++pub const MAX_RESULTS: usize = 256;
++
++/// Identifies one remote request for de-duplication: the identity, the
++/// NIP-46 method and a digest of the request (the event id for
++/// `sign_event`).
++#[derive(Debug, Clone, PartialEq, Eq, Hash)]
++pub struct RequestKey {
++    pub identity_id: String,
++    pub method: &'static str,
++    pub digest: String,
++}
++
++/// What a remote request produced.
++#[derive(Debug, Clone)]
++pub enum RemoteReply {
++    Event(Box<Event>),
++    Text(String),
++}
++
++type SharedReply = Shared<BoxFuture<'static, Result<RemoteReply, RemoteSignerError>>>;
++
++struct PendingRequest {
++    generation: u64,
++    reply: SharedReply,
++    completed_at: Option<Instant>,
++}
++
++/// De-duplicates remote signer requests.
++///
++/// The dashboard's RPC client gives up after 15 s and retries, while a person
++/// may take far longer to answer a prompt on their signer. So each request
++/// runs on its own task, which a dropped HTTP request cannot cancel; a retry
++/// with the same [`RequestKey`] waits on that task instead of raising a second
++/// prompt; and a success keeps answering retries for [`RESULT_TTL`], then is
++/// dropped. A failure is forgotten as soon as it is delivered, so the next
++/// attempt starts afresh. A result is only ever handed to a request with the
++/// same [`RequestKey`]: the same identity, method and request digest.
++#[derive(Default)]
++pub struct RemoteRequests {
++    pending: Mutex<HashMap<RequestKey, PendingRequest>>,
++    next_generation: AtomicU64,
++}
++
++impl RemoteRequests {
++    /// The process-wide instance. `IdentityManager` is built per RPC call, so
++    /// the state has to live here.
++    pub fn global() -> Arc<Self> {
++        static GLOBAL: OnceLock<Arc<RemoteRequests>> = OnceLock::new();
++        Arc::clone(GLOBAL.get_or_init(|| Arc::new(Self::default())))
++    }
++
++    /// Run `work` for `key`, or join the run already pending (or recently
++    /// completed) for it. `work` is dropped unpolled when joining.
++    pub async fn run<F>(
++        self: &Arc<Self>,
++        key: RequestKey,
++        work: F,
++    ) -> Result<RemoteReply, RemoteSignerError>
++    where
++        F: Future<Output = Result<RemoteReply, RemoteSignerError>> + Send + 'static,
++    {
++        let reply = {
++            let mut pending = lock(&self.pending);
++            let now = Instant::now();
++            pending.retain(|_, p| p.completed_at.is_none_or(|at| now - at < RESULT_TTL));
++            match pending.get(&key) {
++                Some(existing) => existing.reply.clone(),
++                None => {
++                    if pending.len() >= MAX_RESULTS {
++                        let mut completed: Vec<(Instant, RequestKey)> = pending
++                            .iter()
++                            .filter_map(|(k, p)| p.completed_at.map(|at| (at, k.clone())))
++                            .collect();
++                        completed.sort_by_key(|(at, _)| *at);
++                        let excess = pending.len() + 1 - MAX_RESULTS;
++                        for (_, old) in completed.into_iter().take(excess) {
++                            pending.remove(&old);
++                        }
++                    }
++                    let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
++                    let requests = Arc::clone(self);
++                    let task_key = key.clone();
++                    let task = tokio::spawn(async move {
++                        // Catch a panic so the key is still released: an
++                        // entry left pending would answer every later
++                        // retry with this failure.
++                        let result = std::panic::AssertUnwindSafe(work).catch_unwind().await;
++                        requests.finish(&task_key, generation, matches!(result, Ok(Ok(_))));
++                        result.unwrap_or_else(|_| {
++                            Err(RemoteSignerError::BadResponse(
++                                "the request task panicked".to_string(),
++                            ))
++                        })
++                    });
++                    let reply = async move {
++                        task.await.unwrap_or_else(|_| {
++                            Err(RemoteSignerError::BadResponse(
++                                "the request task failed".to_string(),
++                            ))
++                        })
++                    }
++                    .boxed()
++                    .shared();
++                    pending.insert(
++                        key,
++                        PendingRequest {
++                            generation,
++                            reply: reply.clone(),
++                            completed_at: None,
++                        },
++                    );
++                    reply
++                }
++            }
++        };
++        reply.await
++    }
++
++    fn finish(self: &Arc<Self>, key: &RequestKey, generation: u64, succeeded: bool) {
++        let mut pending = lock(&self.pending);
++        if pending.get(key).is_none_or(|p| p.generation != generation) {
++            return;
++        }
++        if !succeeded {
++            pending.remove(key);
++            return;
++        }
++        if let Some(p) = pending.get_mut(key) {
++            p.completed_at = Some(Instant::now());
++        }
++        // Drop the result when it expires, even if no request comes along to
++        // prune it: it may be a decrypted message.
++        let requests = Arc::clone(self);
++        let key = key.clone();
++        tokio::spawn(async move {
++            tokio::time::sleep(RESULT_TTL).await;
++            let mut pending = lock(&requests.pending);
++            if pending
++                .get(&key)
++                .is_some_and(|p| p.generation == generation)
++            {
++                pending.remove(&key);
++            }
++        });
++    }
++
++    #[cfg(test)]
++    pub fn len(&self) -> usize {
++        lock(&self.pending).len()
++    }
+ }
+ 
+ #[cfg(test)]
+@@ -757,7 +1554,11 @@ pub(crate) mod tests {
+         let m = NostrConnectMethod::Nip44Encrypt;
+         assert_eq!(
+             classify_signer_error(&m, "not authorized"),
+-            RemoteSignerError::Denied
++            RemoteSignerError::Unauthorised
++        );
++        assert_eq!(
++            RemoteSignerError::Unauthorised.to_string(),
++            "linked signer denied the request"
+         );
+         assert_eq!(
+             classify_signer_error(&m, "User denied"),
+@@ -801,6 +1602,22 @@ pub(crate) mod tests {
+         Tamper,
+         /// Claims one key in `get_public_key` but signs with another.
+         WrongKey,
++        Deny,
++        Unsupported,
++        /// Panics mid-request.
++        Panic,
++        /// Fails as if the relays were unreachable.
++        Offline,
++    }
++
++    /// How a [`FakeSigner`] answers `ping`.
++    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
++    pub(crate) enum FakePing {
++        Pong,
++        /// Answers with an error reply.
++        Refuse,
++        /// Never answers.
++        Silent,
+     }
+ 
+     /// In-memory [`RemoteSigner`] that counts the requests it serves. A
+@@ -810,6 +1627,13 @@ pub(crate) mod tests {
+         pub calls: AtomicUsize,
+         pub mode: Mutex<FakeMode>,
+         pub gate: Option<tokio::sync::Semaphore>,
++        /// Pings are counted apart from `calls` and never held by the gate:
++        /// signers answer them without asking anyone.
++        pub pings: AtomicUsize,
++        pub ping: Mutex<FakePing>,
++        /// How long `ready` (connecting the relays) and the `pong` take.
++        pub ready_delay: Mutex<Duration>,
++        pub pong_delay: Mutex<Duration>,
+     }
+ 
+     impl FakeSigner {
+@@ -819,6 +1643,10 @@ pub(crate) mod tests {
+                 calls: AtomicUsize::new(0),
+                 mode: Mutex::new(mode),
+                 gate: None,
++                pings: AtomicUsize::new(0),
++                ping: Mutex::new(FakePing::Pong),
++                ready_delay: Mutex::new(Duration::ZERO),
++                pong_delay: Mutex::new(Duration::ZERO),
+             }
+         }
+ 
+@@ -833,6 +1661,10 @@ pub(crate) mod tests {
+             self.calls.load(Ordering::SeqCst)
+         }
+ 
++        pub fn set_mode(&self, mode: FakeMode) {
++            *self.mode.lock().unwrap() = mode;
++        }
++
+         /// Let one held request answer.
+         pub fn release(&self) {
+             if let Some(gate) = &self.gate {
+@@ -840,12 +1672,19 @@ pub(crate) mod tests {
+             }
+         }
+ 
+-        async fn enter(&self) -> FakeMode {
++        async fn enter(&self, method: &str) -> Result<FakeMode, RemoteSignerError> {
+             self.calls.fetch_add(1, Ordering::SeqCst);
+             if let Some(gate) = &self.gate {
+                 gate.acquire().await.unwrap().forget();
+             }
+-            *self.mode.lock().unwrap()
++            let mode = *self.mode.lock().unwrap();
++            match mode {
++                FakeMode::Deny => Err(RemoteSignerError::Denied),
++                FakeMode::Unsupported => Err(RemoteSignerError::Unsupported(method.to_string())),
++                FakeMode::Panic => panic!("fake signer panicked"),
++                FakeMode::Offline => Err(RemoteSignerError::Offline("wss://fake".to_string())),
++                mode => Ok(mode),
++            }
+         }
+     }
+ 
+@@ -855,11 +1694,31 @@ pub(crate) mod tests {
+             Ok(self.keys.public_key())
+         }
+ 
++        async fn ready(&self) -> Result<(), RemoteSignerError> {
++            let delay = *self.ready_delay.lock().unwrap();
++            tokio::time::sleep(delay).await;
++            Ok(())
++        }
++
++        async fn ping(&self) -> Result<(), RemoteSignerError> {
++            self.pings.fetch_add(1, Ordering::SeqCst);
++            let ping = *self.ping.lock().unwrap();
++            match ping {
++                FakePing::Pong => {
++                    let delay = *self.pong_delay.lock().unwrap();
++                    tokio::time::sleep(delay).await;
++                    Ok(())
++                }
++                FakePing::Refuse => Err(RemoteSignerError::Denied),
++                FakePing::Silent => std::future::pending().await,
++            }
++        }
++
+         async fn sign_event(
+             &self,
+             mut unsigned: UnsignedEvent,
+         ) -> Result<Event, RemoteSignerError> {
+-            let mode = self.enter().await;
++            let mode = self.enter("sign_event").await?;
+             unsigned.id = None;
+             let keys = match mode {
+                 FakeMode::Tamper => {
+@@ -875,5 +1734,719 @@ pub(crate) mod tests {
+             };
+             Ok(unsigned.sign_with_keys(&keys).unwrap())
+         }
++
++        async fn nip04_encrypt(
++            &self,
++            peer: &PublicKey,
++            plaintext: &str,
++        ) -> Result<String, RemoteSignerError> {
++            self.enter("nip04_encrypt").await?;
++            Ok(nostr_sdk::nips::nip04::encrypt(self.keys.secret_key(), peer, plaintext).unwrap())
++        }
++
++        async fn nip04_decrypt(
++            &self,
++            peer: &PublicKey,
++            ciphertext: &str,
++        ) -> Result<String, RemoteSignerError> {
++            self.enter("nip04_decrypt").await?;
++            nostr_sdk::nips::nip04::decrypt(self.keys.secret_key(), peer, ciphertext)
++                .map_err(|e| RemoteSignerError::BadResponse(e.to_string()))
++        }
++
++        async fn nip44_encrypt(
++            &self,
++            peer: &PublicKey,
++            plaintext: &str,
++        ) -> Result<String, RemoteSignerError> {
++            self.enter("nip44_encrypt").await?;
++            Ok(nostr_sdk::nips::nip44::encrypt(
++                self.keys.secret_key(),
++                peer,
++                plaintext,
++                nostr_sdk::nips::nip44::Version::V2,
++            )
++            .unwrap())
++        }
++
++        async fn nip44_decrypt(
++            &self,
++            peer: &PublicKey,
++            ciphertext: &str,
++        ) -> Result<String, RemoteSignerError> {
++            self.enter("nip44_decrypt").await?;
++            nostr_sdk::nips::nip44::decrypt(self.keys.secret_key(), peer, ciphertext)
++                .map_err(|e| RemoteSignerError::BadResponse(e.to_string()))
++        }
++    }
++    /// A [`RemoteSignerSource`] that always hands out the same fake.
++    pub(crate) struct FakeSource(pub Arc<FakeSigner>);
++
++    impl RemoteSignerSource for FakeSource {
++        fn open(
++            &self,
++            _identity_id: &str,
++            _linked: &LinkedSigner,
++        ) -> Result<Arc<dyn RemoteSigner>> {
++            Ok(self.0.clone())
++        }
++    }
++
++    fn key(digest: &str) -> RequestKey {
++        RequestKey {
++            identity_id: "id-1".to_string(),
++            method: "nip44_encrypt",
++            digest: digest.to_string(),
++        }
++    }
++
++    /// One encrypt through `requests`, the way `IdentityManager` runs it.
++    async fn encrypt(
++        requests: &Arc<RemoteRequests>,
++        signer: &Arc<FakeSigner>,
++        digest: &str,
++    ) -> Result<RemoteReply, RemoteSignerError> {
++        let signer = Arc::clone(signer);
++        let peer = Keys::generate().public_key();
++        requests
++            .run(key(digest), async move {
++                let text = CipherOp::Nip44Encrypt
++                    .apply(signer.as_ref(), &peer, "hello")
++                    .await?;
++                Ok(RemoteReply::Text(text))
++            })
++            .await
++    }
++
++    fn text(reply: RemoteReply) -> String {
++        match reply {
++            RemoteReply::Text(t) => t,
++            other => panic!("expected text, got {other:?}"),
++        }
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn concurrent_identical_requests_reach_the_signer_once() {
++        let requests = Arc::new(RemoteRequests::default());
++        let signer = Arc::new(FakeSigner::gated(Keys::generate(), FakeMode::Honest));
++
++        let first = tokio::spawn({
++            let (r, s) = (requests.clone(), signer.clone());
++            async move { encrypt(&r, &s, "same").await }
++        });
++        let second = tokio::spawn({
++            let (r, s) = (requests.clone(), signer.clone());
++            async move { encrypt(&r, &s, "same").await }
++        });
++        tokio::task::yield_now().await;
++        signer.release();
++        let (first, second) = (first.await.unwrap(), second.await.unwrap());
++        assert_eq!(text(first.unwrap()), text(second.unwrap()));
++        assert_eq!(signer.calls(), 1);
++
++        // Within the TTL a retry gets the cached answer.
++        tokio::time::advance(RESULT_TTL - Duration::from_secs(1)).await;
++        encrypt(&requests, &signer, "same").await.unwrap();
++        assert_eq!(signer.calls(), 1);
++
++        // A different request is not merged with it.
++        signer.release();
++        encrypt(&requests, &signer, "other").await.unwrap();
++        assert_eq!(signer.calls(), 2);
++
++        // After the TTL the request goes to the signer again.
++        tokio::time::advance(Duration::from_secs(2)).await;
++        signer.release();
++        encrypt(&requests, &signer, "same").await.unwrap();
++        assert_eq!(signer.calls(), 3);
++    }
++
++    #[tokio::test]
++    async fn a_failed_request_is_not_cached() {
++        let requests = Arc::new(RemoteRequests::default());
++        let signer = Arc::new(FakeSigner::new(Keys::generate(), FakeMode::Deny));
++        assert_eq!(
++            encrypt(&requests, &signer, "same").await.unwrap_err(),
++            RemoteSignerError::Denied
++        );
++        signer.set_mode(FakeMode::Honest);
++        encrypt(&requests, &signer, "same").await.unwrap();
++        assert_eq!(signer.calls(), 2);
++    }
++
++    #[tokio::test]
++    async fn a_panicking_request_does_not_poison_its_key() {
++        let requests = Arc::new(RemoteRequests::default());
++        let signer = Arc::new(FakeSigner::new(Keys::generate(), FakeMode::Panic));
++        assert!(matches!(
++            encrypt(&requests, &signer, "same").await,
++            Err(RemoteSignerError::BadResponse(_))
++        ));
++        signer.set_mode(FakeMode::Honest);
++        encrypt(&requests, &signer, "same").await.unwrap();
++        assert_eq!(signer.calls(), 2);
++    }
++
++    pub(crate) fn linked(linked_at: &str) -> LinkedSigner {
++        LinkedSigner {
++            remote_signer_pubkey: Keys::generate().public_key().to_hex(),
++            user_pubkey: Keys::generate().public_key().to_hex(),
++            relays: vec!["wss://relay.example.com".to_string()],
++            client_secret_hex: Keys::generate().secret_key().to_secret_hex(),
++            bunker_secret: None,
++            linked_at: linked_at.to_string(),
++        }
++    }
++
++    /// Sessions over one shared fake, counting how often a session is opened.
++    pub(crate) fn fake_sessions(
++        signer: Arc<FakeSigner>,
++    ) -> (Arc<RemoteSessions>, Arc<AtomicUsize>) {
++        let opened = Arc::new(AtomicUsize::new(0));
++        let counter = opened.clone();
++        let sessions = RemoteSessions::new(move |_| {
++            counter.fetch_add(1, Ordering::SeqCst);
++            Ok(signer.clone() as Arc<dyn RemoteSigner>)
++        });
++        (Arc::new(sessions), opened)
++    }
++
++    async fn sign_through(sessions: &RemoteSessions, id: &str, linked: &LinkedSigner) -> bool {
++        let signer = sessions.open(id, linked).unwrap();
++        let keys = Keys::generate();
++        signer.sign_event(sample_request(&keys)).await.is_ok()
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn sessions_are_reused_until_they_fail_or_are_dropped() {
++        let fake = Arc::new(FakeSigner::new(Keys::generate(), FakeMode::Honest));
++        let (sessions, opened) = fake_sessions(fake.clone());
++        let record = linked("2026-10-03T00:00:00Z");
++
++        // Sequential requests share one session.
++        for _ in 0..5 {
++            assert!(sign_through(&sessions, "id-1", &record).await);
++        }
++        assert_eq!(opened.load(Ordering::SeqCst), 1);
++
++        // A refusal is an answer: the session stays.
++        fake.set_mode(FakeMode::Deny);
++        assert!(!sign_through(&sessions, "id-1", &record).await);
++        assert_eq!(sessions.len(), 1);
++
++        // A transport failure closes it, and the next request reconnects.
++        fake.set_mode(FakeMode::Offline);
++        assert!(!sign_through(&sessions, "id-1", &record).await);
++        assert_eq!(sessions.len(), 0);
++        fake.set_mode(FakeMode::Honest);
++        assert!(sign_through(&sessions, "id-1", &record).await);
++        assert_eq!(opened.load(Ordering::SeqCst), 2);
++
++        // Re-linking under the same id opens a fresh session.
++        let relinked = linked("2026-10-04T00:00:00Z");
++        assert!(sign_through(&sessions, "id-1", &relinked).await);
++        assert_eq!(opened.load(Ordering::SeqCst), 3);
++        assert_eq!(sessions.len(), 1);
++
++        // Idle sessions are closed.
++        tokio::time::advance(SESSION_IDLE).await;
++        sessions.close_idle();
++        assert_eq!(sessions.len(), 0);
++        assert!(sign_through(&sessions, "id-1", &relinked).await);
++        assert_eq!(opened.load(Ordering::SeqCst), 4);
++
++        // Deleting the identity drops its session, and a request that read
++        // the identity before the delete cannot open a new one.
++        sessions.forget("id-1");
++        assert_eq!(sessions.len(), 0);
++        let err = sessions.open("id-1", &relinked).err().unwrap();
++        assert_eq!(err.to_string(), "Identity not found: id-1");
++        assert_eq!(sessions.len(), 0);
++        assert_eq!(opened.load(Ordering::SeqCst), 4);
++        // Other identities are unaffected.
++        assert!(sign_through(&sessions, "id-2", &relinked).await);
++    }
++
++    /// A [`ConnectGate`] driven by scripted answers, counting what it sends.
++    struct GateScript {
++        connects: AtomicUsize,
++        requests: AtomicUsize,
++        connect_answers: Mutex<Vec<Result<bool, RemoteSignerError>>>,
++        request_answers: Mutex<Vec<Result<&'static str, RemoteSignerError>>>,
++    }
++
++    impl GateScript {
++        fn new(
++            connect_answers: Vec<Result<bool, RemoteSignerError>>,
++            request_answers: Vec<Result<&'static str, RemoteSignerError>>,
++        ) -> Arc<Self> {
++            Arc::new(Self {
++                connects: AtomicUsize::new(0),
++                requests: AtomicUsize::new(0),
++                connect_answers: Mutex::new(connect_answers),
++                request_answers: Mutex::new(request_answers),
++            })
++        }
++
++        async fn run(
++            self: &Arc<Self>,
++            gate: &ConnectGate,
++        ) -> Result<&'static str, RemoteSignerError> {
++            gate.run(
++                || async {
++                    self.connects.fetch_add(1, Ordering::SeqCst);
++                    self.connect_answers.lock().unwrap().remove(0)
++                },
++                || async {
++                    self.requests.fetch_add(1, Ordering::SeqCst);
++                    self.request_answers.lock().unwrap().remove(0)
++                },
++            )
++            .await
++        }
++
++        fn counts(&self) -> (usize, usize) {
++            (
++                self.connects.load(Ordering::SeqCst),
++                self.requests.load(Ordering::SeqCst),
++            )
++        }
++    }
++
++    #[tokio::test]
++    async fn connect_is_sent_again_until_it_is_accepted() {
++        // Refused at session open (a signer restarted with another secret),
++        // then accepted once it is back as before.
++        let script = GateScript::new(
++            vec![Err(RemoteSignerError::Unauthorised), Ok(true)],
++            vec![Err(RemoteSignerError::Unauthorised), Ok("signed")],
++        );
++        let gate = ConnectGate::default();
++        assert_eq!(
++            script.run(&gate).await,
++            Err(RemoteSignerError::Unauthorised)
++        );
++        assert_eq!(script.counts(), (1, 1));
++        assert_eq!(script.run(&gate).await, Ok("signed"));
++        assert_eq!(script.counts(), (2, 2));
++        // Accepted now: no more connects.
++        script.request_answers.lock().unwrap().push(Ok("again"));
++        assert_eq!(script.run(&gate).await, Ok("again"));
++        assert_eq!(script.counts(), (2, 3));
++    }
++
++    #[tokio::test]
++    async fn a_signer_that_forgot_the_client_gets_one_reconnect_and_one_retry() {
++        let script = GateScript::new(
++            vec![Ok(true)],
++            vec![Err(RemoteSignerError::Unauthorised), Ok("signed")],
++        );
++        let mut gate = ConnectGate::default();
++        gate.accept();
++        assert_eq!(script.run(&gate).await, Ok("signed"));
++        assert_eq!(script.counts(), (1, 2));
++
++        // Still unauthorised after the re-connect: one retry, no loop.
++        let script = GateScript::new(
++            vec![Ok(true)],
++            vec![
++                Err(RemoteSignerError::Unauthorised),
++                Err(RemoteSignerError::Unauthorised),
++            ],
++        );
++        let mut gate = ConnectGate::default();
++        gate.accept();
++        assert_eq!(
++            script.run(&gate).await,
++            Err(RemoteSignerError::Unauthorised)
++        );
++        assert_eq!(script.counts(), (1, 2));
++
++        // A re-connect that is not accepted: no retry.
++        let script = GateScript::new(
++            vec![Err(RemoteSignerError::Timeout)],
++            vec![Err(RemoteSignerError::Unauthorised)],
++        );
++        let mut gate = ConnectGate::default();
++        gate.accept();
++        assert_eq!(
++            script.run(&gate).await,
++            Err(RemoteSignerError::Unauthorised)
++        );
++        assert_eq!(script.counts(), (1, 1));
++    }
++
++    #[tokio::test]
++    async fn a_persons_denial_is_never_retried() {
++        let script = GateScript::new(vec![], vec![Err(RemoteSignerError::Denied)]);
++        let mut gate = ConnectGate::default();
++        gate.accept();
++        assert_eq!(script.run(&gate).await, Err(RemoteSignerError::Denied));
++        // One request (one prompt), and no connect.
++        assert_eq!(script.counts(), (0, 1));
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_connect_error_ends_the_wait_and_a_served_request_settles_the_session() {
++        // A signer that refuses a second use of its secret but serves the
++        // client it knows.
++        let script = GateScript::new(
++            vec![Err(RemoteSignerError::Unauthorised)],
++            vec![Ok("signed"), Ok("again")],
++        );
++        let gate = ConnectGate::default();
++        let started = Instant::now();
++        assert_eq!(script.run(&gate).await, Ok("signed"));
++        // No wait beyond the reply itself.
++        assert_eq!(started.elapsed(), Duration::ZERO);
++        assert_eq!(script.counts(), (1, 1));
++        // Served once, so the session counts as accepted: no more connects.
++        assert_eq!(script.run(&gate).await, Ok("again"));
++        assert_eq!(script.counts(), (1, 2));
++    }
++
++    #[tokio::test]
++    async fn any_verified_reply_counts_as_liveness() {
++        let client = Keys::generate();
++        let remote = Keys::generate();
++        let signer = Arc::new(NostrConnectSigner::new(
++            client.clone(),
++            remote.public_key(),
++            vec![RelayUrl::parse("wss://relay.example.com").unwrap()],
++            None,
++        ));
++        assert_eq!(signer.last_reply(), None);
++        // An error reply to `connect`, as a signer gives for a used secret.
++        let message = NostrConnectMessage::Response {
++            id: "req-1".to_string(),
++            result: None,
++            error: Some("unauthorised".to_string()),
++        };
++        let event = EventBuilder::nostr_connect(&remote, client.public_key(), message)
++            .unwrap()
++            .sign_with_keys(&remote)
++            .unwrap();
++        assert_eq!(
++            signer.matched_reply(&event, "req-1", &NostrConnectMethod::Connect),
++            Some(Err(RemoteSignerError::Unauthorised))
++        );
++        assert!(signer.last_reply().is_some());
++        // So a session over it needs no ping before its next request.
++        let session = SessionSigner {
++            identity_id: "id-1".to_string(),
++            session_id: 0,
++            inner: signer,
++            sessions: Arc::default(),
++            relays: "wss://relay.example.com".to_string(),
++            last_reply: Arc::default(),
++        };
++        // `ensure_alive` would reach the network to ping; it must not.
++        tokio::time::timeout(Duration::from_millis(10), session.ensure_alive())
++            .await
++            .expect("no ping, so no wait")
++            .unwrap();
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn the_ping_is_timed_without_relay_setup() {
++        // Relays take 3 s to connect and the pong 4 s: 7 s in all, but the
++        // ping itself is within PING_TIMEOUT, so the signer is alive.
++        let fake = Arc::new(FakeSigner::new(Keys::generate(), FakeMode::Honest));
++        *fake.ready_delay.lock().unwrap() = Duration::from_secs(3);
++        *fake.pong_delay.lock().unwrap() = Duration::from_secs(4);
++        let (sessions, _) = fake_sessions(fake.clone());
++        let signer = sessions
++            .open("id-1", &linked("2026-10-03T00:00:00Z"))
++            .unwrap();
++        let started = Instant::now();
++        signer
++            .sign_event(sample_request(&Keys::generate()))
++            .await
++            .unwrap();
++        assert_eq!(started.elapsed(), Duration::from_secs(7));
++        assert_eq!(fake.pings.load(Ordering::SeqCst), 1);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_reply_is_taken_before_every_relay_has_acknowledged_the_request() {
++        // The signer answers on one relay in half a second; another relay
++        // keeps the send waiting for its acknowledgement for 10 s.
++        let started = Instant::now();
++        let send = async {
++            tokio::time::sleep(Duration::from_secs(10)).await;
++            true
++        };
++        let reply = async {
++            tokio::time::sleep(Duration::from_millis(500)).await;
++            Ok("pong".to_string())
++        };
++        let offline = RemoteSignerError::Offline("wss://a".to_string());
++        assert_eq!(
++            first_reply(send, reply, offline).await,
++            Ok("pong".to_string())
++        );
++        assert_eq!(started.elapsed(), Duration::from_millis(500));
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_request_no_relay_accepted_is_offline_at_once() {
++        let started = Instant::now();
++        let offline = RemoteSignerError::Offline("wss://a".to_string());
++        let result = first_reply(
++            async { false },
++            std::future::pending::<Result<String, RemoteSignerError>>(),
++            offline.clone(),
++        )
++        .await;
++        assert_eq!(result, Err(offline));
++        assert_eq!(started.elapsed(), Duration::ZERO);
++
++        // Accepted, but slowly: the reply is still awaited afterwards.
++        let send = async {
++            tokio::time::sleep(Duration::from_secs(2)).await;
++            true
++        };
++        let reply = async {
++            tokio::time::sleep(Duration::from_secs(3)).await;
++            Ok("signed".to_string())
++        };
++        assert_eq!(
++            first_reply(send, reply, RemoteSignerError::Timeout).await,
++            Ok("signed".to_string())
++        );
++    }
++
++    #[tokio::test]
++    async fn concurrent_duplicates_send_one_connect_and_one_request() {
++        let requests = Arc::new(RemoteRequests::default());
++        let gate = Arc::new(ConnectGate::default());
++        let release = Arc::new(tokio::sync::Semaphore::new(0));
++        let script = GateScript::new(vec![Ok(true)], vec![Ok("signed")]);
++        let run = || {
++            let (requests, gate, release, script) = (
++                requests.clone(),
++                gate.clone(),
++                release.clone(),
++                script.clone(),
++            );
++            tokio::spawn(async move {
++                let key = RequestKey {
++                    identity_id: "id-1".to_string(),
++                    method: "sign_event",
++                    digest: "same".to_string(),
++                };
++                requests
++                    .run(key, async move {
++                        release.acquire().await.unwrap().forget();
++                        let out = script.run(&gate).await?;
++                        Ok(RemoteReply::Text(out.to_string()))
++                    })
++                    .await
++            })
++        };
++        let (first, second) = (run(), run());
++        tokio::task::yield_now().await;
++        release.add_permits(1);
++        assert!(first.await.unwrap().is_ok());
++        assert!(second.await.unwrap().is_ok());
++        assert_eq!(script.counts(), (1, 1));
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_silent_signer_is_offline_after_the_ping() {
++        let fake = Arc::new(FakeSigner::new(Keys::generate(), FakeMode::Honest));
++        *fake.ping.lock().unwrap() = FakePing::Silent;
++        let (sessions, _) = fake_sessions(fake.clone());
++        let signer = sessions
++            .open("id-1", &linked("2026-10-03T00:00:00Z"))
++            .unwrap();
++
++        let started = Instant::now();
++        let err = signer
++            .sign_event(sample_request(&Keys::generate()))
++            .await
++            .unwrap_err();
++        assert_eq!(started.elapsed(), PING_TIMEOUT);
++        assert_eq!(
++            err.to_string(),
++            "linked signer is offline (no reply from wss://relay.example.com)"
++        );
++        // The real request was never sent, and the session was closed.
++        assert_eq!(fake.pings.load(Ordering::SeqCst), 1);
++        assert_eq!(fake.calls(), 0);
++        assert_eq!(sessions.len(), 0);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn any_reply_to_the_ping_lets_the_request_through() {
++        let fake = Arc::new(FakeSigner::new(Keys::generate(), FakeMode::Honest));
++        *fake.ping.lock().unwrap() = FakePing::Refuse;
++        let (sessions, _) = fake_sessions(fake.clone());
++        assert!(sign_through(&sessions, "id-1", &linked("2026-10-03T00:00:00Z")).await);
++        assert_eq!(fake.pings.load(Ordering::SeqCst), 1);
++        assert_eq!(fake.calls(), 1);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_recent_reply_skips_the_ping() {
++        let fake = Arc::new(FakeSigner::new(Keys::generate(), FakeMode::Honest));
++        let (sessions, _) = fake_sessions(fake.clone());
++        let record = linked("2026-10-03T00:00:00Z");
++
++        assert!(sign_through(&sessions, "id-1", &record).await);
++        assert_eq!(fake.pings.load(Ordering::SeqCst), 1);
++
++        // Within the window: no ping.
++        tokio::time::advance(LIVENESS_WINDOW - Duration::from_secs(1)).await;
++        assert!(sign_through(&sessions, "id-1", &record).await);
++        assert_eq!(fake.pings.load(Ordering::SeqCst), 1);
++
++        // That reply restarted the window; once it has passed, ping again.
++        tokio::time::advance(LIVENESS_WINDOW).await;
++        assert!(sign_through(&sessions, "id-1", &record).await);
++        assert_eq!(fake.pings.load(Ordering::SeqCst), 2);
++        assert_eq!(fake.calls(), 3);
++    }
++
++    /// A gated fake behind a session that has just had a reply, so the
++    /// pre-request ping is skipped. Returns the fake and the session's signer.
++    async fn recently_answered() -> (Arc<FakeSigner>, Arc<dyn RemoteSigner>) {
++        let fake = Arc::new(FakeSigner::gated(Keys::generate(), FakeMode::Honest));
++        let (sessions, _) = fake_sessions(fake.clone());
++        let signer = sessions
++            .open("id-1", &linked("2026-10-03T00:00:00Z"))
++            .unwrap();
++        fake.release();
++        signer
++            .sign_event(sample_request(&Keys::generate()))
++            .await
++            .unwrap();
++        fake.pings.store(0, Ordering::SeqCst);
++        fake.calls.store(0, Ordering::SeqCst);
++        (fake, signer)
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_signer_gone_mid_request_is_offline_after_one_probe() {
++        let (fake, signer) = recently_answered().await;
++        *fake.ping.lock().unwrap() = FakePing::Silent;
++        let started = Instant::now();
++        let err = signer
++            .sign_event(sample_request(&Keys::generate()))
++            .await
++            .unwrap_err();
++        assert_eq!(started.elapsed(), PING_TIMEOUT * 2);
++        assert!(matches!(err, RemoteSignerError::Offline(_)), "{err}");
++        assert_eq!(fake.pings.load(Ordering::SeqCst), 1);
++        assert_eq!(fake.calls(), 1);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_signer_waiting_on_a_person_is_probed_and_not_cut_off() {
++        let (fake, signer) = recently_answered().await;
++        let started = Instant::now();
++        let request = tokio::spawn({
++            let signer = signer.clone();
++            async move { signer.sign_event(sample_request(&Keys::generate())).await }
++        });
++        // Approved after 40 s.
++        tokio::time::sleep(Duration::from_secs(40)).await;
++        fake.release();
++        assert!(request.await.unwrap().is_ok());
++        assert_eq!(started.elapsed(), Duration::from_secs(40));
++        // Probes at 5 s and 35 s.
++        assert_eq!(fake.pings.load(Ordering::SeqCst), 2);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_signer_that_dies_mid_approval_is_caught_at_the_next_probe() {
++        let (fake, signer) = recently_answered().await;
++        let started = Instant::now();
++        let request = tokio::spawn({
++            let signer = signer.clone();
++            async move { signer.sign_event(sample_request(&Keys::generate())).await }
++        });
++        // Answers the probe at 5 s, then dies at 20 s.
++        tokio::time::sleep(Duration::from_secs(20)).await;
++        *fake.ping.lock().unwrap() = FakePing::Silent;
++        let err = request.await.unwrap().unwrap_err();
++        assert!(matches!(err, RemoteSignerError::Offline(_)), "{err}");
++        // The next probe at 35 s, plus its 5 s.
++        assert_eq!(started.elapsed(), Duration::from_secs(40));
++        assert_eq!(fake.pings.load(Ordering::SeqCst), 2);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_fast_reply_sends_no_probe() {
++        let (fake, signer) = recently_answered().await;
++        fake.release();
++        signer
++            .sign_event(sample_request(&Keys::generate()))
++            .await
++            .unwrap();
++        assert_eq!(fake.pings.load(Ordering::SeqCst), 0);
++        assert_eq!(fake.calls(), 1);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn sessions_are_capped_least_recently_used_first() {
++        let fake = Arc::new(FakeSigner::new(Keys::generate(), FakeMode::Honest));
++        let (sessions, opened) = fake_sessions(fake);
++        let record = linked("2026-10-03T00:00:00Z");
++        for i in 0..MAX_SESSIONS {
++            sessions.open(&format!("id-{i}"), &record).unwrap();
++            tokio::time::advance(Duration::from_millis(1)).await;
++        }
++        // Touch the oldest so the second oldest is the one to go.
++        sessions.open("id-0", &record).unwrap();
++        sessions.open("id-new", &record).unwrap();
++        assert_eq!(sessions.len(), MAX_SESSIONS);
++        assert_eq!(opened.load(Ordering::SeqCst), MAX_SESSIONS + 1);
++        sessions.open("id-0", &record).unwrap();
++        assert_eq!(opened.load(Ordering::SeqCst), MAX_SESSIONS + 1);
++        sessions.open("id-1", &record).unwrap();
++        assert_eq!(opened.load(Ordering::SeqCst), MAX_SESSIONS + 2);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn results_are_capped_and_expire_on_their_own() {
++        let requests = Arc::new(RemoteRequests::default());
++        let signer = Arc::new(FakeSigner::new(Keys::generate(), FakeMode::Honest));
++        for i in 0..MAX_RESULTS + 40 {
++            encrypt(&requests, &signer, &format!("digest-{i}"))
++                .await
++                .unwrap();
++        }
++        assert!(requests.len() <= MAX_RESULTS);
++
++        // With no further requests, expired results still go.
++        tokio::time::sleep(RESULT_TTL + Duration::from_secs(1)).await;
++        assert_eq!(requests.len(), 0);
++    }
++
++    #[tokio::test]
++    async fn a_dropped_caller_does_not_cancel_the_request() {
++        let requests = Arc::new(RemoteRequests::default());
++        let signer = Arc::new(FakeSigner::gated(Keys::generate(), FakeMode::Honest));
++
++        let caller = tokio::spawn({
++            let (r, s) = (requests.clone(), signer.clone());
++            async move { encrypt(&r, &s, "same").await }
++        });
++        while signer.calls() == 0 {
++            tokio::task::yield_now().await;
++        }
++        // The HTTP request goes away mid-prompt.
++        caller.abort();
++        assert!(caller.await.unwrap_err().is_cancelled());
++
++        // The person answers on the device; the retry joins that answer.
++        let retry = tokio::spawn({
++            let (r, s) = (requests.clone(), signer.clone());
++            async move { encrypt(&r, &s, "same").await }
++        });
++        signer.release();
++        retry.await.unwrap().unwrap();
++        assert_eq!(signer.calls(), 1);
+     }
+ }
+-- 
+2.53.0
+

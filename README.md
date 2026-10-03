@@ -12,6 +12,10 @@ Archipelago itself.
 | `wildbloom-node` | Blossom storage owned by your node identities |
 | `wildbloom` | Publish files over Nostr, Blossom and BitTorrent, signed by your node identities |
 
+The patches also let a node identity keep its key in a NIP-46 remote signer
+(a hardware signer such as Heartwood, or a phone app): see
+[`docs/linked-signers.md`](docs/linked-signers.md).
+
 Validate locally: `scripts/fetch-archy.sh && scripts/apply-patches.sh && scripts/validate.sh`.
 
 MIT licence.
