@@ -9,6 +9,7 @@ on:
       - scripts/fetch-archy.sh
       - scripts/apply-patches.sh
       - scripts/backend-inputs.sh
+      - scripts/lib/patches.bash
       - scripts/backend-release-plan.sh
       - .github/workflows/backend.yml
   workflow_dispatch:

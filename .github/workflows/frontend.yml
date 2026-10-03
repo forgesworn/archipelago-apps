@@ -10,6 +10,7 @@ on:
       - scripts/apply-patches.sh
       - scripts/build-frontend.sh
       - scripts/frontend-inputs.sh
+      - scripts/lib/patches.bash
       - scripts/frontend-release-plan.sh
       - .github/workflows/frontend.yml
   workflow_dispatch:
