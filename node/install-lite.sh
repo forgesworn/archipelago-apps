@@ -70,11 +70,16 @@ install -m 0755 "$bundle/archipelago" /usr/local/bin/archipelago
 # Frontend, verified, then unpacked (a single top-level directory is flattened).
 # Our frontend release ships frontend.sha256; without it the bundle must be
 # upstream's own asset, pinned by PINS FRONTEND_SHA256.
+# Hash the exact file we are about to unpack; never trust a filename inside the sha file.
 if [ -f "$bundle/frontend.sha256" ]; then
-  (cd "$bundle" && sha256sum -c frontend.sha256)
+  want=$(awk 'NF==2 && $2=="frontend.tar.gz" {print $1}' "$bundle/frontend.sha256")
+  [ "$(wc -l < "$bundle/frontend.sha256")" -le 1 ] && [[ "$want" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo "frontend.sha256 must be one line naming frontend.tar.gz" >&2; exit 1; }
 else
-  echo "${FRONTEND_SHA256:?PINS has no FRONTEND_SHA256}  frontend.tar.gz" | (cd "$bundle" && sha256sum -c -)
+  want=${FRONTEND_SHA256:?PINS has no FRONTEND_SHA256}
 fi
+have=$(sha256sum "$bundle/frontend.tar.gz" | awk '{print $1}')
+[ "$have" = "$want" ] || { echo "frontend.tar.gz is $have, expected $want" >&2; exit 1; }
 tmp=$(mktemp -d); tar -xzf "$bundle/frontend.tar.gz" -C "$tmp"
 src=$tmp
 if [ "$(ls -1 "$tmp" | wc -l)" = 1 ] && [ -d "$tmp/$(ls -1 "$tmp")" ]; then src="$tmp/$(ls -1 "$tmp")"; fi
