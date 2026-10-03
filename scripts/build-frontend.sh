@@ -26,7 +26,9 @@ node_major=$(node -p 'process.versions.node.split(".")[0]')
   || echo "warning: node $node_major, release builds use $FRONTEND_NODE_MAJOR" >&2
 
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
-mkdir -p "$OUT_DIR"
+mkdir -p "$OUT_DIR" "$root/.cache"
+# A failed run must not leave outputs from an earlier one behind.
+rm -f "$OUT_DIR"/frontend.tar.gz* "$OUT_DIR"/frontend.sha256 "$OUT_DIR"/inputs.sha256
 
 # 1. Upstream's asset, verified against the pin.
 asset="archipelago-frontend-${ARCHY_RELEASE#v}.tar.gz"
@@ -52,18 +54,25 @@ for kept in aiui archipelago-runtime; do
   test -d "$work/tree/$kept" || { echo "upstream asset has no $kept/" >&2; exit 1; }
 done
 
-# 3. Overlay: each top-level entry of the build replaces upstream's entry of the
-# same name; entries only upstream has (aiui/, archipelago-runtime/, ...) stay.
+# 3. Overlay: everything at the top level except aiui/ and archipelago-runtime/
+# is neode-ui's build output, so drop upstream's copy (an orphan such as a
+# differently hashed workbox-*.js must not survive) and copy the fresh build in.
+# Note: all files end up 644, so a future runtime payload file that needs an
+# execute bit would lose it here; revisit the repack modes if one ever does.
+for entry in "$work"/tree/* "$work"/tree/.[!.]*; do
+  [ -e "$entry" ] || continue
+  case $(basename "$entry") in aiui|archipelago-runtime) ;; *) rm -rf "$entry" ;; esac
+done
 for entry in "$dist"/* "$dist"/.[!.]*; do
   [ -e "$entry" ] || continue
-  rm -rf "$work/tree/$(basename "$entry")"
   cp -R "$entry" "$work/tree/"
 done
 
 # 4. Deterministic repack: sorted names, root:root, fixed mtime, 755/644, no
 # gzip timestamp, "./" prefixes and a "./" root entry as upstream's tar writes.
 epoch=$(git -C "$archy" show -s --format=%ct "$ARCHY_REF")
-python3 - "$work/tree" "$OUT_DIR/frontend.tar.gz" "$epoch" <<'PY'
+repack() {
+python3 - "$work/tree" "$1" "$epoch" <<'PY'
 import gzip, os, sys, tarfile
 tree, out, epoch = sys.argv[1], sys.argv[2], int(sys.argv[3])
 names = ["."]
@@ -84,6 +93,14 @@ with open(out, "wb") as raw, gzip.GzipFile("", "wb", 9, raw, mtime=0) as gz, \
             sys.exit("symlink in payload: " + n)
         tf.add(p, arcname=n + "/" if os.path.isdir(p) and n != "." else n, recursive=False, filter=norm)
 PY
+}
+# Repack twice from the same tree: gzip and tar framing must not vary between runs.
+repack "$OUT_DIR/frontend.tar.gz.part"
+repack "$work/second.tar.gz"
+cmp "$OUT_DIR/frontend.tar.gz.part" "$work/second.tar.gz" \
+  || { echo "repack is not deterministic: two packs of one tree differ" >&2; exit 1; }
+mv "$OUT_DIR/frontend.tar.gz.part" "$OUT_DIR/frontend.tar.gz"
 (cd "$OUT_DIR" && sha256sum frontend.tar.gz | awk '{print $1"  frontend.tar.gz"}' > frontend.sha256)
 "$root/scripts/frontend-inputs.sh" > "$OUT_DIR/inputs.sha256"
+# inputs.sha256 pins the recipe's inputs, not the Node minor, npm, Python/zlib or runner image.
 echo "built $OUT_DIR/frontend.tar.gz ($(wc -c < "$OUT_DIR/frontend.tar.gz") bytes)"; cat "$OUT_DIR/frontend.sha256"
