@@ -70,6 +70,11 @@ With backend `-p5` and frontend `-p1` or later (`upstream/patches/0006` and
 `0007`), a linked identity can also log you in to the dashboard. Your password
 always keeps working.
 
+- **Link by QR (frontend `-p4`, `0013`):** Identities → Link a signer shows a
+  code to scan with your signer (most NIP-46 signers can: "connect an app",
+  then scan). Approve the connection; the dashboard then offers "Use it to log
+  in too", which runs the enrolment below. Pasting a `bunker://` link still
+  works on the other tab.
 - **Enrol it:** Settings → Security, "Add a login signer", or the optional
   "Connect a signer" step at the end of onboarding. You confirm your password,
   the page shows a 4-digit code, and you approve on the signer once it shows

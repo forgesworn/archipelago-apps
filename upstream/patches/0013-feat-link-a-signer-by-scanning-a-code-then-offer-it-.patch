@@ -1,0 +1,1356 @@
+From 6e756d5bd5d0c066fa99b5e2895121dce9ef1162 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 16:46:15 +0200
+Subject: [PATCH] feat: link a signer by scanning a code, then offer it for
+ login
+
+---
+ neode-ui/mock-backend.js                      |  34 ++
+ neode-ui/src/api/__tests__/signerLink.test.ts |  60 +++
+ neode-ui/src/api/signer-login.ts              |  43 ++
+ .../src/components/signer/LinkSignerForm.vue  | 368 +++++++++++++++---
+ .../signer/LinkedSignerLoginOffer.vue         | 100 +++++
+ .../signer/__tests__/signerComponents.test.ts | 271 ++++++++++++-
+ neode-ui/src/locales/en.json                  |  20 +-
+ neode-ui/src/locales/es.json                  |  20 +-
+ .../src/views/__tests__/loginSigner.test.ts   |   3 +-
+ neode-ui/src/views/web5/Web5Identities.vue    |  37 +-
+ .../web5/__tests__/Web5Identities.test.ts     | 102 ++++-
+ 11 files changed, 990 insertions(+), 68 deletions(-)
+ create mode 100644 neode-ui/src/api/__tests__/signerLink.test.ts
+ create mode 100644 neode-ui/src/components/signer/LinkedSignerLoginOffer.vue
+
+diff --git a/neode-ui/mock-backend.js b/neode-ui/mock-backend.js
+index dae2f54..31df580 100755
+--- a/neode-ui/mock-backend.js
++++ b/neode-ui/mock-backend.js
+@@ -2233,6 +2233,7 @@ app.post('/rpc/v1', async (req, res) => {
+       //                            are refused as busy), paused (start refused)
+       //   MOCK_SIGNER_QUICK=1      "approved too fast" enrolment warning
+       //   MOCK_SIGNER_STATUS=      paused | foreign | pending | denied
++      //   MOCK_SIGNER_PAIR=expired a QR pairing fails instead of linking
+       // Texts are the node's own fixed constants.
+       case 'auth.login.signer.available': {
+         return res.json({ result: mockSigner.enrolled.length > 0 && process.env.MOCK_SIGNER_2FA !== '1' })
+@@ -2336,6 +2337,37 @@ app.post('/rpc/v1', async (req, res) => {
+         return res.json({ result: mockSigner.link(String(name || 'My signer')) })
+       }
+ 
++      // Pairing by QR: `start` hands back a link, `finish` answers pending for the
++      // first few polls and then links (MOCK_SIGNER_PAIR=expired makes it fail instead).
++      case 'identity.link-nostrconnect-start': {
++        const { name, relays } = params || {}
++        if (!name || !String(name).trim()) {
++          return res.json({ error: { code: -32603, message: 'Missing required parameter: name' } })
++        }
++        if (!Array.isArray(relays) || !relays.length || !relays.every(r => typeof r === 'string' && /^wss?:\/\//.test(r))) {
++          return res.json({ error: { code: -32603, message: 'Missing required parameter: relays' } })
++        }
++        const pairing_id = Math.random().toString(16).slice(2).padEnd(32, '0').slice(0, 32)
++        mockSigner.pairings.set(pairing_id, { name: String(name).trim(), polls: 0 })
++        const uri = `nostrconnect://${'ab'.repeat(32)}?${relays.map(r => `relay=${encodeURIComponent(r)}`).join('&')}&secret=mock${pairing_id.slice(0, 8)}&name=Archipelago`
++        return res.json({ result: { pairing_id, uri } })
++      }
++
++      case 'identity.link-nostrconnect-finish': {
++        const pairing = mockSigner.pairings.get(params?.pairing_id)
++        if (!pairing) {
++          return res.json({ error: { code: -32603, message: 'linked signer pairing is unknown or has expired' } })
++        }
++        await new Promise(r => setTimeout(r, 1000))
++        if (process.env.MOCK_SIGNER_PAIR === 'expired') {
++          mockSigner.pairings.delete(params.pairing_id)
++          return res.json({ error: { code: -32603, message: 'linked signer pairing is unknown or has expired' } })
++        }
++        if (++pairing.polls < 4) return res.json({ result: { status: 'pending' } })
++        mockSigner.pairings.delete(params.pairing_id)
++        return res.json({ result: { status: 'linked', identity: mockSigner.link(pairing.name) } })
++      }
++
+       case 'auth.totp.status': {
+         return res.json({ result: { enabled: false } })
+       }
+@@ -6261,6 +6293,8 @@ const mockSigner = {
+   /** Login signers, first enrolled first; any one of them logs in. */
+   enrolled: [],
+   attempts: new Map(),
++  /** Open `nostrconnect://` pairings, by id. */
++  pairings: new Map(),
+   linkedIdentities() {
+     return this.linked.map(i => ({
+       ...i, origin: 'linked',
+diff --git a/neode-ui/src/api/__tests__/signerLink.test.ts b/neode-ui/src/api/__tests__/signerLink.test.ts
+new file mode 100644
+index 0000000..1493873
+--- /dev/null
++++ b/neode-ui/src/api/__tests__/signerLink.test.ts
+@@ -0,0 +1,60 @@
++import { beforeEach, describe, expect, it, vi } from 'vitest'
++
++vi.mock('../rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
++
++import { rpcClient } from '../rpc-client'
++import { NoPairingRelayError, signerApi } from '../signer-login'
++
++const call = vi.mocked(rpcClient.call)
++const relay = (url: string, connected = true, enabled = true) => ({ url, connected, enabled, added_at: 'x' })
++
++describe('signerApi.linkNostrconnectStart', () => {
++  beforeEach(() => call.mockReset())
++
++  it('pairs over the enabled wss:// relays, connected ones first', async () => {
++    call.mockResolvedValueOnce({
++      relays: [
++        relay('wss://down.example', false),
++        relay('ws://localhost:7777'),
++        relay('wss://off.example', true, false),
++        relay('wss://up.example'),
++      ],
++    })
++    call.mockResolvedValueOnce({ pairing_id: 'p1', uri: 'nostrconnect://x' })
++
++    await expect(signerApi.linkNostrconnectStart('Phone')).resolves.toEqual({ pairing_id: 'p1', uri: 'nostrconnect://x' })
++    expect(call).toHaveBeenLastCalledWith(expect.objectContaining({
++      method: 'identity.link-nostrconnect-start',
++      params: { name: 'Phone', relays: ['wss://up.example', 'wss://down.example'] },
++      maxRetries: 1,
++    }))
++  })
++
++  it('sends at most three relays, connected ones first', async () => {
++    call.mockResolvedValueOnce({ relays: [
++      relay('wss://a.example', false), relay('wss://b.example', false),
++      relay('wss://c.example'), relay('wss://d.example'), relay('wss://e.example', false),
++    ] })
++    call.mockResolvedValueOnce({ pairing_id: 'p1', uri: 'nostrconnect://x' })
++    await signerApi.linkNostrconnectStart('Phone')
++    const params = call.mock.calls[1]![0].params as { relays: string[] }
++    expect(params.relays).toEqual(['wss://c.example', 'wss://d.example', 'wss://a.example'])
++  })
++
++  it('refuses to start without a relay a signer could reach', async () => {
++    call.mockResolvedValueOnce({ relays: [relay('ws://localhost:7777')] })
++    await expect(signerApi.linkNostrconnectStart('Phone')).rejects.toBeInstanceOf(NoPairingRelayError)
++    expect(call).toHaveBeenCalledTimes(1)
++  })
++})
++
++describe('signerApi.linkNostrconnectFinish', () => {
++  it('polls the pairing with room for the node\'s ten second wait', async () => {
++    call.mockResolvedValueOnce({ status: 'pending' })
++    const signal = new AbortController().signal
++    await signerApi.linkNostrconnectFinish('p1', signal)
++    expect(call).toHaveBeenLastCalledWith({
++      method: 'identity.link-nostrconnect-finish', params: { pairing_id: 'p1' }, timeout: 20000, maxRetries: 1, signal,
++    })
++  })
++})
+diff --git a/neode-ui/src/api/signer-login.ts b/neode-ui/src/api/signer-login.ts
+index 1e9c043..079db2d 100644
+--- a/neode-ui/src/api/signer-login.ts
++++ b/neode-ui/src/api/signer-login.ts
+@@ -59,6 +59,28 @@ export interface SignerStatus {
+   recent: SignerAttemptRecord[]
+ }
+ 
++/** A `nostrconnect://` pairing: the signer scans `uri`, the node polls `pairing_id`. */
++export interface NostrconnectPairing {
++  pairing_id: string
++  uri: string
++}
++
++export type NostrconnectFinish = { status: 'pending' } | { status: 'linked'; identity: LinkedIdentity }
++
++/** The node gives up on a pairing after five minutes (`PAIRING_TTL`). */
++export const PAIRING_LIFETIME_MS = 5 * 60 * 1000
++/** The node takes up to eight, but each one lengthens the link and so the QR
++ *  code; three keeps it easy to scan. */
++const MAX_PAIRING_RELAYS = 3
++
++/** Thrown when the node has no relay a signer's device could reach. */
++export class NoPairingRelayError extends Error {
++  constructor() {
++    super('No public relay configured')
++    this.name = 'NoPairingRelayError'
++  }
++}
++
+ /** Signer prompts are only accepted from the dashboard on port 80 or 443 (and,
+  *  in development, a loopback host), so on any other port the signer options
+  *  are hidden. */
+@@ -162,6 +184,27 @@ export const signerApi = {
+   status(): Promise<SignerStatus> {
+     return rpcClient.call<SignerStatus>({ method: 'auth.signer.status', params: {}, maxRetries: 1 })
+   },
++  /** Relays go in the link, so they must be ones the signer's device can reach:
++   *  the node's enabled `wss://` relays, connected ones first. */
++  async linkNostrconnectStart(name: string): Promise<NostrconnectPairing> {
++    const { relays } = await rpcClient.call<{ relays: Array<{ url: string; connected: boolean; enabled: boolean }> }>({
++      method: 'nostr.list-relays', params: {}, maxRetries: 1,
++    })
++    const urls = (relays ?? [])
++      .filter(r => r.enabled && r.url.startsWith('wss://'))
++      .sort((a, b) => Number(b.connected) - Number(a.connected))
++      .map(r => r.url)
++      .slice(0, MAX_PAIRING_RELAYS)
++    if (!urls.length) throw new NoPairingRelayError()
++    return rpcClient.call<NostrconnectPairing>({
++      method: 'identity.link-nostrconnect-start', params: { name, relays: urls }, maxRetries: 1,
++    })
++  },
++  linkNostrconnectFinish(pairingId: string, signal?: AbortSignal): Promise<NostrconnectFinish> {
++    return rpcClient.call<NostrconnectFinish>({
++      method: 'identity.link-nostrconnect-finish', params: { pairing_id: pairingId }, timeout: POLL_TIMEOUT_MS, maxRetries: 1, signal,
++    })
++  },
+   linkBunker(bunkerUri: string, name: string): Promise<LinkedIdentity> {
+     return rpcClient.call<LinkedIdentity>({
+       method: 'identity.link-nip46', params: { bunker_uri: bunkerUri, name }, timeout: LINK_TIMEOUT_MS, maxRetries: 1,
+diff --git a/neode-ui/src/components/signer/LinkSignerForm.vue b/neode-ui/src/components/signer/LinkSignerForm.vue
+index 54e2605..194c481 100644
+--- a/neode-ui/src/components/signer/LinkSignerForm.vue
++++ b/neode-ui/src/components/signer/LinkSignerForm.vue
+@@ -1,71 +1,173 @@
+ <template>
+-  <form class="space-y-4" data-testid="link-signer-form" @submit.prevent="link">
+-    <p class="text-sm text-white/70">{{ t('signer.link.intro') }}</p>
+-    <div>
+-      <label for="link-signer-uri" class="block text-sm font-medium text-white/80 mb-2">{{ t('signer.link.uriLabel') }}</label>
+-      <div class="relative">
++  <div class="space-y-4" data-testid="link-signer-form">
++    <div class="flex gap-2" role="tablist" :aria-label="t('signer.link.button')">
++      <button
++        v-for="m in (['scan', 'paste'] as const)"
++        :key="m"
++        type="button"
++        role="tab"
++        :aria-selected="mode === m"
++        :disabled="busy"
++        class="flex-1 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
++        :class="mode === m ? 'glass-button glass-button-warning' : 'glass-button'"
++        :data-testid="`link-signer-mode-${m}`"
++        @click="setMode(m)"
++      >{{ m === 'scan' ? t('signer.link.modeScan') : t('signer.link.modePaste') }}</button>
++    </div>
++
++    <template v-if="mode === 'scan'">
++      <form v-if="pairPhase === 'idle'" class="space-y-4" data-testid="link-signer-scan-form" @submit.prevent="startScan">
++        <p class="text-sm text-white/70">{{ t('signer.link.scanIntro') }}</p>
++        <div>
++          <label for="link-signer-name" class="block text-sm font-medium text-white/80 mb-2">{{ t('signer.link.nameLabel') }}</label>
++          <input
++            id="link-signer-name"
++            v-model="name"
++            type="text"
++            maxlength="100"
++            autocomplete="off"
++            data-controller-no-submit
++            :disabled="starting"
++            class="w-full px-3 py-2 rounded-lg bg-white/10 text-white border border-white/20 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
++          />
++        </div>
++        <p v-if="pairError" class="text-sm text-red-400" role="alert" data-testid="link-signer-pair-error">{{ pairError }}</p>
++        <div class="flex gap-3">
++          <button
++            type="submit"
++            :disabled="starting || !name.trim()"
++            class="flex-1 px-4 py-2 rounded-lg glass-button glass-button-warning font-medium disabled:opacity-50 disabled:cursor-not-allowed"
++            data-testid="link-signer-show-code"
++          >{{ starting ? t('signer.link.preparing') : t('signer.link.showCode') }}</button>
++          <button v-if="cancelLabel" type="button" class="px-4 py-2 rounded-lg glass-button font-medium" @click="emit('cancel')">{{ cancelLabel }}</button>
++        </div>
++      </form>
++
++      <div v-else class="space-y-4" data-testid="link-signer-pairing">
++        <template v-if="pairPhase === 'waiting'">
++          <p class="text-sm text-white/70">{{ t('signer.link.scanInstructions') }}</p>
++          <div class="flex justify-center">
++            <img
++              v-if="qr"
++              :src="qr"
++              :alt="t('signer.link.qrAlt')"
++              width="240"
++              height="240"
++              class="rounded-lg bg-white"
++              data-testid="link-signer-qr"
++            />
++          </div>
++          <div>
++            <label for="link-signer-pair-uri" class="block text-sm font-medium text-white/80 mb-2">{{ t('signer.link.uriLabel') }}</label>
++            <div class="relative">
++              <input
++                id="link-signer-pair-uri"
++                :value="pairUri"
++                readonly
++                :type="reveal ? 'text' : 'password'"
++                name="signer-pair-link"
++                autocomplete="off"
++                autocapitalize="off"
++                spellcheck="false"
++                data-lpignore="true"
++                data-1p-ignore
++                data-form-type="other"
++                data-controller-no-submit
++                class="w-full pl-3 pr-16 py-2 rounded-lg bg-white/10 text-white font-mono text-sm border border-white/20"
++              />
++              <button
++                type="button"
++                class="absolute inset-y-0 right-0 px-3 text-xs text-white/70 hover:text-white"
++                data-testid="link-signer-pair-reveal"
++                :aria-pressed="reveal"
++                :aria-label="reveal ? t('signer.link.hide') : t('signer.link.show')"
++                @click="reveal = !reveal"
++              >{{ reveal ? t('signer.link.hide') : t('signer.link.show') }}</button>
++            </div>
++          </div>
++          <button type="button" class="w-full px-4 py-2 rounded-lg glass-button font-medium" data-testid="link-signer-copy" @click="copyLink">
++            {{ copied ? t('signer.link.copied') : t('signer.link.copy') }}
++          </button>
++          <p class="text-sm text-orange-200" role="status" data-testid="link-signer-pair-waiting">{{ t('signer.link.waitingScan') }}</p>
++          <button type="button" class="w-full px-4 py-2 rounded-lg glass-button font-medium" data-testid="link-signer-pair-cancel" @click="cancelPairing">{{ t('common.cancel') }}</button>
++        </template>
++        <template v-else>
++          <p class="text-sm text-red-400" role="alert" data-testid="link-signer-pair-error">{{ pairError }}</p>
++          <button type="button" class="w-full px-4 py-2 rounded-lg glass-button glass-button-warning font-medium" data-testid="link-signer-new-code" @click="startScan">{{ t('signer.link.newCode') }}</button>
++        </template>
++      </div>
++    </template>
++
++    <form v-if="mode === 'paste'" class="space-y-4" data-testid="link-signer-paste-form" @submit.prevent="link">
++      <p class="text-sm text-white/70">{{ t('signer.link.intro') }}</p>
++      <div>
++        <label for="link-signer-uri" class="block text-sm font-medium text-white/80 mb-2">{{ t('signer.link.uriLabel') }}</label>
++        <div class="relative">
++          <input
++            id="link-signer-uri"
++            v-model="bunkerUri"
++            :type="reveal ? 'text' : 'password'"
++            name="signer-link"
++            autocomplete="off"
++            autocapitalize="off"
++            spellcheck="false"
++            data-lpignore="true"
++            data-1p-ignore
++            data-form-type="other"
++            placeholder="bunker://…"
++            data-controller-no-submit
++            :disabled="busy"
++            class="w-full pl-3 pr-16 py-2 rounded-lg bg-white/10 text-white font-mono text-sm border border-white/20 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
++          />
++          <button
++            type="button"
++            class="absolute inset-y-0 right-0 px-3 text-xs text-white/70 hover:text-white"
++            data-testid="link-signer-reveal"
++            :aria-pressed="reveal"
++            :aria-label="reveal ? t('signer.link.hide') : t('signer.link.show')"
++            @click="reveal = !reveal"
++          >{{ reveal ? t('signer.link.hide') : t('signer.link.show') }}</button>
++        </div>
++      </div>
++      <div>
++        <label for="link-signer-name" class="block text-sm font-medium text-white/80 mb-2">{{ t('signer.link.nameLabel') }}</label>
+         <input
+-          id="link-signer-uri"
+-          v-model="bunkerUri"
+-          :type="reveal ? 'text' : 'password'"
+-          name="signer-link"
++          id="link-signer-name"
++          v-model="name"
++          type="text"
++          maxlength="100"
+           autocomplete="off"
+-          autocapitalize="off"
+-          spellcheck="false"
+-          data-lpignore="true"
+-          data-1p-ignore
+-          data-form-type="other"
+-          placeholder="bunker://…"
+           data-controller-no-submit
+           :disabled="busy"
+-          class="w-full pl-3 pr-16 py-2 rounded-lg bg-white/10 text-white font-mono text-sm border border-white/20 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
++          class="w-full px-3 py-2 rounded-lg bg-white/10 text-white border border-white/20 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+         />
++      </div>
++      <p v-if="busy" class="text-sm text-orange-200" role="status" data-testid="link-signer-waiting">{{ t('signer.link.waiting') }}</p>
++      <p v-if="error" class="text-sm text-red-400" role="alert">{{ error }}</p>
++      <div class="flex gap-3">
++        <button
++          type="submit"
++          :disabled="busy || !canSubmit"
++          class="flex-1 px-4 py-2 rounded-lg glass-button glass-button-warning font-medium disabled:opacity-50 disabled:cursor-not-allowed"
++        >{{ busy ? t('signer.link.linking') : (submitLabel || t('signer.link.submit')) }}</button>
+         <button
++          v-if="cancelLabel"
+           type="button"
+-          class="absolute inset-y-0 right-0 px-3 text-xs text-white/70 hover:text-white"
+-          data-testid="link-signer-reveal"
+-          :aria-pressed="reveal"
+-          :aria-label="reveal ? t('signer.link.hide') : t('signer.link.show')"
+-          @click="reveal = !reveal"
+-        >{{ reveal ? t('signer.link.hide') : t('signer.link.show') }}</button>
++          :disabled="busy"
++          class="px-4 py-2 rounded-lg glass-button font-medium disabled:opacity-50"
++          @click="emit('cancel')"
++        >{{ cancelLabel }}</button>
+       </div>
+-    </div>
+-    <div>
+-      <label for="link-signer-name" class="block text-sm font-medium text-white/80 mb-2">{{ t('signer.link.nameLabel') }}</label>
+-      <input
+-        id="link-signer-name"
+-        v-model="name"
+-        type="text"
+-        maxlength="100"
+-        autocomplete="off"
+-        data-controller-no-submit
+-        :disabled="busy"
+-        class="w-full px-3 py-2 rounded-lg bg-white/10 text-white border border-white/20 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+-      />
+-    </div>
+-    <p v-if="busy" class="text-sm text-orange-200" role="status" data-testid="link-signer-waiting">{{ t('signer.link.waiting') }}</p>
+-    <p v-if="error" class="text-sm text-red-400" role="alert">{{ error }}</p>
+-    <div class="flex gap-3">
+-      <button
+-        type="submit"
+-        :disabled="busy || !canSubmit"
+-        class="flex-1 px-4 py-2 rounded-lg glass-button glass-button-warning font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+-      >{{ busy ? t('signer.link.linking') : (submitLabel || t('signer.link.submit')) }}</button>
+-      <button
+-        v-if="cancelLabel"
+-        type="button"
+-        :disabled="busy"
+-        class="px-4 py-2 rounded-lg glass-button font-medium disabled:opacity-50"
+-        @click="emit('cancel')"
+-      >{{ cancelLabel }}</button>
+-    </div>
+-  </form>
++    </form>
++  </div>
+ </template>
+ 
+ <script setup lang="ts">
+-import { computed, ref } from 'vue'
++import { computed, onBeforeUnmount, ref } from 'vue'
+ import { useI18n } from 'vue-i18n'
+-import { signerApi, type LinkedIdentity } from '@/api/signer-login'
++import QRCode from 'qrcode'
++import { NoPairingRelayError, PAIRING_LIFETIME_MS, signerApi, type LinkedIdentity } from '@/api/signer-login'
++import { safeClipboardWrite } from '@/views/web5/utils'
+ 
+ withDefaults(defineProps<{ submitLabel?: string; cancelLabel?: string }>(), {
+   submitLabel: '',
+@@ -74,6 +176,12 @@ withDefaults(defineProps<{ submitLabel?: string; cancelLabel?: string }>(), {
+ const emit = defineEmits<{ linked: [identity: LinkedIdentity]; cancel: [] }>()
+ const { t } = useI18n()
+ 
++/** Gap between polls; each poll itself waits up to ten seconds on the node. */
++const POLL_GAP_MS = 1500
++/** Consecutive failed polls tolerated before the pairing is given up on. */
++const MAX_POLL_FAILURES = 3
++
++const mode = ref<'scan' | 'paste'>('scan')
+ const bunkerUri = ref('')
+ const name = ref(t('signer.link.defaultName'))
+ const reveal = ref(false)
+@@ -98,4 +206,154 @@ async function link() {
+     busy.value = false
+   }
+ }
++
++type PairPhase = 'idle' | 'waiting' | 'failed'
++const pairPhase = ref<PairPhase>('idle')
++const starting = ref(false)
++const pairUri = ref('')
++const pairError = ref('')
++const qr = ref('')
++const copied = ref(false)
++
++// Bumped whenever a pairing ends or is abandoned, so a late reply is dropped.
++let session = 0
++let controller: AbortController | null = null
++let expiryTimer: ReturnType<typeof setTimeout> | undefined
++let gapTimer: ReturnType<typeof setTimeout> | undefined
++let wake: (() => void) | undefined
++let copiedTimer: ReturnType<typeof setTimeout> | undefined
++
++function stopPolling() {
++  session++
++  controller?.abort()
++  controller = null
++  clearTimeout(expiryTimer)
++  clearTimeout(gapTimer)
++  wake?.()
++  wake = undefined
++}
++
++function resetPairing() {
++  stopPolling()
++  pairPhase.value = 'idle'
++  starting.value = false
++  pairUri.value = ''
++  qr.value = ''
++  pairError.value = ''
++  reveal.value = false
++}
++
++function setMode(next: 'scan' | 'paste') {
++  if (busy.value || mode.value === next) return
++  resetPairing()
++  error.value = ''
++  reveal.value = false
++  mode.value = next
++}
++
++function failPairing(message: string) {
++  stopPolling()
++  pairError.value = message
++  pairPhase.value = 'failed'
++}
++
++function pause(ms: number): Promise<void> {
++  return new Promise(resolve => {
++    wake = resolve
++    gapTimer = setTimeout(resolve, ms)
++  })
++}
++
++async function startScan() {
++  if (starting.value || !name.value.trim()) return
++  resetPairing()
++  starting.value = true
++  const mine = session
++  try {
++    const pairing = await signerApi.linkNostrconnectStart(name.value.trim())
++    if (mine !== session) return
++    pairUri.value = pairing.uri
++    try {
++      qr.value = await QRCode.toDataURL(pairing.uri, { margin: 2, width: 240 })
++    } catch {
++      qr.value = '' // the link and Copy button still work
++    }
++    if (mine !== session) return
++    pairPhase.value = 'waiting'
++    expiryTimer = setTimeout(() => void expire(pairing.pairing_id, mine), PAIRING_LIFETIME_MS)
++    void poll(pairing.pairing_id, mine)
++  } catch (err) {
++    if (mine !== session) return
++    const msg = err instanceof Error ? err.message : ''
++    if (err instanceof NoPairingRelayError) {
++      // Nothing to scan without a relay: pasting a link still works.
++      mode.value = 'paste'
++      error.value = t('signer.link.noRelay')
++    } else {
++      pairError.value = msg || t('signer.link.failed')
++    }
++  } finally {
++    if (mine === session) starting.value = false
++  }
++}
++
++/** The code's time is up. The signer may have connected during the last
++ *  poll gap, so ask once more before saying it expired. */
++async function expire(pairingId: string, mine: number) {
++  if (mine !== session) return
++  stopPolling()
++  const last = ++session
++  try {
++    const res = await signerApi.linkNostrconnectFinish(pairingId)
++    if (last !== session) return
++    if (res.status === 'linked') {
++      resetPairing()
++      emit('linked', res.identity)
++      return
++    }
++  } catch {
++    if (last !== session) return
++  }
++  failPairing(t('signer.link.pairExpired'))
++}
++
++async function poll(pairingId: string, mine: number) {
++  controller = new AbortController()
++  let failures = 0
++  while (mine === session) {
++    try {
++      const res = await signerApi.linkNostrconnectFinish(pairingId, controller.signal)
++      if (mine !== session) return
++      failures = 0
++      if (res.status === 'linked') {
++        resetPairing()
++        emit('linked', res.identity)
++        return
++      }
++    } catch (err) {
++      if (mine !== session) return
++      const msg = err instanceof Error ? err.message : ''
++      // A slow poll is not a failed pairing: the expiry timer bounds the wait.
++      if (!/timeout/i.test(msg) && ++failures >= MAX_POLL_FAILURES) return failPairing(msg || t('signer.link.pairFailed'))
++    }
++    await pause(POLL_GAP_MS)
++  }
++}
++
++/** Abandons the pairing: the node's copy simply lapses. */
++function cancelPairing() {
++  resetPairing()
++}
++
++async function copyLink() {
++  await safeClipboardWrite(pairUri.value)
++  copied.value = true
++  clearTimeout(copiedTimer)
++  copiedTimer = setTimeout(() => { copied.value = false }, 2000)
++}
++
++onBeforeUnmount(() => {
++  stopPolling()
++  clearTimeout(copiedTimer)
++})
+ </script>
+diff --git a/neode-ui/src/components/signer/LinkedSignerLoginOffer.vue b/neode-ui/src/components/signer/LinkedSignerLoginOffer.vue
+new file mode 100644
+index 0000000..a325105
+--- /dev/null
++++ b/neode-ui/src/components/signer/LinkedSignerLoginOffer.vue
+@@ -0,0 +1,100 @@
++<template>
++  <div class="space-y-4" data-testid="linked-signer-offer">
++    <template v-if="!started">
++      <p class="text-sm text-green-300" role="status">{{ t('signer.link.linkedBody', { name: identity.name }) }}</p>
++      <form v-if="askPassword" class="space-y-4" @submit.prevent="enrol">
++        <div>
++          <label for="offer-signer-password" class="block text-sm font-medium text-white/80 mb-2">{{ t('signer.settings.password') }}</label>
++          <input
++            id="offer-signer-password"
++            v-model="password"
++            type="password"
++            required
++            autocomplete="current-password"
++            class="w-full px-3 py-2 rounded-lg bg-white/10 text-white border border-white/20 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
++          />
++        </div>
++        <p v-if="error" class="text-sm text-red-400" role="alert">{{ error }}</p>
++        <div class="flex gap-3">
++          <button
++            type="submit"
++            :disabled="!password"
++            class="flex-1 px-4 py-2 rounded-lg glass-button glass-button-warning font-medium disabled:opacity-50 disabled:cursor-not-allowed"
++          >{{ t('common.continue') }}</button>
++          <button type="button" class="px-4 py-2 rounded-lg glass-button font-medium" @click="emit('close')">{{ t('signer.link.notNow') }}</button>
++        </div>
++      </form>
++      <div v-else class="flex gap-3">
++        <button
++          type="button"
++          class="flex-1 px-4 py-2 rounded-lg glass-button glass-button-warning font-medium"
++          data-testid="use-signer-to-log-in"
++          @click="askPassword = true"
++        >{{ t('signer.link.useToLogin') }}</button>
++        <button type="button" class="px-4 py-2 rounded-lg glass-button font-medium" data-testid="linked-signer-not-now" @click="emit('close')">{{ t('signer.link.notNow') }}</button>
++      </div>
++    </template>
++    <template v-else>
++      <SignerEnrolProgress :approval="approval" />
++      <button
++        type="button"
++        class="w-full px-4 py-2 rounded-lg bg-white/10 text-white font-medium hover:bg-white/20 transition-colors"
++        data-testid="linked-signer-offer-close"
++        @click="cancelOrClose"
++      >{{ busy ? t('common.cancel') : (done ? t('signer.settings.done') : t('signer.settings.close')) }}</button>
++    </template>
++  </div>
++</template>
++
++<script setup lang="ts">
++import { computed, ref } from 'vue'
++import { useI18n } from 'vue-i18n'
++import { signerApi, type EnrolFinish, type LinkedIdentity } from '@/api/signer-login'
++import { useSignerApproval } from '@/composables/useSignerApproval'
++import SignerEnrolProgress from '@/components/signer/SignerEnrolProgress.vue'
++
++/** Offered right after a signer is linked: the same enrolment Settings uses,
++ *  for the identity that was just created. The password is held in memory only
++ *  and cleared once the enrolment has gone through (Try again needs it). */
++const props = defineProps<{ identity: LinkedIdentity }>()
++const emit = defineEmits<{ close: [] }>()
++const { t } = useI18n()
++
++const askPassword = ref(false)
++const password = ref('')
++const error = ref('')
++const started = ref(false)
++
++const approval = useSignerApproval<EnrolFinish>(
++  () => signerApi.enrolStart(props.identity.id, password.value),
++  (attemptId, signal) => signerApi.enrolFinish(attemptId, signal),
++  'enrolled',
++  { enrol: true },
++)
++
++const busy = computed(() => approval.phase.value === 'waiting' || approval.phase.value === 'starting')
++const done = computed(() => approval.phase.value === 'approved' || approval.late.value?.ok === true)
++
++async function enrol() {
++  if (!password.value) return
++  started.value = true
++  error.value = ''
++  const res = await approval.run()
++  if (res) password.value = ''
++  else if (approval.phase.value === 'failed' && !approval.reachedWaiting.value) {
++    // Refused before the signer was asked (wrong password, busy): back to the form.
++    started.value = false
++    error.value = approval.error.value
++  }
++}
++
++/** Cancel while the signer is being asked only hides the prompt; close ends it. */
++function cancelOrClose() {
++  if (busy.value) {
++    approval.cancel()
++    return
++  }
++  approval.reset()
++  emit('close')
++}
++</script>
+diff --git a/neode-ui/src/components/signer/__tests__/signerComponents.test.ts b/neode-ui/src/components/signer/__tests__/signerComponents.test.ts
+index 3a1b5bf..9a9a8bf 100644
+--- a/neode-ui/src/components/signer/__tests__/signerComponents.test.ts
++++ b/neode-ui/src/components/signer/__tests__/signerComponents.test.ts
+@@ -1,19 +1,29 @@
+ import { flushPromises, mount } from '@vue/test-utils'
+-import { beforeEach, describe, expect, it, vi } from 'vitest'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ 
+ vi.mock('@/api/signer-login', () => ({
++  PAIRING_LIFETIME_MS: 5 * 60 * 1000,
++  NoPairingRelayError: class NoPairingRelayError extends Error {},
+   signerApi: {
+     linkBunker: vi.fn(),
++    linkNostrconnectStart: vi.fn(),
++    linkNostrconnectFinish: vi.fn(),
+     enrolStart: vi.fn(),
+     enrolFinish: vi.fn(),
+   },
+ }))
+ 
++vi.mock('qrcode', () => ({ default: { toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,QR') } }))
++vi.mock('@/views/web5/utils', () => ({ safeClipboardWrite: vi.fn().mockResolvedValue(undefined) }))
++
+ import i18n from '@/i18n'
+-import { signerApi } from '@/api/signer-login'
++import QRCode from 'qrcode'
++import { safeClipboardWrite } from '@/views/web5/utils'
++import { NoPairingRelayError, signerApi } from '@/api/signer-login'
+ import SignerCodePrompt from '../SignerCodePrompt.vue'
+ import LinkSignerForm from '../LinkSignerForm.vue'
+ import ConnectSignerStep from '../ConnectSignerStep.vue'
++import LinkedSignerLoginOffer from '../LinkedSignerLoginOffer.vue'
+ 
+ const api = vi.mocked(signerApi)
+ const global = { plugins: [i18n] }
+@@ -25,7 +35,12 @@ function mountStep(password = 'hunter2hunter2') {
+   return mount(ConnectSignerStep, { props: { password }, global })
+ }
+ 
++async function toPaste(w: { find: ReturnType<typeof mountStep>['find'] }) {
++  await w.find('[data-testid="link-signer-mode-paste"]').trigger('click')
++}
++
+ async function link(w: ReturnType<typeof mountStep>) {
++  await toPaste(w)
+   await w.find('#link-signer-uri').setValue('bunker://abc')
+   await w.find('form').trigger('submit')
+   await flushPromises()
+@@ -45,14 +60,16 @@ describe('SignerCodePrompt', () => {
+ describe('LinkSignerForm', () => {
+   beforeEach(() => vi.clearAllMocks())
+ 
+-  it('explains the two approvals and defaults the name to "My signer"', () => {
++  it('explains the two approvals and defaults the name to "My signer"', async () => {
+     const w = mount(LinkSignerForm, { global })
++    await toPaste(w)
+     expect(w.text()).toContain('approve twice')
+     expect((w.find('#link-signer-name').element as HTMLInputElement).value).toBe('My signer')
+   })
+ 
+-  it('masks the signer link by default and keeps password managers away', () => {
++  it('masks the signer link by default and keeps password managers away', async () => {
+     const w = mount(LinkSignerForm, { global })
++    await toPaste(w)
+     const input = w.find('#link-signer-uri')
+     expect(input.attributes('type')).toBe('password')
+     expect(input.attributes('autocomplete')).toBe('off')
+@@ -63,6 +80,7 @@ describe('LinkSignerForm', () => {
+ 
+   it('shows and hides the link with the toggle', async () => {
+     const w = mount(LinkSignerForm, { global })
++    await toPaste(w)
+     await w.find('#link-signer-uri').setValue('bunker://abc')
+     await w.find('[data-testid="link-signer-reveal"]').trigger('click')
+     expect(w.find('#link-signer-uri').attributes('type')).toBe('text')
+@@ -75,6 +93,7 @@ describe('LinkSignerForm', () => {
+   it('still links a pasted link while it is masked, then clears and re-masks the field', async () => {
+     api.linkBunker.mockResolvedValue({ id: 'linked-1', name: 'My signer' })
+     const w = mount(LinkSignerForm, { global })
++    await toPaste(w)
+     const input = w.find('#link-signer-uri')
+     await input.setValue('bunker://secret?relay=wss://r&secret=abc')
+     await w.find('[data-testid="link-signer-reveal"]').trigger('click')
+@@ -87,6 +106,7 @@ describe('LinkSignerForm', () => {
+ 
+   it('only submits a bunker:// link', async () => {
+     const w = mount(LinkSignerForm, { global })
++    await toPaste(w)
+     await w.find('#link-signer-uri').setValue('https://example.com')
+     expect(w.find('button[type="submit"]').attributes('disabled')).toBeDefined()
+     await w.find('#link-signer-uri').setValue('bunker://abc?relay=wss://r')
+@@ -97,6 +117,7 @@ describe('LinkSignerForm', () => {
+     let finish!: (v: { id: string; name: string }) => void
+     api.linkBunker.mockReturnValue(new Promise(r => { finish = r }))
+     const w = mount(LinkSignerForm, { global })
++    await toPaste(w)
+     await w.find('#link-signer-uri').setValue('bunker://abc')
+     await w.find('form').trigger('submit')
+     expect(api.linkBunker).toHaveBeenCalledWith('bunker://abc', 'My signer')
+@@ -110,6 +131,7 @@ describe('LinkSignerForm', () => {
+   it('shows a clear message when the signer does not answer', async () => {
+     api.linkBunker.mockRejectedValue(new Error('Request timeout'))
+     const w = mount(LinkSignerForm, { global })
++    await toPaste(w)
+     await w.find('#link-signer-uri').setValue('bunker://abc')
+     await w.find('form').trigger('submit')
+     await flushPromises()
+@@ -118,6 +140,247 @@ describe('LinkSignerForm', () => {
+   })
+ })
+ 
++describe('LinkSignerForm, scanning a code', () => {
++  const identity = { id: 'linked-1', name: 'My signer' }
++  const pairing = { pairing_id: 'p1', uri: 'nostrconnect://abcd?relay=wss%3A%2F%2Fr&secret=s3cret' }
++
++  beforeEach(() => {
++    vi.clearAllMocks()
++    vi.useFakeTimers()
++  })
++  afterEach(() => vi.useRealTimers())
++
++  async function show(w: ReturnType<typeof mount>) {
++    await w.find('[data-testid="link-signer-scan-form"]').trigger('submit')
++    await flushPromises()
++  }
++
++  it('opens on the scan way, with the name defaulted and nothing started', () => {
++    const w = mount(LinkSignerForm, { global })
++    expect(w.find('[data-testid="link-signer-mode-scan"]').attributes('aria-selected')).toBe('true')
++    expect(w.find('[data-testid="link-signer-scan-form"]').exists()).toBe(true)
++    expect(w.find('#link-signer-uri').exists()).toBe(false)
++    expect((w.find('#link-signer-name').element as HTMLInputElement).value).toBe('My signer')
++    expect(api.linkNostrconnectStart).not.toHaveBeenCalled()
++  })
++
++  it('starts with the name, then shows the QR code, a Copy button and the masked link', async () => {
++    api.linkNostrconnectStart.mockResolvedValue(pairing)
++    api.linkNostrconnectFinish.mockReturnValue(new Promise(() => {}))
++    const w = mount(LinkSignerForm, { global })
++    await w.find('#link-signer-name').setValue('  Phone ')
++    await show(w)
++
++    expect(api.linkNostrconnectStart).toHaveBeenCalledWith('Phone')
++    expect(QRCode.toDataURL).toHaveBeenCalledWith(pairing.uri, expect.objectContaining({ width: 240 }))
++    expect(w.find('[data-testid="link-signer-qr"]').attributes('src')).toBe('data:image/png;base64,QR')
++    expect(w.text()).toContain('choose to connect an app and scan this code')
++    expect(w.text()).toContain('Waiting for your signer to connect')
++    const input = w.find('#link-signer-pair-uri')
++    expect(input.attributes('type')).toBe('password')
++    expect((input.element as HTMLInputElement).value).toBe(pairing.uri)
++    await w.find('[data-testid="link-signer-pair-reveal"]').trigger('click')
++    expect(w.find('#link-signer-pair-uri').attributes('type')).toBe('text')
++
++    await w.find('[data-testid="link-signer-copy"]').trigger('click')
++    expect(safeClipboardWrite).toHaveBeenCalledWith(pairing.uri)
++    expect(w.find('[data-testid="link-signer-copy"]').text()).toBe('Copied')
++  })
++
++  it('polls every 1.5 s until the signer connects, then emits the identity', async () => {
++    api.linkNostrconnectStart.mockResolvedValue(pairing)
++    api.linkNostrconnectFinish
++      .mockResolvedValueOnce({ status: 'pending' })
++      .mockResolvedValueOnce({ status: 'pending' })
++      .mockResolvedValueOnce({ status: 'linked', identity })
++    const w = mount(LinkSignerForm, { global })
++    await show(w)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(1)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledWith('p1', expect.any(AbortSignal))
++
++    await vi.advanceTimersByTimeAsync(1499)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(1)
++    await vi.advanceTimersByTimeAsync(1)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(2)
++    await vi.advanceTimersByTimeAsync(1500)
++
++    expect(w.emitted('linked')?.[0]).toEqual([identity])
++    expect(w.find('[data-testid="link-signer-pairing"]').exists()).toBe(false)
++    await vi.advanceTimersByTimeAsync(10_000)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(3)
++  })
++
++  it('stops polling when the form is closed', async () => {
++    api.linkNostrconnectStart.mockResolvedValue(pairing)
++    api.linkNostrconnectFinish.mockResolvedValue({ status: 'pending' })
++    const w = mount(LinkSignerForm, { global })
++    await show(w)
++    await vi.advanceTimersByTimeAsync(1500)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(2)
++    w.unmount()
++    await vi.advanceTimersByTimeAsync(60_000)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(2)
++  })
++
++  it('stops polling when the owner cancels or switches to pasting', async () => {
++    api.linkNostrconnectStart.mockResolvedValue(pairing)
++    api.linkNostrconnectFinish.mockResolvedValue({ status: 'pending' })
++    const w = mount(LinkSignerForm, { global })
++    await show(w)
++    await w.find('[data-testid="link-signer-pair-cancel"]').trigger('click')
++    expect(w.find('[data-testid="link-signer-scan-form"]').exists()).toBe(true)
++    await vi.advanceTimersByTimeAsync(10_000)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(1)
++
++    await show(w)
++    await toPaste(w)
++    await vi.advanceTimersByTimeAsync(10_000)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(2)
++    expect(w.find('#link-signer-uri').exists()).toBe(true)
++  })
++
++  it('says the code has expired after five minutes, and offers a new one', async () => {
++    api.linkNostrconnectStart.mockResolvedValue(pairing)
++    api.linkNostrconnectFinish.mockResolvedValue({ status: 'pending' })
++    const w = mount(LinkSignerForm, { global })
++    await show(w)
++    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
++    expect(w.find('[data-testid="link-signer-pair-error"]').text()).toContain('expired')
++    expect(w.find('[data-testid="link-signer-qr"]').exists()).toBe(false)
++    const polls = api.linkNostrconnectFinish.mock.calls.length
++    await vi.advanceTimersByTimeAsync(10_000)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(polls)
++
++    await w.find('[data-testid="link-signer-new-code"]').trigger('click')
++    await flushPromises()
++    expect(api.linkNostrconnectStart).toHaveBeenCalledTimes(2)
++    expect(w.find('[data-testid="link-signer-qr"]').exists()).toBe(true)
++  })
++
++  it('shows the node\'s reason when the signer is refused, and stops', async () => {
++    api.linkNostrconnectStart.mockResolvedValue(pairing)
++    api.linkNostrconnectFinish.mockRejectedValue(new Error('linked signer denied the request'))
++    const w = mount(LinkSignerForm, { global })
++    await show(w)
++    await vi.advanceTimersByTimeAsync(1500 * 2)
++    expect(w.find('[data-testid="link-signer-pair-error"]').text()).toBe('linked signer denied the request')
++    await vi.advanceTimersByTimeAsync(10_000)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(3)
++  })
++
++  it('keeps waiting through a slow poll', async () => {
++    api.linkNostrconnectStart.mockResolvedValue(pairing)
++    api.linkNostrconnectFinish
++      .mockRejectedValueOnce(new Error('Request timeout'))
++      .mockResolvedValueOnce({ status: 'linked', identity })
++    const w = mount(LinkSignerForm, { global })
++    await show(w)
++    await vi.advanceTimersByTimeAsync(1500)
++    expect(w.emitted('linked')?.[0]).toEqual([identity])
++  })
++
++  it('explains when no public relay is configured', async () => {
++    api.linkNostrconnectStart.mockRejectedValue(new NoPairingRelayError())
++    const w = mount(LinkSignerForm, { global })
++    await show(w)
++    expect(w.find('[data-testid="link-signer-mode-paste"]').attributes('aria-selected')).toBe('true')
++    expect(w.find('#link-signer-uri').exists()).toBe(true)
++    expect(w.text()).toContain('no public relay')
++  })
++
++  it('stays on the scan way after other start failures', async () => {
++    api.linkNostrconnectStart.mockRejectedValue(new Error('boom'))
++    const w = mount(LinkSignerForm, { global })
++    await show(w)
++    expect(w.find('[data-testid="link-signer-scan-form"]').exists()).toBe(true)
++    expect(w.find('[data-testid="link-signer-pair-error"]').text()).toBe('boom')
++  })
++
++  it('tolerates two failed polls in a row, but not three', async () => {
++    api.linkNostrconnectStart.mockResolvedValue(pairing)
++    api.linkNostrconnectFinish
++      .mockRejectedValueOnce(new Error('network'))
++      .mockRejectedValueOnce(new Error('network'))
++      .mockResolvedValueOnce({ status: 'pending' })
++      .mockRejectedValue(new Error('network'))
++    const w = mount(LinkSignerForm, { global })
++    await show(w)
++    await vi.advanceTimersByTimeAsync(1500 * 2)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(3)
++    expect(w.find('[data-testid="link-signer-qr"]').exists()).toBe(true)
++    await vi.advanceTimersByTimeAsync(1500 * 3)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(6)
++    expect(w.find('[data-testid="link-signer-pair-error"]').text()).toBe('network')
++    await vi.advanceTimersByTimeAsync(10_000)
++    expect(api.linkNostrconnectFinish).toHaveBeenCalledTimes(6)
++  })
++
++  it('asks once more when the time is up, and links if the signer got in at the last moment', async () => {
++    api.linkNostrconnectStart.mockResolvedValue(pairing)
++    api.linkNostrconnectFinish.mockResolvedValue({ status: 'pending' })
++    const w = mount(LinkSignerForm, { global })
++    await show(w)
++    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1)
++    api.linkNostrconnectFinish.mockResolvedValue({ status: 'linked', identity })
++    const before = api.linkNostrconnectFinish.mock.calls.length
++    await vi.advanceTimersByTimeAsync(1)
++    expect(api.linkNostrconnectFinish.mock.calls.length).toBe(before + 1)
++    expect(w.emitted('linked')?.[0]).toEqual([identity])
++    expect(w.find('[data-testid="link-signer-pair-error"]').exists()).toBe(false)
++  })
++
++  it('does not start a second pairing while one is being set up', async () => {
++    let resolve!: (v: typeof pairing) => void
++    api.linkNostrconnectStart.mockReturnValue(new Promise(r => { resolve = r }))
++    api.linkNostrconnectFinish.mockReturnValue(new Promise(() => {}))
++    const w = mount(LinkSignerForm, { global })
++    await w.find('[data-testid="link-signer-scan-form"]').trigger('submit')
++    await w.find('[data-testid="link-signer-scan-form"]').trigger('submit')
++    expect(api.linkNostrconnectStart).toHaveBeenCalledTimes(1)
++    resolve(pairing)
++    await flushPromises()
++    expect(w.find('[data-testid="link-signer-qr"]').exists()).toBe(true)
++  })
++})
++
++describe('LinkedSignerLoginOffer', () => {
++  beforeEach(() => vi.clearAllMocks())
++  const identity = { id: 'linked-9', name: 'Phone' }
++
++  it('offers login, and "Not now" closes', async () => {
++    const w = mount(LinkedSignerLoginOffer, { props: { identity }, global })
++    expect(w.text()).toContain('Phone is linked')
++    await w.find('[data-testid="linked-signer-not-now"]').trigger('click')
++    expect(w.emitted('close')).toHaveLength(1)
++    expect(api.enrolStart).not.toHaveBeenCalled()
++  })
++
++  it('enrols the new identity with the password', async () => {
++    api.enrolStart.mockResolvedValue({ attempt_id: 'e1', code: '0042' })
++    api.enrolFinish.mockResolvedValue(enrolled(false))
++    const w = mount(LinkedSignerLoginOffer, { props: { identity }, global })
++    await w.find('[data-testid="use-signer-to-log-in"]').trigger('click')
++    await w.find('#offer-signer-password').setValue('hunter2hunter2')
++    await w.find('form').trigger('submit')
++    await flushPromises()
++    expect(api.enrolStart).toHaveBeenCalledWith('linked-9', 'hunter2hunter2')
++    expect(w.find('[data-testid="signer-enrolled"]').exists()).toBe(true)
++    await w.find('[data-testid="linked-signer-offer-close"]').trigger('click')
++    expect(w.emitted('close')).toHaveLength(1)
++  })
++
++  it('goes back to the password form when the node refuses before asking the signer', async () => {
++    api.enrolStart.mockRejectedValue(new Error('Password Incorrect'))
++    const w = mount(LinkedSignerLoginOffer, { props: { identity }, global })
++    await w.find('[data-testid="use-signer-to-log-in"]').trigger('click')
++    await w.find('#offer-signer-password').setValue('wrong')
++    await w.find('form').trigger('submit')
++    await flushPromises()
++    expect(w.find('#offer-signer-password').exists()).toBe(true)
++    expect(w.text()).toContain('Password Incorrect')
++  })
++})
++
+ describe('ConnectSignerStep', () => {
+   beforeEach(() => vi.clearAllMocks())
+ 
+diff --git a/neode-ui/src/locales/en.json b/neode-ui/src/locales/en.json
+index 9e37325..cb2db29 100644
+--- a/neode-ui/src/locales/en.json
++++ b/neode-ui/src/locales/en.json
+@@ -854,7 +854,25 @@
+       "button": "Link a signer",
+       "linked": "Signer linked",
+       "badge": "Linked",
+-      "badgeTitle": "The key for this identity lives on your signer"
++      "badgeTitle": "The key for this identity lives on your signer",
++      "modeScan": "Scan with your signer",
++      "modePaste": "Paste a link",
++      "scanIntro": "Show a code on this screen and scan it with your signer. Your key stays on the signer.",
++      "showCode": "Show code",
++      "preparing": "Preparing…",
++      "scanInstructions": "In your signer, choose to connect an app and scan this code. Approve the connection.",
++      "qrAlt": "Code to scan with your signer",
++      "copy": "Copy link",
++      "copied": "Copied",
++      "waitingScan": "Waiting for your signer to connect…",
++      "pairExpired": "This code has expired. Show a new one and scan it again.",
++      "pairFailed": "Your signer did not connect. Show a new code and try again.",
++      "noRelay": "This node has no public relay your signer could reach. Add a wss:// relay under Nostr relays, then try again.",
++      "newCode": "Show a new code",
++      "linkedTitle": "Signer linked",
++      "linkedBody": "{name} is linked. You can also use it to log in to this dashboard instead of typing your password.",
++      "useToLogin": "Use it to log in too",
++      "notNow": "Not now"
+     },
+     "enrol": {
+       "asking": "Asking your signer…",
+diff --git a/neode-ui/src/locales/es.json b/neode-ui/src/locales/es.json
+index 235f755..5dcc8a0 100644
+--- a/neode-ui/src/locales/es.json
++++ b/neode-ui/src/locales/es.json
+@@ -835,7 +835,25 @@
+       "button": "Vincular un firmante",
+       "linked": "Firmante vinculado",
+       "badge": "Vinculado",
+-      "badgeTitle": "La clave de esta identidad está en tu firmante"
++      "badgeTitle": "La clave de esta identidad está en tu firmante",
++      "modeScan": "Escanear con tu firmante",
++      "modePaste": "Pegar un enlace",
++      "scanIntro": "Muestra un código en esta pantalla y escanéalo con tu firmante. Tu clave se queda en el firmante.",
++      "showCode": "Mostrar código",
++      "preparing": "Preparando…",
++      "scanInstructions": "En tu firmante, elige conectar una aplicación y escanea este código. Aprueba la conexión.",
++      "qrAlt": "Código para escanear con tu firmante",
++      "copy": "Copiar enlace",
++      "copied": "Copiado",
++      "waitingScan": "Esperando a que tu firmante se conecte…",
++      "pairExpired": "Este código ha caducado. Muestra uno nuevo y escanéalo de nuevo.",
++      "pairFailed": "Tu firmante no se conectó. Muestra un código nuevo e inténtalo de nuevo.",
++      "noRelay": "Este nodo no tiene ningún relé público al que tu firmante pueda llegar. Añade un relé wss:// en Relés de Nostr e inténtalo de nuevo.",
++      "newCode": "Mostrar un código nuevo",
++      "linkedTitle": "Firmante vinculado",
++      "linkedBody": "{name} está vinculado. También puedes usarlo para iniciar sesión en este panel en lugar de escribir tu contraseña.",
++      "useToLogin": "Usarlo también para iniciar sesión",
++      "notNow": "Ahora no"
+     },
+     "enrol": {
+       "asking": "Consultando a tu firmante…",
+diff --git a/neode-ui/src/views/__tests__/loginSigner.test.ts b/neode-ui/src/views/__tests__/loginSigner.test.ts
+index ab6425e..9467e43 100644
+--- a/neode-ui/src/views/__tests__/loginSigner.test.ts
++++ b/neode-ui/src/views/__tests__/loginSigner.test.ts
+@@ -413,8 +413,9 @@ describe('Setup then connect a signer', () => {
+     api.enrolStart.mockResolvedValue({ attempt_id: 'e1', code: '0042' })
+     api.enrolFinish.mockReturnValue(new Promise(() => {}))
+     const w = await finishSetup()
++    await w.find('[data-testid="link-signer-mode-paste"]').trigger('click')
+     await w.find('#link-signer-uri').setValue('bunker://abc')
+-    await w.find('[data-testid="link-signer-form"]').trigger('submit')
++    await w.find('[data-testid="link-signer-paste-form"]').trigger('submit')
+     await flushPromises()
+     expect(api.enrolStart).toHaveBeenCalledWith('linked-1', 'a long password')
+     expect(w.find('[data-testid="signer-code"]').text()).toBe('0042')
+diff --git a/neode-ui/src/views/web5/Web5Identities.vue b/neode-ui/src/views/web5/Web5Identities.vue
+index c4714f2..faa937b 100644
+--- a/neode-ui/src/views/web5/Web5Identities.vue
++++ b/neode-ui/src/views/web5/Web5Identities.vue
+@@ -234,10 +234,12 @@
+ 
+   <!-- Link a signer Modal -->
+   <Teleport to="body">
+-  <div v-if="showLinkSignerModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md" @click.self="showLinkSignerModal = false" @keydown.escape="showLinkSignerModal = false">
++  <div v-if="showLinkSignerModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md" @click.self="linkedOffer || closeLinkSigner()" @keydown.escape="linkedOffer || closeLinkSigner()">
+     <div class="glass-card p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="link-signer-title">
+-      <h2 id="link-signer-title" class="text-lg font-bold text-white mb-4">{{ t('signer.link.button') }}</h2>
+-      <LinkSignerForm :cancel-label="t('common.cancel')" @linked="onSignerLinked" @cancel="showLinkSignerModal = false" />
++      <h2 id="link-signer-title" class="text-lg font-bold text-white mb-4">{{ linkedOffer ? t('signer.link.linkedTitle') : t('signer.link.button') }}</h2>
++      <LinkedSignerLoginOffer v-if="linkedOffer" :identity="linkedOffer" @close="closeLinkSigner" />
++      <p v-else-if="linkDeciding" class="text-sm text-white/70" role="status" data-testid="link-signer-deciding">{{ t('signer.link.linking') }}</p>
++      <LinkSignerForm v-else :cancel-label="t('common.cancel')" @linked="onSignerLinked" @cancel="closeLinkSigner" />
+     </div>
+   </div>
+   </Teleport>
+@@ -501,6 +503,8 @@ import { safeClipboardWrite } from './utils'
+ import type { ManagedIdentity, IdentityProfile } from './types'
+ import IdentitySuccessPane from '@/components/IdentitySuccessPane.vue'
+ import LinkSignerForm from '@/components/signer/LinkSignerForm.vue'
++import LinkedSignerLoginOffer from '@/components/signer/LinkedSignerLoginOffer.vue'
++import { MAX_LOGIN_SIGNERS, signerApi, signerLoginAllowedHere, type LinkedIdentity } from '@/api/signer-login'
+ 
+ const { t } = useI18n()
+ 
+@@ -539,6 +543,10 @@ const managedIdentities = ref<ManagedIdentity[]>(readIdentitiesCache())
+ const identitiesLoading = ref(false)
+ const showCreateIdentityModal = ref(false)
+ const showLinkSignerModal = ref(false)
++/** Set once a signer is linked and login enrolment can be offered for it. */
++const linkedOffer = ref<LinkedIdentity | null>(null)
++/** True while the offer is being decided, so a second pairing can't be started. */
++const linkDeciding = ref(false)
+ const newIdentityName = ref('Personal')
+ const newIdentityPurpose = ref('personal')
+ const creatingIdentity = ref(false)
+@@ -693,8 +701,29 @@ async function createIdentity() {
+   }
+ }
+ 
+-async function onSignerLinked() {
++function closeLinkSigner() {
+   showLinkSignerModal.value = false
++  linkedOffer.value = null
++  linkDeciding.value = false
++}
++
++/** Login signers need the dashboard on port 80/443 and a free slot out of five. */
++async function canOfferLogin(): Promise<boolean> {
++  if (!signerLoginAllowedHere()) return false
++  try {
++    const enrolled = await signerApi.list()
++    return Array.isArray(enrolled) && enrolled.length < MAX_LOGIN_SIGNERS
++  } catch {
++    return false
++  }
++}
++
++async function onSignerLinked(identity: LinkedIdentity) {
++  linkDeciding.value = true
++  const offer = await canOfferLogin()
++  if (offer) linkedOffer.value = identity
++  else showLinkSignerModal.value = false
++  linkDeciding.value = false
+   await loadIdentities()
+   emit('toast', t('signer.link.linked'))
+ }
+diff --git a/neode-ui/src/views/web5/__tests__/Web5Identities.test.ts b/neode-ui/src/views/web5/__tests__/Web5Identities.test.ts
+index 42f63f1..376ca0e 100644
+--- a/neode-ui/src/views/web5/__tests__/Web5Identities.test.ts
++++ b/neode-ui/src/views/web5/__tests__/Web5Identities.test.ts
+@@ -1,7 +1,8 @@
+ import { flushPromises, mount } from '@vue/test-utils'
+-import { describe, expect, it, vi } from 'vitest'
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import Web5Identities from '../Web5Identities.vue'
+ import { rpcClient } from '@/api/rpc-client'
++import { signerLoginAllowedHere } from '@/api/signer-login'
+ import type { ManagedIdentity } from '../types'
+ 
+ vi.mock('vue-i18n', () => ({
+@@ -14,6 +15,11 @@ vi.mock('@/api/rpc-client', () => ({
+   },
+ }))
+ 
++vi.mock('@/api/signer-login', async (importOriginal) => ({
++  ...(await importOriginal<typeof import('@/api/signer-login')>()),
++  signerLoginAllowedHere: vi.fn(() => true),
++}))
++
+ vi.mock('../utils', () => ({
+   safeClipboardWrite: vi.fn(),
+ }))
+@@ -138,9 +144,10 @@ describe('Web5Identities', () => {
+       global: { stubs: { Teleport: true } },
+     })
+     await wrapper.find('[data-testid="link-signer-button"]').trigger('click')
++    await wrapper.find('[data-testid="link-signer-mode-paste"]').trigger('click')
+     await wrapper.find('#link-signer-uri').setValue('bunker://abc')
+     await wrapper.find('#link-signer-name').setValue('My signer')
+-    await wrapper.find('[data-testid="link-signer-form"]').trigger('submit')
++    await wrapper.find('[data-testid="link-signer-paste-form"]').trigger('submit')
+     await flushPromises()
+ 
+     expect(rpcClient.call).toHaveBeenCalledWith(expect.objectContaining({
+@@ -151,4 +158,95 @@ describe('Web5Identities', () => {
+     expect(toasts[toasts.length - 1]).toEqual(['signer.link.linked'])
+     expect(wrapper.find('[data-testid="link-signer-form"]').exists()).toBe(false)
+   })
++
++  describe('offering login after a signer is linked', () => {
++    async function linkByPairing(enrolled: number) {
++      vi.mocked(rpcClient.call).mockImplementation((request: { method: string }) => {
++        switch (request?.method) {
++          case 'nostr.list-relays': return Promise.resolve({ relays: [{ url: 'wss://r.example', connected: true, enabled: true, added_at: 'x' }] })
++          case 'identity.link-nostrconnect-start': return Promise.resolve({ pairing_id: 'p1', uri: 'nostrconnect://abc' })
++          case 'identity.link-nostrconnect-finish': return Promise.resolve({ status: 'linked', identity: { id: 'linked-7', name: 'Phone' } })
++          case 'auth.signer.enrol.start': return Promise.resolve({ attempt_id: 'e1', code: '0042' })
++          case 'auth.signer.enrol.finish': return new Promise(() => {})
++          case 'auth.signer.list': return Promise.resolve(Array.from({ length: enrolled }, (_, i) => ({ identity_id: `s${i}`, pubkey: 'ab', added_at: 'x', name: `S${i}` })))
++          default: return Promise.resolve({ identities: [] })
++        }
++      })
++      const wrapper = mount(Web5Identities, { props: { showStagger: false }, global: { stubs: { Teleport: true } } })
++      await wrapper.find('[data-testid="link-signer-button"]').trigger('click')
++      await wrapper.find('[data-testid="link-signer-scan-form"]').trigger('submit')
++      // The real QR encoder runs before the first poll, so wait for the toast.
++      await vi.waitFor(() => expect(wrapper.emitted('toast')).toBeTruthy())
++      await flushPromises()
++      return wrapper
++    }
++
++    beforeEach(() => vi.mocked(rpcClient.call).mockClear())
++
++    afterEach(() => {
++      vi.mocked(signerLoginAllowedHere).mockReturnValue(true)
++    })
++
++    it('shows "Use it to log in too" with room and on the right port, then enrols the new identity', async () => {
++      const wrapper = await linkByPairing(2)
++      expect(rpcClient.call).toHaveBeenCalledWith(expect.objectContaining({
++        method: 'identity.link-nostrconnect-start', params: { name: 'signer.link.defaultName', relays: ['wss://r.example'] },
++      }))
++      expect(wrapper.find('[data-testid="linked-signer-offer"]').exists()).toBe(true)
++      expect(wrapper.find('[data-testid="link-signer-form"]').exists()).toBe(false)
++      expect(wrapper.emitted('toast')?.slice(-1)[0]).toEqual(['signer.link.linked'])
++
++      await wrapper.find('[data-testid="use-signer-to-log-in"]').trigger('click')
++      await wrapper.find('#offer-signer-password').setValue('hunter2hunter2')
++      await wrapper.find('#offer-signer-password').trigger('submit')
++      await flushPromises()
++      expect(rpcClient.call).toHaveBeenCalledWith(expect.objectContaining({
++        method: 'auth.signer.enrol.start', params: { identity_id: 'linked-7', password: 'hunter2hunter2' },
++      }))
++    })
++
++    it('"Not now" closes the dialog', async () => {
++      const wrapper = await linkByPairing(0)
++      await wrapper.find('[data-testid="linked-signer-not-now"]').trigger('click')
++      expect(wrapper.find('[data-testid="linked-signer-offer"]').exists()).toBe(false)
++      expect(wrapper.find('[data-testid="link-signer-form"]').exists()).toBe(false)
++    })
++
++    it('does not offer it when five login signers are already enrolled', async () => {
++      const wrapper = await linkByPairing(5)
++      expect(wrapper.find('[data-testid="linked-signer-offer"]').exists()).toBe(false)
++      expect(wrapper.find('[data-testid="link-signer-form"]').exists()).toBe(false)
++      expect(wrapper.emitted('toast')?.slice(-1)[0]).toEqual(['signer.link.linked'])
++    })
++
++    it('keeps "Show code" away while the offer is being decided', async () => {
++      let release!: (v: unknown[]) => void
++      const held = new Promise<unknown[]>(r => { release = r })
++      vi.mocked(rpcClient.call).mockImplementation((request: { method: string }) => {
++        switch (request?.method) {
++          case 'nostr.list-relays': return Promise.resolve({ relays: [{ url: 'wss://r.example', connected: true, enabled: true, added_at: 'x' }] })
++          case 'identity.link-nostrconnect-start': return Promise.resolve({ pairing_id: 'p1', uri: 'nostrconnect://abc' })
++          case 'identity.link-nostrconnect-finish': return Promise.resolve({ status: 'linked', identity: { id: 'linked-7', name: 'Phone' } })
++          case 'auth.signer.list': return held
++          default: return Promise.resolve({ identities: [] })
++        }
++      })
++      const wrapper = mount(Web5Identities, { props: { showStagger: false }, global: { stubs: { Teleport: true } } })
++      await wrapper.find('[data-testid="link-signer-button"]').trigger('click')
++      await wrapper.find('[data-testid="link-signer-scan-form"]').trigger('submit')
++      await vi.waitFor(() => expect(wrapper.find('[data-testid="link-signer-deciding"]').exists()).toBe(true))
++      expect(wrapper.find('[data-testid="link-signer-scan-form"]').exists()).toBe(false)
++      release([])
++      await flushPromises()
++      expect(wrapper.find('[data-testid="linked-signer-offer"]').exists()).toBe(true)
++      expect(wrapper.find('[data-testid="link-signer-deciding"]').exists()).toBe(false)
++    })
++
++    it('does not offer it off ports 80 and 443', async () => {
++      vi.mocked(signerLoginAllowedHere).mockReturnValue(false)
++      const wrapper = await linkByPairing(0)
++      expect(wrapper.find('[data-testid="linked-signer-offer"]').exists()).toBe(false)
++      expect(rpcClient.call).not.toHaveBeenCalledWith(expect.objectContaining({ method: 'auth.signer.list' }))
++    })
++  })
+ })
+-- 
+2.53.0
+
