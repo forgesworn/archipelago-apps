@@ -77,6 +77,13 @@ always keeps working.
 - **Log in:** "Log in with your signer" on the login page. The page shows a
   code; check your signer shows the same one, then approve. If your signer
   asks when you didn't start a login on this page, deny it.
+- **Several signers:** with backend `-p7` and frontend `-p3` or later
+  (`0010` and `0011`) you can enrol up to five, say a Heartwood at home and
+  Signet on your phone. A login asks all of them with the same code and the
+  first approval logs you in; the others may keep showing the request until
+  it times out there, and approving it then does nothing. The login page
+  doesn't say how many you have. Settings → Security lists them, each with
+  its own Remove, and the recent attempts name the signer that approved.
 - **With 2FA:** enter your password first, then choose "Approve on your
   signer instead" in place of the authenticator code.
 - **Heartwood:** firmware with login-challenge support (Heartwood PR #210 and
@@ -87,7 +94,7 @@ always keeps working.
   fast for a person.
 - **Dashboard address:** signer login and enrolment work when you reach the
   dashboard on port 80 or 443. On any other port, log in with your password.
-- **Someone else trying:** each login waits for one approval at a time, and a
+- **Someone else trying:** each login waits for one approval at a time (from any of your signers), and a
   burst of attempts pauses signer login for a while. Logging in with your
   password lifts the pause, and Settings → Security lists recent attempts with
   their addresses.

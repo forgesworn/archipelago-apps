@@ -1,0 +1,1405 @@
+From 88f757a942d6287a4822f2af9fb3a4fba5c4ae78 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 13:40:51 +0200
+Subject: [PATCH 10/11] feat: enrol several login signers, any one of which
+ logs in
+
+Up to five linked signers can now be enrolled for dashboard login, say a
+signer at home and one on the phone; there is still one owner. A login
+sends the same challenge and code to every enrolled signer whose identity
+is still linked, and the first valid approval settles it. A denial,
+timeout or offline signer no longer fails the login while another is
+still being asked; when all fail, the login reports the most informative
+failure (denied, refused, timed out, offline, failed). Later approvals
+are ignored.
+
+A login holds the slots of every signer it asked, so a new login is
+refused while any of them is busy; enrolling another signer is not held
+up. One start still spends one unit of the node-wide budget. The owner's
+recent-login history now names the identity whose signer approved.
+
+An approval counts only if its signer is still enrolled and its identity
+still linked to the same key when it arrives. Every read-modify-write of
+user.json now holds one lock, so enrolments finishing together, or an
+enrolment racing a removal, cannot lose or resurrect a signer.
+---
+ core/archipelago/src/api/rpc/middleware.rs   |   3 +-
+ core/archipelago/src/api/rpc/signer_login.rs |   5 +-
+ core/archipelago/src/auth.rs                 | 145 +++-
+ core/archipelago/src/remote_signer.rs        |   3 +
+ core/archipelago/src/signer_login.rs         | 862 +++++++++++++++++--
+ 5 files changed, 923 insertions(+), 95 deletions(-)
+
+diff --git a/core/archipelago/src/api/rpc/middleware.rs b/core/archipelago/src/api/rpc/middleware.rs
+index ebd1054..641f548 100644
+--- a/core/archipelago/src/api/rpc/middleware.rs
++++ b/core/archipelago/src/api/rpc/middleware.rs
+@@ -315,7 +315,8 @@ mod sanitize_tests {
+             ENROL_BUSY,
+             ENROL_EXPIRED,
+             "Invalid signer login: the code does not match",
+-            "Already exists: a signer is already enrolled for login; remove it first",
++            crate::auth::LOGIN_SIGNERS_FULL,
++            "Already exists: this identity is already enrolled for login",
+             "Invalid identity: only an identity linked to a signer can log in",
+             "Invalid identity: it is no longer linked to this signer",
+             "Session expired. Please log in with your password again.",
+diff --git a/core/archipelago/src/api/rpc/signer_login.rs b/core/archipelago/src/api/rpc/signer_login.rs
+index 73688be..522ad7e 100644
+--- a/core/archipelago/src/api/rpc/signer_login.rs
++++ b/core/archipelago/src/api/rpc/signer_login.rs
+@@ -247,8 +247,9 @@ impl RpcHandler {
+     }
+ 
+     /// `auth.signer.status`: when signer login is paused until (Unix
+-    /// seconds, or null) and the recent login starts, `{ at, ip, outcome }`,
+-    /// so the dashboard can say who tripped a pause.
++    /// seconds, or null) and the recent login starts, `{ at, ip, outcome,
++    /// identity_id }`, so the dashboard can say who tripped a pause and which
++    /// signer approved a login.
+     pub(super) async fn handle_signer_status(&self) -> Result<serde_json::Value> {
+         Ok(serde_json::to_value(self.signer_logins.status())?)
+     }
+diff --git a/core/archipelago/src/auth.rs b/core/archipelago/src/auth.rs
+index 72bf566..cc1781d 100644
+--- a/core/archipelago/src/auth.rs
++++ b/core/archipelago/src/auth.rs
+@@ -86,6 +86,13 @@ pub struct User {
+     pub login_signers: Vec<LoginSigner>,
+ }
+ 
++/// The most login signers a node takes.
++pub const MAX_LOGIN_SIGNERS: usize = 5;
++/// The refusal for one more. Starts with "Already exists" so it reaches the
++/// dashboard.
++pub(crate) const LOGIN_SIGNERS_FULL: &str =
++    "Already exists: 5 signers are enrolled for login, the most a node takes; remove one first";
++
+ /// A linked identity enrolled to log in to the dashboard through its signer.
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+ pub struct LoginSigner {
+@@ -95,6 +102,13 @@ pub struct LoginSigner {
+     pub added_at: String,
+ }
+ 
++/// Held across every read-modify-write of user.json, so two writers (say
++/// two enrolments finishing together, or an enrolment and a removal) cannot
++/// interleave and lose or resurrect a change. Process-wide rather than per
++/// [`AuthManager`], because handles are cloned and some are made afresh for
++/// the same data dir. Never held while calling another method that takes it.
++static USER_WRITE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
++
+ /// Cloneable: it holds only the data dir, and the app gate needs its own
+ /// handle to verify passwords on a different port from the JSON-RPC path.
+ #[derive(Clone)]
+@@ -147,6 +161,7 @@ impl AuthManager {
+ 
+     pub async fn setup_user(&self, password: &str) -> Result<()> {
+         let password_hash = argon2id_hash(password)?;
++        let _write = USER_WRITE.lock().await;
+ 
+         // If onboarding was already completed (before setup), preserve that
+         let onboarding_complete = self.is_onboarding_complete().await?;
+@@ -173,6 +188,7 @@ impl AuthManager {
+         let state = OnboardingState { complete: true };
+         fs::write(&onboarding_file, serde_json::to_string_pretty(&state)?).await?;
+         // Also update user.json if it exists (keeps them in sync)
++        let _write = USER_WRITE.lock().await;
+         if let Some(mut user) = self.get_user().await? {
+             user.onboarding_complete = true;
+             let user_file = self.data_dir.join("user.json");
+@@ -187,6 +203,7 @@ impl AuthManager {
+         let onboarding_file = self.data_dir.join("onboarding.json");
+         let state = OnboardingState { complete: false };
+         fs::write(&onboarding_file, serde_json::to_string_pretty(&state)?).await?;
++        let _write = USER_WRITE.lock().await;
+         if let Some(mut user) = self.get_user().await? {
+             user.onboarding_complete = false;
+             let user_file = self.data_dir.join("user.json");
+@@ -251,6 +268,7 @@ impl AuthManager {
+ 
+     /// Save TOTP data to user.json (enable 2FA).
+     pub async fn save_totp(&self, totp_data: TotpData) -> Result<()> {
++        let _write = USER_WRITE.lock().await;
+         let mut user = self
+             .get_user()
+             .await?
+@@ -263,6 +281,7 @@ impl AuthManager {
+ 
+     /// Remove TOTP data from user.json (disable 2FA).
+     pub async fn remove_totp(&self) -> Result<()> {
++        let _write = USER_WRITE.lock().await;
+         let mut user = self
+             .get_user()
+             .await?
+@@ -287,9 +306,10 @@ impl AuthManager {
+             .unwrap_or_default())
+     }
+ 
+-    /// Enrol a login signer. One for now: a second is refused until the
+-    /// first is removed, so no enrolment sits unused.
++    /// Enrol a login signer, at most [`MAX_LOGIN_SIGNERS`] of them, each
++    /// identity once. Any one of them logs the owner in.
+     pub async fn add_login_signer(&self, signer: LoginSigner) -> Result<()> {
++        let _write = USER_WRITE.lock().await;
+         let mut user = self
+             .get_user()
+             .await?
+@@ -301,10 +321,8 @@ impl AuthManager {
+         {
+             anyhow::bail!("Already exists: this identity is already enrolled for login");
+         }
+-        if !user.login_signers.is_empty() {
+-            anyhow::bail!(
+-                "Already exists: a signer is already enrolled for login; remove it first"
+-            );
++        if user.login_signers.len() >= MAX_LOGIN_SIGNERS {
++            anyhow::bail!(LOGIN_SIGNERS_FULL);
+         }
+         user.login_signers.push(signer);
+         self.write_user_atomically(&user).await
+@@ -313,6 +331,7 @@ impl AuthManager {
+     /// Remove an identity's login enrolment, if it has one. Password login
+     /// is untouched. Returns whether there was one.
+     pub async fn remove_login_signer(&self, identity_id: &str) -> Result<bool> {
++        let _write = USER_WRITE.lock().await;
+         let Some(mut user) = self.get_user().await? else {
+             return Ok(false);
+         };
+@@ -362,11 +381,17 @@ impl AuthManager {
+                 if valid {
+                     // Transparent upgrade: re-hash with Argon2id on successful login
+                     let new_hash = argon2id_hash(password)?;
+-                    let mut upgraded = user.clone();
+-                    upgraded.password_hash = new_hash;
+-                    let user_file = self.data_dir.join("user.json");
+-                    fs::write(&user_file, serde_json::to_string_pretty(&upgraded)?).await?;
+-                    tracing::info!("Upgraded password hash from bcrypt to Argon2id");
++                    let _write = USER_WRITE.lock().await;
++                    // Re-read under the lock, keeping any change made since,
++                    // and only upgrade the hash that was checked.
++                    if let Some(mut upgraded) = self.get_user().await? {
++                        if upgraded.password_hash == user.password_hash {
++                            upgraded.password_hash = new_hash;
++                            let user_file = self.data_dir.join("user.json");
++                            fs::write(&user_file, serde_json::to_string_pretty(&upgraded)?).await?;
++                            tracing::info!("Upgraded password hash from bcrypt to Argon2id");
++                        }
++                    }
+                 }
+                 Ok(valid)
+             } else {
+@@ -394,6 +419,7 @@ impl AuthManager {
+ 
+         let password_hash = argon2id_hash(new_password)?;
+ 
++        let write = USER_WRITE.lock().await;
+         let mut user = self
+             .get_user()
+             .await?
+@@ -410,6 +436,8 @@ impl AuthManager {
+         let user_file = self.data_dir.join("user.json");
+         let content = serde_json::to_string_pretty(&user)?;
+         fs::write(&user_file, content).await?;
++        // Not held across the SSH password change.
++        drop(write);
+ 
+         let mut outcome = ChangePasswordOutcome {
+             ssh_updated: false,
+@@ -568,11 +596,10 @@ mod tests {
+ 
+         auth.add_login_signer(login_signer("a")).await.unwrap();
+         assert_eq!(auth.login_signers().await.unwrap(), vec![login_signer("a")]);
+-        // One login signer for now, and no duplicates.
++        // No duplicates.
+         let again = auth.add_login_signer(login_signer("a")).await.unwrap_err();
+         assert!(again.to_string().starts_with("Already exists"), "{again}");
+-        let second = auth.add_login_signer(login_signer("b")).await.unwrap_err();
+-        assert!(second.to_string().contains("remove it first"), "{second}");
++        assert!(again.to_string().contains("this identity"), "{again}");
+ 
+         // Written in full, with no temporary file left behind, and with the
+         // file's permissions kept.
+@@ -585,7 +612,7 @@ mod tests {
+             let user_file = dir.path().join("user.json");
+             std::fs::set_permissions(&user_file, std::fs::Permissions::from_mode(0o640)).unwrap();
+             auth.remove_login_signer("nobody").await.unwrap();
+-            auth.add_login_signer(login_signer("b")).await.unwrap_err();
++            auth.add_login_signer(login_signer("a")).await.unwrap_err();
+             auth.remove_login_signer("a").await.unwrap();
+             assert_eq!(mode(&user_file), 0o640);
+             auth.add_login_signer(login_signer("a")).await.unwrap();
+@@ -599,6 +626,94 @@ mod tests {
+         assert!(auth.verify_password("password123").await.unwrap());
+     }
+ 
++    #[tokio::test]
++    async fn up_to_five_login_signers_are_kept_in_order() {
++        let dir = tempfile::tempdir().unwrap();
++        let auth = AuthManager::new(dir.path().to_path_buf());
++        auth.setup_user("password123").await.unwrap();
++        let ids = ["a", "b", "c", "d", "e"];
++        for id in ids {
++            auth.add_login_signer(login_signer(id)).await.unwrap();
++        }
++        let kept: Vec<LoginSigner> = ids.iter().map(|id| login_signer(id)).collect();
++        assert_eq!(auth.login_signers().await.unwrap(), kept);
++        let sixth = auth.add_login_signer(login_signer("f")).await.unwrap_err();
++        assert_eq!(sixth.to_string(), LOGIN_SIGNERS_FULL);
++        assert_eq!(auth.login_signers().await.unwrap(), kept);
++        // Removing one makes room again; the others stay.
++        assert!(auth.remove_login_signer("c").await.unwrap());
++        auth.add_login_signer(login_signer("f")).await.unwrap();
++        let ids: Vec<String> = auth
++            .login_signers()
++            .await
++            .unwrap()
++            .into_iter()
++            .map(|s| s.identity_id)
++            .collect();
++        assert_eq!(ids, ["a", "b", "d", "e", "f"]);
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++    async fn concurrent_login_signer_changes_are_not_lost() {
++        let dir = tempfile::tempdir().unwrap();
++        let auth = AuthManager::new(dir.path().to_path_buf());
++        auth.setup_user("password123").await.unwrap();
++        for round in 0..20 {
++            // Different handles for the same data dir, as the node has.
++            let other = AuthManager::new(dir.path().to_path_buf());
++            let (a, b) = (format!("a{round}"), format!("b{round}"));
++            let add_a = tokio::spawn({
++                let auth = auth.clone();
++                let a = a.clone();
++                async move { auth.add_login_signer(login_signer(&a)).await }
++            });
++            let add_b = tokio::spawn({
++                let b = b.clone();
++                async move { other.add_login_signer(login_signer(&b)).await }
++            });
++            add_a.await.unwrap().unwrap();
++            add_b.await.unwrap().unwrap();
++            let ids: Vec<String> = auth
++                .login_signers()
++                .await
++                .unwrap()
++                .into_iter()
++                .map(|s| s.identity_id)
++                .collect();
++            assert!(
++                ids.contains(&a) && ids.contains(&b),
++                "round {round}: {ids:?}"
++            );
++
++            // A removal racing an add: the removed one stays gone.
++            let remove_a = tokio::spawn({
++                let auth = auth.clone();
++                async move { auth.remove_login_signer(&a).await }
++            });
++            let add_c = tokio::spawn({
++                let auth = auth.clone();
++                let c = format!("c{round}");
++                async move { auth.add_login_signer(login_signer(&c)).await }
++            });
++            assert!(remove_a.await.unwrap().unwrap());
++            add_c.await.unwrap().unwrap();
++            let ids: Vec<String> = auth
++                .login_signers()
++                .await
++                .unwrap()
++                .into_iter()
++                .map(|s| s.identity_id)
++                .collect();
++            assert_eq!(ids, [b.clone(), format!("c{round}")], "round {round}");
++            assert!(auth.remove_login_signer(&b).await.unwrap());
++            assert!(auth
++                .remove_login_signer(&format!("c{round}"))
++                .await
++                .unwrap());
++        }
++        assert!(auth.verify_password("password123").await.unwrap());
++    }
++
+     #[tokio::test]
+     async fn user_files_without_login_signers_still_parse() {
+         let dir = tempfile::tempdir().unwrap();
+diff --git a/core/archipelago/src/remote_signer.rs b/core/archipelago/src/remote_signer.rs
+index c1675c3..10569f5 100644
+--- a/core/archipelago/src/remote_signer.rs
++++ b/core/archipelago/src/remote_signer.rs
+@@ -1915,6 +1915,8 @@ pub(crate) mod tests {
+         Panic,
+         /// Fails as if the relays were unreachable.
+         Offline,
++        /// Fails as if the signer never answered.
++        Timeout,
+     }
+ 
+     /// How a [`FakeSigner`] answers `ping`.
+@@ -1990,6 +1992,7 @@ pub(crate) mod tests {
+                 FakeMode::Unsupported => Err(RemoteSignerError::Unsupported(method.to_string())),
+                 FakeMode::Panic => panic!("fake signer panicked"),
+                 FakeMode::Offline => Err(RemoteSignerError::Offline("wss://fake".to_string())),
++                FakeMode::Timeout => Err(RemoteSignerError::Timeout),
+                 mode => Ok(mode),
+             }
+         }
+diff --git a/core/archipelago/src/signer_login.rs b/core/archipelago/src/signer_login.rs
+index 725e2b3..abd19ea 100644
+--- a/core/archipelago/src/signer_login.rs
++++ b/core/archipelago/src/signer_login.rs
+@@ -1,11 +1,23 @@
+ //! Logging in to the dashboard with a linked signer.
+ //!
+-//! A linked identity can be enrolled for login (`auth.signer.enrol.start`
+-//! and `.finish`). A login then sends its signer a kind 22242 event carrying
+-//! a random challenge, the node origin the browser used and a 4-digit code
+-//! the page shows, so the owner can tell their own request from someone
+-//! else's before pressing. The password always works as well; enrolment
+-//! never replaces it.
++//! Linked identities can be enrolled for login (`auth.signer.enrol.start`
++//! and `.finish`), up to [`MAX_LOGIN_SIGNERS`] of them, say a signer at home
++//! and one on a phone. There is still one owner: any enrolled signer logs
++//! them in. A login sends every enrolled signer whose identity is still
++//! linked the same kind 22242 event to sign, carrying a random challenge, the
++//! node origin the browser used and a 4-digit code the page shows, so the
++//! owner can tell their own request from someone else's before pressing. The
++//! password always works as well; enrolment never replaces it.
++//!
++//! The first valid approval logs in, if its signer is still enrolled and
++//! linked to the same key when it arrives (a signer removed during the press
++//! counts as refused), and the requests still out are dropped:
++//! a later approval is ignored and makes no second session. A denial,
++//! timeout or offline signer does not fail the login while another is still
++//! being asked. When all have failed, the login reports the most informative
++//! failure: denied, then refused (a reply that did not check out), then
++//! timed out, then offline, then failed ([`most_informative`]). Nothing
++//! before login says how many signers there are or which answered.
+ //!
+ //! Without 2FA the signer's approval alone logs in. With 2FA it stands in
+ //! for the TOTP code: the owner gives the password first (`auth.login`
+@@ -18,14 +30,20 @@
+ //! bounds the attempt as a whole, including the wait for `finish`. While an
+ //! attempt (login or enrolment) waits on a signer, a second start for that
+ //! signer is refused rather than replacing it, so nobody can keep cancelling
+-//! the owner's request, and the device never shows both kinds at once.
+-//! Logins also have a node-wide budget with backoff after failures. On a
++//! the owner's request, and the device never shows both kinds at once. A
++//! login holds the slots of every signer it asked until it fails, is
++//! finished or expires, even after one of them has said no, and a new login
++//! is refused if any of its signers is busy. An enrolment needs only its own
++//! signer's slot.
++//! Logins also have a node-wide budget with backoff after failures; one
++//! start counts once however many signers it asks. On a
+ //! node without 2FA anyone who can reach the login page can trip it, and by
+ //! retrying keep signer login paused; the password always works, a password
+ //! login clears the pause, and the owner can see who tripped it
+ //! ([`LoginAttempts::status`]).
+ 
+ use anyhow::{Context, Result};
++use futures_util::stream::{FuturesUnordered, StreamExt};
+ use nostr_sdk::{Event, Kind, PublicKey, Tag, Timestamp, UnsignedEvent};
+ use rand::rngs::OsRng;
+ use rand::Rng;
+@@ -37,7 +55,7 @@ use std::sync::{Arc, Mutex};
+ use std::time::Duration;
+ use tokio::time::Instant;
+ 
+-use crate::auth::{AuthManager, LoginSigner};
++use crate::auth::{AuthManager, LoginSigner, LOGIN_SIGNERS_FULL, MAX_LOGIN_SIGNERS};
+ use crate::identity_manager::IdentityManager;
+ use crate::remote_signer::{RemoteSignerError, FINISH_WAIT};
+ 
+@@ -234,7 +252,8 @@ fn settled(state: &AttemptState) -> bool {
+ 
+ struct Attempt {
+     purpose: Purpose,
+-    signer: String,
++    /// The keys (hex) of the signers asked, whose slots it holds.
++    signers: Vec<String>,
+     bound: Bound,
+     binding: [u8; 32],
+     expires: Instant,
+@@ -338,6 +357,8 @@ pub struct RecentStart {
+     /// `pending`, `approved`, `denied`, `expired`, `offline`, `refused`,
+     /// `failed`, `refused-busy` or `refused-budget`.
+     pub outcome: &'static str,
++    /// The identity whose signer approved, once `approved`.
++    pub identity_id: Option<String>,
+     #[serde(skip)]
+     attempt_id: Option<String>,
+ }
+@@ -361,6 +382,21 @@ fn failure_outcome(message: &str) -> &'static str {
+     }
+ }
+ 
++/// The failure a login reports when every signer it asked has failed: a
++/// denial (the owner's own answer), then a reply that did not check out,
++/// then a timeout, then an offline signer, then anything else.
++fn most_informative(failures: &[&'static str]) -> &'static str {
++    [
++        PUBLIC_DENIED,
++        PUBLIC_REFUSED,
++        PUBLIC_TIMEOUT,
++        PUBLIC_OFFLINE,
++    ]
++    .into_iter()
++    .find(|text| failures.contains(text))
++    .unwrap_or(PUBLIC_FAILED)
++}
++
+ /// Login and enrolment attempts waiting on a signer or on `finish`.
+ /// One per node: `RpcHandler` holds it.
+ pub struct LoginAttempts {
+@@ -399,17 +435,19 @@ impl LoginAttempts {
+             at: chrono::Utc::now().timestamp(),
+             ip,
+             outcome,
++            identity_id: None,
+             attempt_id,
+         });
+     }
+ 
+-    fn settle_record(&self, attempt_id: &str, outcome: &'static str) {
++    fn settle_record(&self, attempt_id: &str, outcome: &'static str, identity_id: Option<String>) {
+         let mut recent = lock(&self.recent);
+         if let Some(entry) = recent
+             .iter_mut()
+             .find(|r| r.attempt_id.as_deref() == Some(attempt_id))
+         {
+             entry.outcome = outcome;
++            entry.identity_id = identity_id;
+         }
+     }
+ 
+@@ -443,19 +481,20 @@ impl LoginAttempts {
+     where
+         F: Future<Output = Result<Approval>> + Send + 'static,
+     {
+-        self.start_from(purpose, signer, session, None, work)
++        self.start_from(purpose, &[signer], session, None, work)
+     }
+ 
+-    /// Start an attempt for `signer` (its key, hex) that runs `work`, the
+-    /// signing and verification, for at most [`ATTEMPT_TTL`]. `session` is
+-    /// the token to bind to; with none, a cookie token is minted. Refused
+-    /// while another attempt for the signer is unexpired and has not failed,
+-    /// and, for a login, when the node-wide budget is spent. A login start
+-    /// from `ip` is recorded for [`Self::status`], refused or not.
++    /// Start an attempt asking `signers` (their keys, hex) that runs `work`,
++    /// the signing and verification, for at most [`ATTEMPT_TTL`]. `session`
++    /// is the token to bind to; with none, a cookie token is minted. Refused
++    /// while another attempt holding any of the signers is unexpired and has
++    /// not failed, and, for a login, when the node-wide budget is spent. A
++    /// login start from `ip` is recorded for [`Self::status`], refused or
++    /// not.
+     pub fn start_from<F>(
+         self: &Arc<Self>,
+         purpose: Purpose,
+-        signer: &str,
++        signers: &[&str],
+         session: Option<&str>,
+         ip: Option<IpAddr>,
+         work: F,
+@@ -468,7 +507,10 @@ impl LoginAttempts {
+         pending.retain(|_, a| a.expires > now);
+         let busy = pending
+             .values()
+-            .find(|a| a.signer == signer && !matches!(*a.state.borrow(), AttemptState::Failed(_)))
++            .find(|a| {
++                a.signers.iter().any(|s| signers.contains(&s.as_str()))
++                    && !matches!(*a.state.borrow(), AttemptState::Failed(_))
++            })
+             .map(|a| a.purpose);
+         match (purpose, busy) {
+             (_, None) => {}
+@@ -517,10 +559,14 @@ impl LoginAttempts {
+             };
+             if purpose == Purpose::Login {
+                 match &state {
+-                    AttemptState::Approved(_) => attempts.settle_record(&task_id, "approved"),
++                    AttemptState::Approved(approval) => attempts.settle_record(
++                        &task_id,
++                        "approved",
++                        Some(approval.signer.identity_id.clone()),
++                    ),
+                     AttemptState::Failed(message) => {
+                         lock(&attempts.budget).failed(Instant::now());
+-                        attempts.settle_record(&task_id, failure_outcome(message));
++                        attempts.settle_record(&task_id, failure_outcome(message), None);
+                     }
+                     AttemptState::Waiting => {}
+                 }
+@@ -533,7 +579,7 @@ impl LoginAttempts {
+             attempt_id.clone(),
+             Attempt {
+                 purpose,
+-                signer: signer.to_string(),
++                signers: signers.iter().map(|s| s.to_string()).collect(),
+                 bound,
+                 binding,
+                 expires,
+@@ -633,12 +679,74 @@ pub async fn available(auth: &AuthManager) -> Result<bool> {
+     Ok(!auth.login_signers().await?.is_empty() && !auth.is_totp_enabled().await?)
+ }
+ 
+-/// Start a login through the enrolled signer (the first enrolled; there is
+-/// one for now). On a 2FA node `pending_session` must be the caller's valid
+-/// pending 2FA session, which the login is bound to; otherwise it is
+-/// ignored and the login is bound to a fresh cookie. Returns the attempt and
+-/// the code for the page. The caller may be unauthenticated, so every
+-/// refusal is a fixed text that names nothing.
++/// Whether `signer` is still enrolled for login and its identity still
++/// linked to the enrolled key.
++async fn still_enrolled(
++    auth: &AuthManager,
++    manager: &IdentityManager,
++    signer: &LoginSigner,
++) -> bool {
++    let enrolled = auth
++        .login_signers()
++        .await
++        .is_ok_and(|all| all.contains(signer));
++    enrolled
++        && manager
++            .linked_signer(&signer.identity_id)
++            .await
++            .ok()
++            .flatten()
++            .is_some_and(|linked| linked.user_pubkey == signer.pubkey)
++}
++
++/// Ask one enrolled signer to sign a login. Fails with the fixed public
++/// text; the detail is logged for the owner.
++async fn ask_signer(
++    auth: AuthManager,
++    manager: Arc<IdentityManager>,
++    enrolled: LoginSigner,
++    pubkey: PublicKey,
++    challenge: Arc<LoginChallenge>,
++) -> Result<Approval, &'static str> {
++    let asked = Instant::now();
++    let event = match manager
++        .sign_linked_event(&enrolled.identity_id, challenge.unsigned(pubkey))
++        .await
++    {
++        Ok(event) => event,
++        Err(e) => {
++            tracing::warn!(identity = %enrolled.identity_id, "[login] signer login failed: {e:#}");
++            return Err(public_login_error(&e));
++        }
++    };
++    let approval = asked.elapsed();
++    // Checked when the reply arrives, not when the browser next polls.
++    if let Err(e) = verify_login_event(&event, &pubkey, &challenge, Timestamp::now()) {
++        tracing::warn!(identity = %enrolled.identity_id, "[login] signer login reply refused: {e:#}");
++        return Err(PUBLIC_REFUSED);
++    }
++    // The signer may have been removed, or its identity re-linked or
++    // deleted, during the press: then its approval does not count.
++    if !still_enrolled(&auth, &manager, &enrolled).await {
++        tracing::warn!(
++            identity = %enrolled.identity_id,
++            "[login] signer login reply refused: the signer is no longer enrolled or linked"
++        );
++        return Err(PUBLIC_REFUSED);
++    }
++    Ok(Approval {
++        signer: enrolled,
++        approval,
++    })
++}
++
++/// Start a login through every enrolled signer whose identity is still
++/// linked to the enrolled key; the first to approve logs in. On a 2FA node
++/// `pending_session` must be the caller's valid pending 2FA session, which
++/// the login is bound to; otherwise it is ignored and the login is bound to
++/// a fresh cookie. Returns the attempt and the code for the page. The caller
++/// may be unauthenticated, so every refusal is a fixed text that names
++/// nothing, not even how many signers there are.
+ pub async fn start(
+     attempts: &Arc<LoginAttempts>,
+     auth: &AuthManager,
+@@ -648,9 +756,10 @@ pub async fn start(
+     pending_session: Option<&str>,
+     ip: Option<IpAddr>,
+ ) -> Result<(Started, String)> {
+-    let Some(enrolled) = auth.login_signers().await?.into_iter().next() else {
++    let enrolled = auth.login_signers().await?;
++    if enrolled.is_empty() {
+         anyhow::bail!(NOT_ENABLED);
+-    };
++    }
+     let session = if auth.is_totp_enabled().await? {
+         // The same answer as no enrolment: before the password, nobody
+         // learns whether 2FA is on.
+@@ -658,46 +767,57 @@ pub async fn start(
+     } else {
+         None
+     };
+-    // The identity must still be linked to the enrolled key.
+-    let still_linked = manager
+-        .linked_signer(&enrolled.identity_id)
+-        .await
+-        .ok()
+-        .flatten()
+-        .is_some_and(|linked| linked.user_pubkey == enrolled.pubkey);
+-    if !still_linked {
+-        tracing::warn!(
+-            identity = %enrolled.identity_id,
+-            "[login] signer login refused: the enrolled identity is no longer linked"
+-        );
++    // Each identity must still be linked to its enrolled key.
++    let mut asked = Vec::new();
++    for signer in enrolled {
++        let still_linked = manager
++            .linked_signer(&signer.identity_id)
++            .await
++            .ok()
++            .flatten()
++            .is_some_and(|linked| linked.user_pubkey == signer.pubkey);
++        let pubkey = PublicKey::from_hex(&signer.pubkey).ok();
++        match pubkey {
++            Some(pubkey) if still_linked => asked.push((signer, pubkey)),
++            _ => tracing::warn!(
++                identity = %signer.identity_id,
++                "[login] not asking a login signer: the enrolled identity is no longer linked"
++            ),
++        }
++    }
++    if asked.is_empty() {
++        tracing::warn!("[login] signer login refused: no enrolled identity is still linked");
+         anyhow::bail!(NOT_ENABLED);
+     }
+-    let pubkey = PublicKey::from_hex(&enrolled.pubkey).context("Invalid enrolled signer key")?;
+-    let challenge = LoginChallenge::new(relay, node_name)?;
++    let challenge = Arc::new(LoginChallenge::new(relay, node_name)?);
+     let code = challenge.code.clone();
+-    let signer_key = enrolled.pubkey.clone();
+-    let started = attempts.start_from(Purpose::Login, &signer_key, session, ip, async move {
+-        let asked = Instant::now();
+-        let event = match manager
+-            .sign_linked_event(&enrolled.identity_id, challenge.unsigned(pubkey))
+-            .await
+-        {
+-            Ok(event) => event,
+-            Err(e) => {
+-                tracing::warn!("[login] signer login failed: {e:#}");
+-                anyhow::bail!(public_login_error(&e));
++    let keys: Vec<String> = asked
++        .iter()
++        .map(|(signer, _)| signer.pubkey.clone())
++        .collect();
++    let slots: Vec<&str> = keys.iter().map(String::as_str).collect();
++    let mut asks: FuturesUnordered<_> = asked
++        .into_iter()
++        .map(|(signer, pubkey)| {
++            ask_signer(
++                auth.clone(),
++                Arc::clone(&manager),
++                signer,
++                pubkey,
++                Arc::clone(&challenge),
++            )
++        })
++        .collect();
++    let started = attempts.start_from(Purpose::Login, &slots, session, ip, async move {
++        let mut failures = Vec::new();
++        while let Some(answer) = asks.next().await {
++            match answer {
++                // Returning drops the requests still out.
++                Ok(approval) => return Ok(approval),
++                Err(text) => failures.push(text),
+             }
+-        };
+-        let approval = asked.elapsed();
+-        // Checked when the reply arrives, not when the browser next polls.
+-        if let Err(e) = verify_login_event(&event, &pubkey, &challenge, Timestamp::now()) {
+-            tracing::warn!("[login] signer login reply refused: {e:#}");
+-            anyhow::bail!(PUBLIC_REFUSED);
+         }
+-        Ok(Approval {
+-            signer: enrolled,
+-            approval,
+-        })
++        anyhow::bail!(most_informative(&failures))
+     })?;
+     Ok((started, code))
+ }
+@@ -737,8 +857,9 @@ pub async fn enrol_start(
+     if enrolled.iter().any(|s| s.identity_id == identity_id) {
+         anyhow::bail!("Already exists: this identity is already enrolled for login");
+     }
+-    if !enrolled.is_empty() {
+-        anyhow::bail!("Already exists: a signer is already enrolled for login; remove it first");
++    // Checked again when saving; refused here before the signer is asked.
++    if enrolled.len() >= MAX_LOGIN_SIGNERS {
++        anyhow::bail!(LOGIN_SIGNERS_FULL);
+     }
+     let linked = manager.linked_signer(identity_id).await?.ok_or_else(|| {
+         anyhow::anyhow!("Invalid identity: only an identity linked to a signer can log in")
+@@ -809,9 +930,9 @@ pub async fn remove(auth: &AuthManager, identity_id: &str, password: &str) -> Re
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-    use crate::identity_manager::{IdentityPurpose, IdentityRecord};
++    use crate::identity_manager::{IdentityPurpose, IdentityRecord, LinkedSigner};
+     use crate::remote_signer::tests::{FakeMode, FakeSigner, FakeSource};
+-    use crate::remote_signer::RemoteRequests;
++    use crate::remote_signer::{RemoteRequests, RemoteSigner, RemoteSignerSource};
+     use nostr_sdk::Keys;
+ 
+     const RELAY: &str = "https://node.local";
+@@ -1108,6 +1229,89 @@ mod tests {
+         assert_eq!(refused.to_string(), ENROL_BUSY);
+     }
+ 
++    #[tokio::test(start_paused = true)]
++    async fn a_login_holds_the_slot_of_every_signer_it_asked() {
++        let attempts = attempts();
++        let first = attempts
++            .start_from(Purpose::Login, &["a", "b"], None, None, never())
++            .unwrap();
++        // Any overlap makes a new login busy.
++        for signers in [&["a"][..], &["b"], &["b", "c"]] {
++            let refused = attempts
++                .start_from(Purpose::Login, signers, None, None, approve())
++                .unwrap_err();
++            assert_eq!(refused.to_string(), ALREADY_WAITING, "{signers:?}");
++        }
++        // Enrolling another signer is not blocked; enrolling one it asked is.
++        let refused = attempts
++            .start(Purpose::Enrol, "b", Some("session"), approve())
++            .unwrap_err();
++        assert_eq!(refused.to_string(), ENROL_BUSY_LOGIN);
++        attempts
++            .start(Purpose::Enrol, "c", Some("session"), never())
++            .unwrap();
++        // ...and that enrolment, in turn, makes only its own signer busy.
++        assert_eq!(
++            attempts
++                .start_from(Purpose::Login, &["c", "d"], None, None, approve())
++                .unwrap_err()
++                .to_string(),
++            ALREADY_WAITING
++        );
++        attempts
++            .start_from(Purpose::Login, &["d", "e"], None, None, never())
++            .unwrap();
++        assert!(finish_cookie(&attempts, &first).await.unwrap().is_none());
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_login_to_several_signers_spends_one_start() {
++        let attempts = Arc::new(LoginAttempts::default());
++        attempts
++            .start_from(Purpose::Login, &["a", "b", "c"], None, None, never())
++            .unwrap();
++        assert_eq!(lock(&attempts.budget).starts.len(), 1);
++        for i in 1..START_BUDGET {
++            attempts
++                .start(Purpose::Login, &format!("other {i}"), None, never())
++                .unwrap();
++        }
++        assert_eq!(
++            attempts
++                .start(Purpose::Login, "one more", None, never())
++                .unwrap_err()
++                .to_string(),
++            PAUSED
++        );
++    }
++
++    #[test]
++    fn when_every_signer_fails_the_most_informative_failure_is_reported() {
++        let cases: [(&[&str], &str); 7] = [
++            (
++                &[
++                    PUBLIC_OFFLINE,
++                    PUBLIC_TIMEOUT,
++                    PUBLIC_REFUSED,
++                    PUBLIC_DENIED,
++                ],
++                PUBLIC_DENIED,
++            ),
++            (
++                &[PUBLIC_FAILED, PUBLIC_OFFLINE, PUBLIC_REFUSED],
++                PUBLIC_REFUSED,
++            ),
++            (&[PUBLIC_OFFLINE, PUBLIC_TIMEOUT], PUBLIC_TIMEOUT),
++            (&[PUBLIC_FAILED, PUBLIC_OFFLINE], PUBLIC_OFFLINE),
++            (&[PUBLIC_FAILED], PUBLIC_FAILED),
++            (&[PUBLIC_OFFLINE], PUBLIC_OFFLINE),
++            (&[], PUBLIC_FAILED),
++        ];
++        for (failures, expected) in cases {
++            assert_eq!(most_informative(failures), expected, "{failures:?}");
++        }
++    }
++
+     #[tokio::test(start_paused = true)]
+     async fn a_login_finish_cannot_take_an_enrolment() {
+         let attempts = attempts();
+@@ -1288,21 +1492,21 @@ mod tests {
+         let attempts = Arc::new(LoginAttempts::default());
+         let lan: IpAddr = "192.0.2.7".parse().unwrap();
+         let approved = attempts
+-            .start_from(Purpose::Login, "a", None, Some(lan), approve())
++            .start_from(Purpose::Login, &["a"], None, Some(lan), approve())
+             .unwrap();
+         attempts
+-            .start_from(Purpose::Login, "b", None, Some(lan), deny())
++            .start_from(Purpose::Login, &["b"], None, Some(lan), deny())
+             .unwrap();
+         attempts
+-            .start_from(Purpose::Login, "c", None, Some(lan), never())
++            .start_from(Purpose::Login, &["c"], None, Some(lan), never())
+             .unwrap();
+         tokio::time::sleep(Duration::from_millis(1)).await;
+         // Busy, then out of budget (and backing off after the denial).
+         assert!(attempts
+-            .start_from(Purpose::Login, "c", None, Some(lan), never())
++            .start_from(Purpose::Login, &["c"], None, Some(lan), never())
+             .is_err());
+         assert!(attempts
+-            .start_from(Purpose::Login, "d", None, Some(lan), never())
++            .start_from(Purpose::Login, &["d"], None, Some(lan), never())
+             .is_err());
+         // Enrolments are not login starts.
+         attempts
+@@ -1335,6 +1539,11 @@ mod tests {
+         let json = serde_json::to_value(attempts.status()).unwrap();
+         assert_eq!(json["recent"][0]["ip"], "192.0.2.7");
+         assert!(json["recent"][0].get("attempt_id").is_none());
++        // Only an approval says which signer it was.
++        assert_eq!(json["recent"][0]["identity_id"], "id");
++        for i in 1..5 {
++            assert!(json["recent"][i]["identity_id"].is_null(), "{i}");
++        }
+     }
+ 
+     #[tokio::test(start_paused = true)]
+@@ -1576,13 +1785,17 @@ mod tests {
+     }
+ 
+     #[tokio::test]
+-    async fn a_second_enrolment_is_refused() {
++    async fn the_same_identity_cannot_be_enrolled_twice() {
+         let node = enrolled().await;
+         let error = enrol_through(&node, &attempts(), PASSWORD)
+             .await
+             .unwrap_err();
+-        assert!(error.to_string().starts_with("Already exists"), "{error}");
++        assert_eq!(
++            error.to_string(),
++            "Already exists: this identity is already enrolled for login"
++        );
+         assert_eq!(node.signer.calls(), 0);
++        assert_eq!(node.auth.login_signers().await.unwrap().len(), 1);
+     }
+ 
+     #[tokio::test]
+@@ -1736,4 +1949,499 @@ mod tests {
+             assert!(!message.contains("wss://"));
+         }
+     }
++
++    // ── Several signers ─────────────────────────────────────────────────
++
++    /// Hands each linked identity the fake holding its key.
++    #[derive(Default)]
++    struct ByKey(Mutex<Vec<Arc<FakeSigner>>>);
++
++    impl RemoteSignerSource for ByKey {
++        fn open(&self, _identity_id: &str, linked: &LinkedSigner) -> Result<Arc<dyn RemoteSigner>> {
++            let fake = lock(&self.0)
++                .iter()
++                .find(|f| f.keys.public_key().to_hex() == linked.user_pubkey)
++                .cloned()
++                .ok_or_else(|| anyhow::anyhow!("no fake signer for this key"))?;
++            Ok(fake)
++        }
++    }
++
++    struct Linked {
++        signer: Arc<FakeSigner>,
++        record: IdentityRecord,
++    }
++
++    struct Several {
++        _dir: tempfile::TempDir,
++        auth: AuthManager,
++        manager: Arc<IdentityManager>,
++        linked: Vec<Linked>,
++    }
++
++    /// A node with a password and one linked identity per fake, none of
++    /// them enrolled yet.
++    async fn node_with_several(fakes: Vec<FakeSigner>) -> Several {
++        let dir = tempfile::tempdir().unwrap();
++        let auth = AuthManager::new(dir.path().to_path_buf());
++        auth.setup_user(PASSWORD).await.unwrap();
++        let source = Arc::new(ByKey::default());
++        let manager = IdentityManager::with_remote_signers(
++            dir.path(),
++            source.clone(),
++            Arc::new(RemoteRequests::default()),
++        )
++        .await
++        .unwrap();
++        let mut linked = Vec::new();
++        for (i, fake) in fakes.into_iter().enumerate() {
++            let signer = Arc::new(fake);
++            lock(&source.0).push(signer.clone());
++            let uri = crate::remote_signer::parse_bunker_uri(&format!(
++                "bunker://{}?relay=wss://relay.example.com",
++                Keys::generate().public_key().to_hex()
++            ))
++            .unwrap();
++            signer.release();
++            let record = manager
++                .create_linked(
++                    format!("Signer {i}"),
++                    IdentityPurpose::Personal,
++                    &uri,
++                    &Keys::generate(),
++                    signer.as_ref(),
++                    None,
++                )
++                .await
++                .unwrap();
++            signer.calls.store(0, std::sync::atomic::Ordering::SeqCst);
++            linked.push(Linked { signer, record });
++        }
++        Several {
++            _dir: dir,
++            auth,
++            manager: Arc::new(manager),
++            linked,
++        }
++    }
++
++    fn honest() -> FakeSigner {
++        FakeSigner::new(Keys::generate(), FakeMode::Honest)
++    }
++
++    fn gated() -> FakeSigner {
++        FakeSigner::gated(Keys::generate(), FakeMode::Honest)
++    }
++
++    impl Several {
++        /// Enrol the `i`th identity the way the owner does.
++        async fn enrol(&self, i: usize) -> Result<Approval> {
++            let attempts = attempts();
++            let (attempt_id, _) = enrol_start(
++                &attempts,
++                &self.auth,
++                self.manager.clone(),
++                &self.linked[i].record.id,
++                PASSWORD,
++                "owner-session",
++                RELAY,
++                "my node",
++            )
++            .await?;
++            loop {
++                if let Some(approval) =
++                    enrol_finish(&attempts, &attempt_id, "owner-session").await?
++                {
++                    return Ok(approval);
++                }
++            }
++        }
++
++        /// Enrol every identity without asking its signer.
++        async fn enrol_all(&self) {
++            for l in &self.linked {
++                self.auth
++                    .add_login_signer(LoginSigner {
++                        identity_id: l.record.id.clone(),
++                        pubkey: l.signer.keys.public_key().to_hex(),
++                        added_at: "now".to_string(),
++                    })
++                    .await
++                    .unwrap();
++            }
++        }
++
++        async fn start(&self, attempts: &Arc<LoginAttempts>) -> Result<Started> {
++            let (started, _) = start(
++                attempts,
++                &self.auth,
++                self.manager.clone(),
++                RELAY,
++                "my node",
++                None,
++                None,
++            )
++            .await?;
++            Ok(started)
++        }
++
++        /// Set each signer's answer, after the linking proof.
++        fn set_modes(&self, modes: &[FakeMode]) {
++            for (l, mode) in self.linked.iter().zip(modes) {
++                l.signer.set_mode(*mode);
++            }
++        }
++
++        fn calls(&self) -> Vec<usize> {
++            self.linked.iter().map(|l| l.signer.calls()).collect()
++        }
++    }
++
++    async fn finish_now(attempts: &LoginAttempts, started: &Started) -> Result<Finished> {
++        loop {
++            if let Some(finished) = finish_cookie(attempts, started).await? {
++                return Ok(finished);
++            }
++        }
++    }
++
++    #[tokio::test]
++    async fn up_to_five_signers_can_be_enrolled() {
++        let node = node_with_several((0..6).map(|_| honest()).collect()).await;
++        for i in 0..MAX_LOGIN_SIGNERS {
++            let approval = node.enrol(i).await.unwrap();
++            assert_eq!(approval.signer.identity_id, node.linked[i].record.id);
++        }
++        assert_eq!(node.calls(), [1, 1, 1, 1, 1, 0]);
++        let enrolled: Vec<String> = node
++            .auth
++            .login_signers()
++            .await
++            .unwrap()
++            .into_iter()
++            .map(|s| s.identity_id)
++            .collect();
++        let expected: Vec<String> = node.linked[..5]
++            .iter()
++            .map(|l| l.record.id.clone())
++            .collect();
++        assert_eq!(enrolled, expected);
++        // A sixth is refused before its signer is asked.
++        let error = node.enrol(5).await.unwrap_err();
++        assert_eq!(error.to_string(), LOGIN_SIGNERS_FULL);
++        assert!(LOGIN_SIGNERS_FULL.contains(&MAX_LOGIN_SIGNERS.to_string()));
++        // So is one already enrolled.
++        let error = node.enrol(1).await.unwrap_err();
++        assert!(error.to_string().contains("this identity"), "{error}");
++        assert_eq!(node.calls(), [1, 1, 1, 1, 1, 0]);
++        // Removing one makes room.
++        assert!(remove(&node.auth, &node.linked[2].record.id, PASSWORD)
++            .await
++            .unwrap());
++        node.enrol(5).await.unwrap();
++        assert_eq!(node.auth.login_signers().await.unwrap().len(), 5);
++    }
++
++    #[tokio::test]
++    async fn a_second_signer_enrols_and_either_logs_in() {
++        let node = node_with_several(vec![honest(), honest()]).await;
++        node.enrol(0).await.unwrap();
++        node.enrol(1).await.unwrap();
++        assert!(available(&node.auth).await.unwrap());
++        // Each alone is enough.
++        for (denies, approves) in [(0, 1), (1, 0)] {
++            node.linked[denies].signer.set_mode(FakeMode::Deny);
++            node.linked[approves].signer.set_mode(FakeMode::Honest);
++            let attempts = attempts();
++            let started = node.start(&attempts).await.unwrap();
++            let finished = finish_now(&attempts, &started).await.unwrap();
++            assert_eq!(
++                finished.approval.signer.identity_id,
++                node.linked[approves].record.id
++            );
++        }
++    }
++
++    #[tokio::test]
++    async fn a_login_asks_every_signer_and_the_first_approval_wins() {
++        let node = node_with_several(vec![gated(), gated(), gated()]).await;
++        node.enrol_all().await;
++        let attempts = Arc::new(LoginAttempts::default());
++        let started = node.start(&attempts).await.unwrap();
++        tokio::time::sleep(Duration::from_millis(50)).await;
++        // Every signer is asked at once, with the same challenge and code.
++        assert_eq!(node.calls(), [1, 1, 1]);
++        assert_eq!(attempts.status().recent[0].outcome, "pending");
++        node.linked[1].signer.release();
++        let finished = finish_now(&attempts, &started).await.unwrap();
++        assert_eq!(
++            finished.approval.signer.identity_id,
++            node.linked[1].record.id
++        );
++        let status = attempts.status();
++        assert_eq!(status.recent.len(), 1);
++        assert_eq!(status.recent[0].outcome, "approved");
++        assert_eq!(
++            status.recent[0].identity_id.as_deref(),
++            Some(node.linked[1].record.id.as_str())
++        );
++        // The others approve late: their answers arrive, and nothing comes
++        // of them.
++        node.linked[0].signer.release();
++        node.linked[2].signer.release();
++        tokio::time::sleep(Duration::from_millis(50)).await;
++        for late in [0, 2] {
++            let gate = node.linked[late].signer.gate.as_ref().unwrap();
++            assert_eq!(gate.available_permits(), 0, "signer {late} answered");
++        }
++        assert_eq!(attempts.len(), 0);
++        let again = finish_cookie(&attempts, &started).await.unwrap_err();
++        assert_eq!(again.to_string(), GONE);
++        let status = attempts.status();
++        assert_eq!(status.recent.len(), 1);
++        assert_eq!(
++            status.recent[0].identity_id.as_deref(),
++            Some(node.linked[1].record.id.as_str())
++        );
++        assert_eq!(node.auth.login_signers().await.unwrap().len(), 3);
++    }
++
++    #[tokio::test]
++    async fn a_denial_does_not_fail_the_login_while_another_signer_is_asked() {
++        let node = node_with_several(vec![honest(), gated()]).await;
++        node.set_modes(&[FakeMode::Deny]);
++        node.enrol_all().await;
++        let attempts = Arc::new(LoginAttempts::default());
++        let started = node.start(&attempts).await.unwrap();
++        tokio::time::sleep(Duration::from_millis(50)).await;
++        // The first has said no; the attempt still waits on the second.
++        assert_eq!(node.calls(), [1, 1]);
++        assert_eq!(attempts.status().recent[0].outcome, "pending");
++        assert!(attempts.status().paused_until.is_none());
++        node.linked[1].signer.release();
++        let finished = finish_now(&attempts, &started).await.unwrap();
++        assert_eq!(
++            finished.approval.signer.identity_id,
++            node.linked[1].record.id
++        );
++        assert_eq!(attempts.status().recent[0].outcome, "approved");
++    }
++
++    #[tokio::test]
++    async fn when_every_signer_fails_the_login_fails_with_the_most_informative_text() {
++        for (modes, expected, outcome) in [
++            (
++                vec![FakeMode::Offline, FakeMode::Deny, FakeMode::WrongKey],
++                PUBLIC_DENIED,
++                "denied",
++            ),
++            (
++                vec![FakeMode::Unsupported, FakeMode::WrongKey, FakeMode::Offline],
++                PUBLIC_REFUSED,
++                "refused",
++            ),
++            (
++                vec![FakeMode::Unsupported, FakeMode::Offline],
++                PUBLIC_OFFLINE,
++                "offline",
++            ),
++            (
++                vec![FakeMode::Offline, FakeMode::Timeout, FakeMode::Unsupported],
++                PUBLIC_TIMEOUT,
++                "expired",
++            ),
++            (vec![FakeMode::Unsupported], PUBLIC_FAILED, "failed"),
++        ] {
++            let node = node_with_several(modes.iter().map(|_| honest()).collect()).await;
++            node.set_modes(&modes);
++            node.enrol_all().await;
++            let attempts = Arc::new(LoginAttempts::default());
++            let started = node.start(&attempts).await.unwrap();
++            let error = finish_now(&attempts, &started).await.unwrap_err();
++            assert_eq!(error.to_string(), expected, "{modes:?}");
++            assert!(node.calls().iter().all(|c| *c == 1), "{modes:?}");
++            let status = attempts.status();
++            assert_eq!(status.recent[0].outcome, outcome, "{modes:?}");
++            assert!(status.recent[0].identity_id.is_none());
++            // One failed login, one step of backoff.
++            assert_eq!(lock(&attempts.budget).failures, 1, "{modes:?}");
++        }
++    }
++
++    #[tokio::test]
++    async fn a_signer_whose_identity_is_gone_is_skipped() {
++        let node = node_with_several(vec![honest(), honest()]).await;
++        node.enrol_all().await;
++        node.manager
++            .delete(&node.linked[0].record.id)
++            .await
++            .unwrap();
++        let attempts = attempts();
++        let started = node.start(&attempts).await.unwrap();
++        let finished = finish_now(&attempts, &started).await.unwrap();
++        assert_eq!(
++            finished.approval.signer.identity_id,
++            node.linked[1].record.id
++        );
++        assert_eq!(node.calls(), [0, 1]);
++        // With none left, the same answer as no enrolment.
++        node.manager
++            .delete(&node.linked[1].record.id)
++            .await
++            .unwrap();
++        let error = node.start(&attempts).await.unwrap_err();
++        assert_eq!(error.to_string(), NOT_ENABLED);
++        assert_eq!(node.calls(), [0, 1]);
++        assert!(attempts.status().recent.len() == 1);
++    }
++
++    #[tokio::test]
++    async fn a_signer_whose_identity_is_linked_to_another_key_is_skipped() {
++        let node = node_with_several(vec![honest(), honest()]).await;
++        // The first identity's enrolment names a key it is not (or no
++        // longer) linked to, as after a re-link to a different signer.
++        node.auth
++            .add_login_signer(LoginSigner {
++                identity_id: node.linked[0].record.id.clone(),
++                pubkey: Keys::generate().public_key().to_hex(),
++                added_at: "now".to_string(),
++            })
++            .await
++            .unwrap();
++        let attempts = attempts();
++        let error = node.start(&attempts).await.unwrap_err();
++        assert_eq!(error.to_string(), NOT_ENABLED);
++        node.auth
++            .add_login_signer(LoginSigner {
++                identity_id: node.linked[1].record.id.clone(),
++                pubkey: node.linked[1].signer.keys.public_key().to_hex(),
++                added_at: "now".to_string(),
++            })
++            .await
++            .unwrap();
++        let started = node.start(&attempts).await.unwrap();
++        let finished = finish_now(&attempts, &started).await.unwrap();
++        assert_eq!(
++            finished.approval.signer.identity_id,
++            node.linked[1].record.id
++        );
++        assert_eq!(node.calls(), [0, 1]);
++    }
++
++    /// Wait, in real time, until every fake has been asked once.
++    async fn until_asked(node: &Several) {
++        while node.calls().contains(&0) {
++            tokio::time::sleep(Duration::from_millis(5)).await;
++        }
++    }
++
++    #[tokio::test]
++    async fn a_signer_removed_while_the_login_waits_cannot_approve_it() {
++        // Alone: its approval logs nobody in.
++        let node = node_with_several(vec![gated()]).await;
++        node.enrol_all().await;
++        let attempts = Arc::new(LoginAttempts::default());
++        let started = node.start(&attempts).await.unwrap();
++        until_asked(&node).await;
++        assert!(remove(&node.auth, &node.linked[0].record.id, PASSWORD)
++            .await
++            .unwrap());
++        node.linked[0].signer.release();
++        let error = finish_now(&attempts, &started).await.unwrap_err();
++        assert_eq!(error.to_string(), PUBLIC_REFUSED);
++        assert_eq!(attempts.status().recent[0].outcome, "refused");
++
++        // Beside another: the login waits for the one still enrolled.
++        let node = node_with_several(vec![gated(), gated()]).await;
++        node.enrol_all().await;
++        let attempts = Arc::new(LoginAttempts::default());
++        let started = node.start(&attempts).await.unwrap();
++        until_asked(&node).await;
++        assert!(remove(&node.auth, &node.linked[0].record.id, PASSWORD)
++            .await
++            .unwrap());
++        node.linked[0].signer.release();
++        tokio::time::sleep(Duration::from_millis(50)).await;
++        assert_eq!(attempts.status().recent[0].outcome, "pending");
++        node.linked[1].signer.release();
++        let finished = finish_now(&attempts, &started).await.unwrap();
++        assert_eq!(
++            finished.approval.signer.identity_id,
++            node.linked[1].record.id
++        );
++    }
++
++    #[tokio::test]
++    async fn a_login_still_waiting_on_a_signer_at_its_deadline_expires() {
++        let node = node_with_several(vec![honest(), gated()]).await;
++        node.set_modes(&[FakeMode::Deny]);
++        node.enrol_all().await;
++        let attempts = Arc::new(LoginAttempts::default());
++        let started = node.start(&attempts).await.unwrap();
++        until_asked(&node).await;
++        tokio::time::sleep(Duration::from_millis(50)).await;
++        // The denial is in; the second signer never answers.
++        assert_eq!(attempts.status().recent[0].outcome, "pending");
++        tokio::time::pause();
++        let error = loop {
++            match finish_cookie(&attempts, &started).await {
++                Ok(None) => {}
++                Ok(Some(_)) => panic!("approved without a signer"),
++                Err(e) => break e,
++            }
++        };
++        // As for one signer: the expiry, or that the attempt is gone if the
++        // poll's own timer fires first.
++        assert!(
++            [EXPIRED, GONE].contains(&error.to_string().as_str()),
++            "{error}"
++        );
++        // Let the attempt's own task, due at the same instant, settle.
++        tokio::time::sleep(Duration::from_secs(1)).await;
++        assert_eq!(attempts.status().recent[0].outcome, "expired");
++        assert_eq!(lock(&attempts.budget).failures, 1);
++    }
++
++    #[tokio::test]
++    async fn a_login_waiting_on_several_signers_blocks_them_all_and_nothing_else() {
++        let node = node_with_several(vec![gated(), gated(), honest()]).await;
++        // The third is linked but not enrolled.
++        node.enrol_all().await;
++        node.auth
++            .remove_login_signer(&node.linked[2].record.id)
++            .await
++            .unwrap();
++        let attempts = Arc::new(LoginAttempts::default());
++        node.start(&attempts).await.unwrap();
++        let refused = node.start(&attempts).await.unwrap_err();
++        assert_eq!(refused.to_string(), ALREADY_WAITING);
++        // A refused start asked nobody and spent no budget.
++        tokio::time::sleep(Duration::from_millis(50)).await;
++        assert_eq!(node.calls(), [1, 1, 0]);
++        assert_eq!(lock(&attempts.budget).starts.len(), 1);
++        let outcomes: Vec<&str> = attempts.status().recent.iter().map(|r| r.outcome).collect();
++        assert_eq!(outcomes, ["pending", "refused-busy"]);
++        // Enrolling the third signer is not held up by the login.
++        let (attempt_id, _) = enrol_start(
++            &attempts,
++            &node.auth,
++            node.manager.clone(),
++            &node.linked[2].record.id,
++            PASSWORD,
++            "owner-session",
++            RELAY,
++            "my node",
++        )
++        .await
++        .unwrap();
++        let approval = loop {
++            if let Some(a) = enrol_finish(&attempts, &attempt_id, "owner-session")
++                .await
++                .unwrap()
++            {
++                break a;
++            }
++        };
++        assert_eq!(approval.signer.identity_id, node.linked[2].record.id);
++    }
+ }
+-- 
+2.53.0
+

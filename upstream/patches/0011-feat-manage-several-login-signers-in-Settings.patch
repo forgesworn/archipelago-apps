@@ -1,0 +1,449 @@
+From f6c32167bcfc6f7b5a33cf7c799bcef3170097b1 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 13:43:19 +0200
+Subject: [PATCH 11/11] feat: manage several login signers in Settings
+
+Settings lists every enrolled login signer, each with its own Remove,
+and keeps the add control until five are enrolled, then says why it is
+gone. The add dialog offers only linked signers not yet enrolled. Recent
+login attempts now name the signer that approved each one. The mock
+backend enrols several signers (MOCK_SIGNER_ENROLLED=N) and reports the
+approving signer in its status.
+---
+ neode-ui/mock-backend.js                      | 57 +++++++----
+ neode-ui/src/api/signer-login.ts              |  5 +
+ neode-ui/src/locales/en.json                  |  6 +-
+ neode-ui/src/locales/es.json                  |  6 +-
+ .../views/settings/LoginSignersSection.vue    | 29 ++++--
+ .../__tests__/LoginSignersSection.test.ts     | 97 ++++++++++++++++++-
+ 6 files changed, 167 insertions(+), 33 deletions(-)
+
+diff --git a/neode-ui/mock-backend.js b/neode-ui/mock-backend.js
+index 6f57fc3..dae2f54 100755
+--- a/neode-ui/mock-backend.js
++++ b/neode-ui/mock-backend.js
+@@ -1989,7 +1989,7 @@ app.post('/rpc/v1', async (req, res) => {
+ 
+         if (process.env.MOCK_SIGNER_2FA === '1') {
+           res.cookie('pending', `pending-${Date.now()}`, { httpOnly: true, maxAge: 5 * 60 * 1000 })
+-          return res.json({ result: { requires_totp: true, signer: mockSigner.enrolled !== null } })
++          return res.json({ result: { requires_totp: true, signer: mockSigner.enrolled.length > 0 } })
+         }
+ 
+         const sessionId = `session-${Date.now()}`
+@@ -2225,7 +2225,7 @@ app.post('/rpc/v1', async (req, res) => {
+       }
+ 
+       // Linked-signer login (dev stand-in). Approval takes ~4 s. Toggles:
+-      //   MOCK_SIGNER_ENROLLED=1   a signer is already enrolled at boot
++      //   MOCK_SIGNER_ENROLLED=N   N signers (1 to 5) are already enrolled at boot
+       //   MOCK_SIGNER_2FA=1        the account has TOTP (code 123456); the signer
+       //                            is offered at the code step instead
+       //   MOCK_SIGNER_OUTCOME=     denied | offline | expired | refused | failed
+@@ -2235,12 +2235,12 @@ app.post('/rpc/v1', async (req, res) => {
+       //   MOCK_SIGNER_STATUS=      paused | foreign | pending | denied
+       // Texts are the node's own fixed constants.
+       case 'auth.login.signer.available': {
+-        return res.json({ result: mockSigner.enrolled !== null && process.env.MOCK_SIGNER_2FA !== '1' })
++        return res.json({ result: mockSigner.enrolled.length > 0 && process.env.MOCK_SIGNER_2FA !== '1' })
+       }
+ 
+       case 'auth.login.signer.start': {
+         const refuse = (message) => res.json({ error: { code: -32603, message } })
+-        if (!mockSigner.enrolled || (process.env.MOCK_SIGNER_2FA === '1' && !req.cookies?.pending)) {
++        if (!mockSigner.enrolled.length || (process.env.MOCK_SIGNER_2FA === '1' && !req.cookies?.pending)) {
+           return refuse(MOCK_SIGNER_TEXT.notEnabled)
+         }
+         if (process.env.MOCK_SIGNER_OUTCOME === 'busy') return refuse(MOCK_SIGNER_TEXT.busy)
+@@ -2269,8 +2269,11 @@ app.post('/rpc/v1', async (req, res) => {
+         if (!mockSigner.linked.some(i => i.id === identity_id)) {
+           return res.json({ error: { code: -32603, message: 'Invalid identity: only an identity linked to a signer can log in' } })
+         }
+-        if (mockSigner.enrolled) {
+-          return res.json({ error: { code: -32603, message: 'Already exists: a login signer is enrolled; remove it first' } })
++        if (mockSigner.enrolled.some(e => e.identity_id === identity_id)) {
++          return res.json({ error: { code: -32603, message: 'Already exists: this identity is already enrolled for login' } })
++        }
++        if (mockSigner.enrolled.length >= MOCK_MAX_LOGIN_SIGNERS) {
++          return res.json({ error: { code: -32603, message: MOCK_SIGNER_TEXT.full } })
+         }
+         if (process.env.MOCK_SIGNER_OUTCOME === 'busy') {
+           return res.json({ error: { code: -32603, message: MOCK_SIGNER_TEXT.enrolBusy } })
+@@ -2282,34 +2285,36 @@ app.post('/rpc/v1', async (req, res) => {
+         const out = await mockSigner.poll(params?.attempt_id, 'enrol')
+         if (out.error) return res.json({ error: { code: -32603, message: out.error } })
+         if (out.status === 'approved') {
+-          const id = mockSigner.linked.find(i => i.id === out.identityId)
+-          mockSigner.enrolled = { identity_id: id.id, pubkey: id.nostr_pubkey, added_at: new Date().toISOString() }
++          const signer = mockSigner.enrol(out.identityId)
+           const quick = process.env.MOCK_SIGNER_QUICK === '1'
+-          return res.json({ result: { status: 'enrolled', ...mockSigner.enrolled, approval_ms: quick ? 300 : 4000, quick_approval: quick } })
++          return res.json({ result: { status: 'enrolled', ...signer, approval_ms: quick ? 300 : 4000, quick_approval: quick } })
+         }
+         return res.json({ result: { status: 'pending' } })
+       }
+ 
+       case 'auth.signer.list': {
+-        const e = mockSigner.enrolled
+-        const name = e ? mockSigner.linked.find(i => i.id === e.identity_id)?.name : ''
+-        return res.json({ result: e ? [{ ...e, name }] : [] })
++        return res.json({
++          result: mockSigner.enrolled.map(e => ({ ...e, name: mockSigner.linked.find(i => i.id === e.identity_id)?.name ?? null })),
++        })
+       }
+ 
+       case 'auth.signer.status': {
+         const now = Math.floor(Date.now() / 1000)
+         const mode = process.env.MOCK_SIGNER_STATUS
+-        const approved = { at: now - 3600, ip: '192.168.1.10', outcome: 'approved' }
++        // Oldest first, each naming the signer that approved it.
++        const approved = mockSigner.enrolled.slice(0, 2)
++          .map((e, i) => ({ at: now - 3600 * (i + 1), ip: `192.168.1.${10 + i}`, outcome: 'approved', identity_id: e.identity_id }))
++          .reverse()
+         const recent = {
+           paused: [
+             { at: now - 400, ip: '192.168.1.40', outcome: 'expired' },
+             { at: now - 300, ip: '192.168.1.40', outcome: 'expired' },
+             { at: now - 100, ip: null, outcome: 'refused-budget' },
+           ],
+-          foreign: [{ at: now - 90, ip: '203.0.113.9', outcome: 'approved' }, { at: now - 200, ip: '203.0.113.9', outcome: 'denied' }],
++          foreign: [{ at: now - 90, ip: '203.0.113.9', outcome: 'approved', identity_id: mockSigner.enrolled[0]?.identity_id ?? null }, { at: now - 200, ip: '203.0.113.9', outcome: 'denied' }],
+           pending: [{ at: now - 20, ip: '192.168.1.77', outcome: 'pending' }],
+           denied: [{ at: now - 500, ip: '192.168.1.40', outcome: 'denied' }, { at: now - 450, ip: '192.168.1.40', outcome: 'offline' }],
+-        }[mode] ?? (mockSigner.enrolled ? [approved] : [])
++        }[mode] ?? approved
+         return res.json({ result: { paused_until: mode === 'paused' ? now + 600 : null, recent } })
+       }
+ 
+@@ -2317,8 +2322,8 @@ app.post('/rpc/v1', async (req, res) => {
+         if (params?.password !== userState.passwordHash && params?.password !== MOCK_PASSWORD) {
+           return res.json({ error: { code: -32603, message: 'Password Incorrect' } })
+         }
+-        const had = mockSigner.enrolled?.identity_id === params?.identity_id
+-        if (had) mockSigner.enrolled = null
++        const had = mockSigner.enrolled.some(e => e.identity_id === params?.identity_id)
++        if (had) mockSigner.enrolled = mockSigner.enrolled.filter(e => e.identity_id !== params?.identity_id)
+         return res.json({ result: { removed: had } })
+       }
+ 
+@@ -6248,10 +6253,13 @@ const MOCK_SIGNER_TEXT = {
+   refused: 'linked signer login was refused: the signed reply did not check out',
+   failed: 'linked signer login failed',
+   enrolBusy: 'linked signer is already waiting to approve an enrolment; approve or deny it on the signer first',
++  full: 'Already exists: 5 signers are enrolled for login, the most a node takes; remove one first',
+ }
++const MOCK_MAX_LOGIN_SIGNERS = 5
+ const mockSigner = {
+   linked: [],
+-  enrolled: null,
++  /** Login signers, first enrolled first; any one of them logs in. */
++  enrolled: [],
+   attempts: new Map(),
+   linkedIdentities() {
+     return this.linked.map(i => ({
+@@ -6270,6 +6278,12 @@ const mockSigner = {
+     this.linked.push(rec)
+     return { ...rec, origin: 'linked' }
+   },
++  enrol(identityId) {
++    const id = this.linked.find(i => i.id === identityId)
++    const signer = { identity_id: id.id, pubkey: id.nostr_pubkey, added_at: new Date().toISOString() }
++    this.enrolled.push(signer)
++    return signer
++  },
+   begin(purpose, identityId) {
+     const attempt_id = Math.random().toString(16).slice(2).padEnd(32, '0').slice(0, 32)
+     const code = String(Math.floor(Math.random() * 10000)).padStart(4, '0')
+@@ -6287,9 +6301,10 @@ const mockSigner = {
+     return { status: 'approved', identityId: a.identityId }
+   },
+ }
+-if (process.env.MOCK_SIGNER_ENROLLED === '1') {
+-  const r = mockSigner.link('Heartwood')
+-  mockSigner.enrolled = { identity_id: r.id, pubkey: r.nostr_pubkey, added_at: new Date().toISOString() }
++{
++  const names = ['Heartwood', 'Phone', 'Laptop', 'Spare', 'Office']
++  const count = Math.min(Number(process.env.MOCK_SIGNER_ENROLLED) || 0, MOCK_MAX_LOGIN_SIGNERS)
++  for (const name of names.slice(0, count)) mockSigner.enrol(mockSigner.link(name).id)
+ }
+ 
+ const mockState = sessionBucketProxy('mockState')
+diff --git a/neode-ui/src/api/signer-login.ts b/neode-ui/src/api/signer-login.ts
+index 092eae3..1e9c043 100644
+--- a/neode-ui/src/api/signer-login.ts
++++ b/neode-ui/src/api/signer-login.ts
+@@ -45,8 +45,13 @@ export interface SignerAttemptRecord {
+   /** Address the attempt came from; null when the node could not tell. */
+   ip: string | null
+   outcome: AttemptOutcome
++  /** The identity whose signer approved, on an approved attempt. */
++  identity_id?: string | null
+ }
+ 
++/** The most login signers a node takes. */
++export const MAX_LOGIN_SIGNERS = 5
++
+ export interface SignerStatus {
+   /** Unix seconds (UTC) until which signer login is paused, or null. */
+   paused_until: number | null
+diff --git a/neode-ui/src/locales/en.json b/neode-ui/src/locales/en.json
+index 43877c6..9e37325 100644
+--- a/neode-ui/src/locales/en.json
++++ b/neode-ui/src/locales/en.json
+@@ -876,6 +876,7 @@
+       "desc": "Log in by approving on a hardware signer. Your password still works.",
+       "none": "None",
+       "add": "Add a login signer",
++      "addAnother": "Add another login signer",
+       "addTitle": "Add a login signer",
+       "addDesc": "Pick a linked signer and enter your password. Your signer will ask you to approve once.",
+       "pick": "Signer",
+@@ -891,7 +892,10 @@
+       "loadFailed": "Could not load login signers.",
+       "wrongPort": "Open the dashboard on its usual address, without a port number, to use a signer.",
+       "recent": "Recent attempts",
+-      "pausedUntil": "Signer login is paused until {time}. Logging in with your password clears it."
++      "pausedUntil": "Signer login is paused until {time}. Logging in with your password clears it.",
++      "limit": "A node takes at most {max} login signers. Remove one to add another.",
++      "allEnrolled": "Every linked signer already logs in. Link another from the Identities page first.",
++      "removedSigner": "a signer since removed"
+     },
+     "outcome": {
+       "pending": "Waiting for approval",
+diff --git a/neode-ui/src/locales/es.json b/neode-ui/src/locales/es.json
+index 2064670..235f755 100644
+--- a/neode-ui/src/locales/es.json
++++ b/neode-ui/src/locales/es.json
+@@ -857,6 +857,7 @@
+       "desc": "Inicia sesión aprobando en un firmante de hardware. Tu contraseña sigue funcionando.",
+       "none": "Ninguno",
+       "add": "Añadir un firmante de acceso",
++      "addAnother": "Añadir otro firmante de acceso",
+       "addTitle": "Añadir un firmante de acceso",
+       "addDesc": "Elige un firmante vinculado e introduce tu contraseña. Tu firmante te pedirá aprobar una vez.",
+       "pick": "Firmante",
+@@ -872,7 +873,10 @@
+       "loadFailed": "No se pudieron cargar los firmantes de acceso.",
+       "wrongPort": "Abre el panel en su dirección habitual, sin número de puerto, para usar un firmante.",
+       "recent": "Intentos recientes",
+-      "pausedUntil": "El acceso con firmante está en pausa hasta las {time}. Iniciar sesión con tu contraseña levanta la pausa."
++      "pausedUntil": "El acceso con firmante está en pausa hasta las {time}. Iniciar sesión con tu contraseña levanta la pausa.",
++      "limit": "Un nodo admite como máximo {max} firmantes de acceso. Quita uno para añadir otro.",
++      "allEnrolled": "Todos los firmantes vinculados ya inician sesión. Vincula otro primero desde la página de Identidades.",
++      "removedSigner": "un firmante ya quitado"
+     },
+     "outcome": {
+       "pending": "Esperando aprobación",
+diff --git a/neode-ui/src/views/settings/LoginSignersSection.vue b/neode-ui/src/views/settings/LoginSignersSection.vue
+index 140c4fd..82c83ce 100644
+--- a/neode-ui/src/views/settings/LoginSignersSection.vue
++++ b/neode-ui/src/views/settings/LoginSignersSection.vue
+@@ -1,7 +1,7 @@
+ <script setup lang="ts">
+ import { computed, ref, watch } from 'vue'
+ import { useI18n } from 'vue-i18n'
+-import { signerApi, signerLoginAllowedHere, type EnrolFinish, type LoginSigner, type SignerStatus } from '@/api/signer-login'
++import { MAX_LOGIN_SIGNERS, signerApi, signerLoginAllowedHere, type EnrolFinish, type LoginSigner, type SignerAttemptRecord, type SignerStatus } from '@/api/signer-login'
+ import { rpcClient } from '@/api/rpc-client'
+ import { useSignerApproval } from '@/composables/useSignerApproval'
+ import SignerEnrolProgress from '@/components/signer/SignerEnrolProgress.vue'
+@@ -35,8 +35,10 @@ const approval = useSignerApproval<EnrolFinish>(
+   { enrol: true },
+ )
+ 
+-// The node takes one login signer; adding another means removing this one first.
+-const canAdd = computed(() => signers.value.length === 0)
++// The node takes up to MAX_LOGIN_SIGNERS; any one of them logs in.
++const canAdd = computed(() => signers.value.length < MAX_LOGIN_SIGNERS)
++/** Linked identities not yet enrolled, which are the ones that can be added. */
++const addable = computed(() => linkedIdentities.value.filter(i => !signers.value.some(s => s.identity_id === i.id)))
+ const recentNewestFirst = computed(() => [...(status.value?.recent ?? [])].reverse())
+ const pausedUntil = computed(() => status.value?.paused_until != null
+   ? new Date(status.value.paused_until * 1000).toLocaleTimeString()
+@@ -48,6 +50,13 @@ function outcomeLabel(outcome: string): string {
+   return label === key ? outcome : label
+ }
+ 
++/** Which signer approved a login, by its name in the list. */
++function approvedBy(a: SignerAttemptRecord): string {
++  if (a.outcome !== 'approved' || !a.identity_id) return ''
++  const name = signers.value.find(s => s.identity_id === a.identity_id)?.name
++  return name || t('signer.settings.removedSigner')
++}
++
+ function formatAt(at: number): string {
+   return new Date(at * 1000).toLocaleString()
+ }
+@@ -68,7 +77,7 @@ async function loadLinked() {
+   try {
+     const res = await rpcClient.call<{ identities: ManagedIdentity[] }>({ method: 'identity.list' })
+     linkedIdentities.value = (res.identities || []).filter(i => i.origin === 'linked')
+-    if (!addIdentityId.value) addIdentityId.value = linkedIdentities.value[0]?.id ?? ''
++    if (!addIdentityId.value) addIdentityId.value = addable.value[0]?.id ?? ''
+   } catch {
+     linkedIdentities.value = []
+   }
+@@ -196,7 +205,7 @@ load()
+       <p class="text-xs font-medium text-white/60 mb-1">{{ t('signer.settings.recent') }}</p>
+       <ul class="space-y-1">
+         <li v-for="(a, i) in recentNewestFirst" :key="i" class="flex justify-between gap-3 text-xs text-white/70" data-testid="signer-attempt-row">
+-          <span>{{ outcomeLabel(a.outcome) }}</span>
++          <span>{{ outcomeLabel(a.outcome) }}<template v-if="approvedBy(a)"> · <span data-testid="signer-attempt-by">{{ approvedBy(a) }}</span></template></span>
+           <span class="font-mono text-white/45 truncate">{{ a.ip ?? t('signer.outcome.unknownIp') }} · {{ formatAt(a.at) }}</span>
+         </li>
+       </ul>
+@@ -209,8 +218,9 @@ load()
+         class="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg glass-button glass-button-warning font-medium"
+         data-testid="add-login-signer"
+         @click="openAdd"
+-      >{{ t('signer.settings.add') }}</button>
++      >{{ signers.length ? t('signer.settings.addAnother') : t('signer.settings.add') }}</button>
+     </template>
++    <p v-else class="text-sm text-white/60" data-testid="signer-limit">{{ t('signer.settings.limit', { max: MAX_LOGIN_SIGNERS }) }}</p>
+   </div>
+ 
+   <Teleport to="body">
+@@ -228,6 +238,9 @@ load()
+           <p v-if="!linkedIdentities.length" class="text-sm text-white/60 mb-4" data-testid="no-linked-identities">
+             {{ t('signer.settings.noLinked') }}
+           </p>
++          <p v-else-if="!addable.length" class="text-sm text-white/60 mb-4" data-testid="all-linked-enrolled">
++            {{ t('signer.settings.allEnrolled') }}
++          </p>
+           <form v-else class="space-y-4" @submit.prevent="startAdd">
+             <div>
+               <label for="add-signer-identity" class="block text-sm font-medium text-white/80 mb-2">{{ t('signer.settings.pick') }}</label>
+@@ -236,7 +249,7 @@ load()
+                 v-model="addIdentityId"
+                 class="w-full px-3 py-2 rounded-lg bg-white/10 text-white border border-white/20 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+               >
+-                <option v-for="i in linkedIdentities" :key="i.id" :value="i.id" class="text-black">{{ i.name }}</option>
++                <option v-for="i in addable" :key="i.id" :value="i.id" class="text-black">{{ i.name }}</option>
+               </select>
+             </div>
+             <div>
+@@ -260,7 +273,7 @@ load()
+               <button type="button" class="px-4 py-2 rounded-lg bg-white/10 text-white font-medium hover:bg-white/20 transition-colors" @click="closeAdd">{{ t('common.cancel') }}</button>
+             </div>
+           </form>
+-          <button v-if="!linkedIdentities.length" class="w-full px-4 py-2 rounded-lg bg-white/10 text-white font-medium hover:bg-white/20 transition-colors" @click="closeAdd">{{ t('signer.settings.close') }}</button>
++          <button v-if="!addable.length" class="w-full px-4 py-2 rounded-lg bg-white/10 text-white font-medium hover:bg-white/20 transition-colors" @click="closeAdd">{{ t('signer.settings.close') }}</button>
+         </template>
+ 
+         <template v-else>
+diff --git a/neode-ui/src/views/settings/__tests__/LoginSignersSection.test.ts b/neode-ui/src/views/settings/__tests__/LoginSignersSection.test.ts
+index c987350..8467663 100644
+--- a/neode-ui/src/views/settings/__tests__/LoginSignersSection.test.ts
++++ b/neode-ui/src/views/settings/__tests__/LoginSignersSection.test.ts
+@@ -31,13 +31,106 @@ describe('LoginSignersSection', () => {
+     rpc.call.mockResolvedValue({ identities: [local, linked] })
+   })
+ 
+-  it('lists the enrolled signer with a remove button and no add button', async () => {
++  it('lists the enrolled signer with a remove button and offers to add another', async () => {
+     api.list.mockResolvedValue([enrolled])
+     const w = mountSection()
+     await flushPromises()
+     expect(w.findAll('[data-testid="login-signer-row"]')).toHaveLength(1)
+     expect(w.text()).toContain('Heartwood')
+-    expect(w.find('[data-testid="add-login-signer"]').exists()).toBe(false)
++    expect(w.find('[data-testid="add-login-signer"]').text()).toBe('Add another login signer')
++    expect(w.find('[data-testid="signer-limit"]').exists()).toBe(false)
++  })
++
++  describe('several signers', () => {
++    const phone = { identity_id: 'linked-2', pubkey: 'cd'.repeat(32), added_at: '2026-10-04T01:00:00Z', name: 'Phone' }
++    const five = [enrolled, phone, ...[3, 4, 5].map(n => ({ ...phone, identity_id: `linked-${n}`, name: `Signer ${n}` }))]
++
++    it('lists every enrolled signer, each with its own remove', async () => {
++      api.list.mockResolvedValue([enrolled, phone])
++      api.remove.mockResolvedValue({ removed: true })
++      const w = mountSection()
++      await flushPromises()
++      const rows = w.findAll('[data-testid="login-signer-row"]')
++      expect(rows.map(r => r.text())).toEqual([expect.stringContaining('Heartwood'), expect.stringContaining('Phone')])
++      expect(rows.every(r => r.find('button').text() === 'Remove')).toBe(true)
++
++      await rows[1]!.find('button').trigger('click')
++      expect(w.text()).toContain('Phone will no longer log in to this node')
++      api.list.mockResolvedValue([enrolled])
++      await w.find('input[aria-label="Password"]').setValue('my password')
++      await w.findAll('form')[w.findAll('form').length - 1]!.trigger('submit')
++      await flushPromises()
++      expect(api.remove).toHaveBeenCalledWith('linked-2', 'my password')
++      expect(w.findAll('[data-testid="login-signer-row"]').map(r => r.text())).toEqual([expect.stringContaining('Heartwood')])
++    })
++
++    it('keeps the add button until five are enrolled, then says why it is gone', async () => {
++      api.list.mockResolvedValue(five.slice(0, 4))
++      let w = mountSection()
++      await flushPromises()
++      expect(w.find('[data-testid="add-login-signer"]').exists()).toBe(true)
++      expect(w.find('[data-testid="signer-limit"]').exists()).toBe(false)
++
++      api.list.mockResolvedValue(five)
++      w = mountSection()
++      await flushPromises()
++      expect(w.findAll('[data-testid="login-signer-row"]')).toHaveLength(5)
++      expect(w.find('[data-testid="add-login-signer"]').exists()).toBe(false)
++      expect(w.find('[data-testid="signer-limit"]').text()).toBe('A node takes at most 5 login signers. Remove one to add another.')
++    })
++
++    it('offers only linked signers that are not enrolled yet', async () => {
++      api.list.mockResolvedValue([enrolled])
++      rpc.call.mockResolvedValue({ identities: [local, linked, { id: 'linked-2', name: 'Phone', origin: 'linked' }] })
++      api.enrolStart.mockResolvedValue({ attempt_id: 'e1', code: '0042' })
++      api.enrolFinish.mockReturnValue(new Promise(() => {}) as never)
++      const w = mountSection()
++      await flushPromises()
++      await w.find('[data-testid="add-login-signer"]').trigger('click')
++      await flushPromises()
++      expect(w.findAll('#add-signer-identity option').map(o => o.text())).toEqual(['Phone'])
++      await w.find('#add-signer-password').setValue('my password')
++      await w.find('form').trigger('submit')
++      await flushPromises()
++      expect(api.enrolStart).toHaveBeenCalledWith('linked-2', 'my password')
++    })
++
++    it('says so when every linked signer already logs in', async () => {
++      api.list.mockResolvedValue([enrolled])
++      const w = mountSection()
++      await flushPromises()
++      await w.find('[data-testid="add-login-signer"]').trigger('click')
++      await flushPromises()
++      expect(w.find('#add-signer-identity').exists()).toBe(false)
++      expect(w.find('[data-testid="all-linked-enrolled"]').text()).toContain('Every linked signer already logs in')
++    })
++
++    it('shows which signer approved each recent login', async () => {
++      api.list.mockResolvedValue([enrolled, phone])
++      api.status.mockResolvedValue({
++        paused_until: null,
++        recent: [
++          { at: 1789999000, ip: '192.168.1.40', outcome: 'approved', identity_id: 'linked-1' },
++          { at: 1789999100, ip: '192.168.1.41', outcome: 'denied', identity_id: null },
++          { at: 1789999200, ip: '192.168.1.42', outcome: 'approved', identity_id: 'linked-2' },
++          { at: 1789999300, ip: '192.168.1.43', outcome: 'approved', identity_id: 'linked-gone' },
++          { at: 1789999400, ip: '192.168.1.44', outcome: 'approved' },
++        ],
++      })
++      const w = mountSection()
++      await flushPromises()
++      const rows = w.findAll('[data-testid="signer-attempt-row"]')
++      const by = rows.map(r => r.find('[data-testid="signer-attempt-by"]'))
++      // Newest first.
++      expect(by[0]!.exists()).toBe(false)
++      expect(rows[0]!.text()).toContain('Approved')
++      expect(by[1]!.text()).toBe('a signer since removed')
++      expect(by[2]!.text()).toBe('Phone')
++      expect(by[3]!.exists()).toBe(false)
++      expect(rows[3]!.text()).toContain('Denied on the signer')
++      expect(by[4]!.text()).toBe('Heartwood')
++      expect(rows[4]!.text()).toContain('Approved · Heartwood')
++    })
+   })
+ 
+   it('offers only linked identities when adding', async () => {
+-- 
+2.53.0
+

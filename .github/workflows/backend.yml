@@ -122,10 +122,11 @@ jobs:
           check api::rpc::middleware::sanitize_tests:: 10
           check rate_limit::tests:: 10
           check api::rpc::identity::handlers::tests:: 2
-          check signer_login::tests:: 36
+          check signer_login::tests:: 49
           check api::rpc::signer_login::tests:: 3
           check api::rpc::signer_login_tests:: 17
           check appgate::identity::tests:: 11
+          check auth::tests:: 15
       - name: Build backend
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy/core
