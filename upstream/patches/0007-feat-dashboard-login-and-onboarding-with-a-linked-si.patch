@@ -1,0 +1,4069 @@
+From e614dcc99adac9ea1c53cdc567c59e6346b84f05 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 09:05:19 +0200
+Subject: [PATCH] feat: dashboard login and onboarding with a linked signer
+
+Log in to the dashboard by approving on a linked signer: a button above
+the password form when a signer is enrolled, the code shown large, and
+an approve-on-your-signer option beside the TOTP code on 2FA accounts.
+Adds an optional Connect a signer step after password setup, a Login
+signers section in Settings, a Linked badge and Link a signer button on
+the Identities page, and signer-aware wording in the signing consent
+dialog. Mock backend entries cover every new method.
+---
+ neode-ui/mock-backend.js                      | 179 +++++++-
+ .../src/api/__tests__/signerLogin.test.ts     | 162 +++++++
+ neode-ui/src/api/rpc-client.ts                |   2 +-
+ neode-ui/src/api/signer-login.ts              | 165 +++++++
+ .../src/components/AppLauncherOverlay.vue     |   2 +
+ .../src/components/NostrIdentityPicker.vue    |   1 +
+ neode-ui/src/components/NostrSignConsent.vue  |  15 +-
+ .../__tests__/NostrSignConsent.test.ts        |  41 ++
+ .../components/signer/ConnectSignerStep.vue   |  68 +++
+ .../src/components/signer/LinkSignerForm.vue  | 101 +++++
+ .../components/signer/SignerCodePrompt.vue    |  20 +
+ .../components/signer/SignerEnrolProgress.vue |  50 +++
+ .../components/signer/SignerLoginPanel.vue    |  61 +++
+ .../signer/__tests__/signerComponents.test.ts | 230 ++++++++++
+ .../__tests__/useSignerApproval.test.ts       | 245 ++++++++++
+ neode-ui/src/composables/loginRecord.ts       |  81 ++++
+ neode-ui/src/composables/useSignerApproval.ts | 181 ++++++++
+ neode-ui/src/locales/en.json                  | 116 +++++
+ neode-ui/src/locales/es.json                  | 116 +++++
+ neode-ui/src/stores/__tests__/app.test.ts     |   8 +
+ .../src/stores/__tests__/appLauncher.test.ts  |  36 ++
+ neode-ui/src/stores/appLauncher.ts            |   9 +-
+ neode-ui/src/stores/auth.ts                   |   4 +-
+ neode-ui/src/views/AppSession.vue             |   2 +
+ neode-ui/src/views/Dashboard.vue              |   2 +
+ neode-ui/src/views/Login.vue                  | 171 ++++++-
+ neode-ui/src/views/NostrTabSigner.vue         |   2 +
+ .../src/views/__tests__/loginSigner.test.ts   | 422 ++++++++++++++++++
+ .../__tests__/nostrBridgeLinked.test.ts       |  53 +++
+ .../src/views/appSession/useAppIdentity.ts    |   2 +
+ .../src/views/appSession/useNostrBridge.ts    |   7 +
+ .../src/views/dashboard/SignerLoginNotice.vue |  72 +++
+ .../__tests__/SignerLoginNotice.test.ts       | 144 ++++++
+ .../src/views/settings/AccountSection.vue     |   2 +
+ .../views/settings/LoginSignersSection.vue    | 312 +++++++++++++
+ .../__tests__/LoginSignersSection.test.ts     | 244 ++++++++++
+ neode-ui/src/views/web5/Web5Identities.vue    |  31 +-
+ .../web5/__tests__/Web5Identities.test.ts     |  46 ++
+ neode-ui/src/views/web5/types.ts              |   3 +
+ 39 files changed, 3386 insertions(+), 22 deletions(-)
+ create mode 100644 neode-ui/src/api/__tests__/signerLogin.test.ts
+ create mode 100644 neode-ui/src/api/signer-login.ts
+ create mode 100644 neode-ui/src/components/signer/ConnectSignerStep.vue
+ create mode 100644 neode-ui/src/components/signer/LinkSignerForm.vue
+ create mode 100644 neode-ui/src/components/signer/SignerCodePrompt.vue
+ create mode 100644 neode-ui/src/components/signer/SignerEnrolProgress.vue
+ create mode 100644 neode-ui/src/components/signer/SignerLoginPanel.vue
+ create mode 100644 neode-ui/src/components/signer/__tests__/signerComponents.test.ts
+ create mode 100644 neode-ui/src/composables/__tests__/useSignerApproval.test.ts
+ create mode 100644 neode-ui/src/composables/loginRecord.ts
+ create mode 100644 neode-ui/src/composables/useSignerApproval.ts
+ create mode 100644 neode-ui/src/views/__tests__/loginSigner.test.ts
+ create mode 100644 neode-ui/src/views/appSession/__tests__/nostrBridgeLinked.test.ts
+ create mode 100644 neode-ui/src/views/dashboard/SignerLoginNotice.vue
+ create mode 100644 neode-ui/src/views/dashboard/__tests__/SignerLoginNotice.test.ts
+ create mode 100644 neode-ui/src/views/settings/LoginSignersSection.vue
+ create mode 100644 neode-ui/src/views/settings/__tests__/LoginSignersSection.test.ts
+
+diff --git a/neode-ui/mock-backend.js b/neode-ui/mock-backend.js
+index 0efb1af..6f57fc3 100755
+--- a/neode-ui/mock-backend.js
++++ b/neode-ui/mock-backend.js
+@@ -1818,7 +1818,7 @@ app.post(['/app/bitcoin-ui/rpc/v1', '/app/bitcoin-core/rpc/v1', '/app/bitcoin-kn
+ })
+ 
+ // RPC endpoint
+-app.post('/rpc/v1', (req, res) => {
++app.post('/rpc/v1', async (req, res) => {
+   const { method, params } = req.body
+   console.log(`[RPC] ${method}`)
+ 
+@@ -1987,6 +1987,11 @@ app.post('/rpc/v1', (req, res) => {
+           })
+         }
+ 
++        if (process.env.MOCK_SIGNER_2FA === '1') {
++          res.cookie('pending', `pending-${Date.now()}`, { httpOnly: true, maxAge: 5 * 60 * 1000 })
++          return res.json({ result: { requires_totp: true, signer: mockSigner.enrolled !== null } })
++        }
++
+         const sessionId = `session-${Date.now()}`
+         sessions.set(sessionId, {
+           createdAt: new Date(),
+@@ -2219,6 +2224,113 @@ app.post('/rpc/v1', (req, res) => {
+         return res.json({ result: 'ok' })
+       }
+ 
++      // Linked-signer login (dev stand-in). Approval takes ~4 s. Toggles:
++      //   MOCK_SIGNER_ENROLLED=1   a signer is already enrolled at boot
++      //   MOCK_SIGNER_2FA=1        the account has TOTP (code 123456); the signer
++      //                            is offered at the code step instead
++      //   MOCK_SIGNER_OUTCOME=     denied | offline | expired | refused | failed
++      //                            (login fails that way), busy (start and enrol
++      //                            are refused as busy), paused (start refused)
++      //   MOCK_SIGNER_QUICK=1      "approved too fast" enrolment warning
++      //   MOCK_SIGNER_STATUS=      paused | foreign | pending | denied
++      // Texts are the node's own fixed constants.
++      case 'auth.login.signer.available': {
++        return res.json({ result: mockSigner.enrolled !== null && process.env.MOCK_SIGNER_2FA !== '1' })
++      }
++
++      case 'auth.login.signer.start': {
++        const refuse = (message) => res.json({ error: { code: -32603, message } })
++        if (!mockSigner.enrolled || (process.env.MOCK_SIGNER_2FA === '1' && !req.cookies?.pending)) {
++          return refuse(MOCK_SIGNER_TEXT.notEnabled)
++        }
++        if (process.env.MOCK_SIGNER_OUTCOME === 'busy') return refuse(MOCK_SIGNER_TEXT.busy)
++        if (process.env.MOCK_SIGNER_OUTCOME === 'paused') return refuse(MOCK_SIGNER_TEXT.paused)
++        return res.json({ result: mockSigner.begin('login') })
++      }
++
++      case 'auth.login.signer.finish': {
++        const out = await mockSigner.poll(params?.attempt_id, 'login')
++        if (out.error) return res.json({ error: { code: -32603, message: out.error } })
++        if (out.status === 'approved') {
++          const sessionId = `session-${Date.now()}`
++          sessions.set(sessionId, { createdAt: new Date() })
++          res.cookie('session', sessionId, { httpOnly: true, maxAge: 24 * 60 * 60 * 1000 })
++          res.clearCookie('pending')
++          return res.json({ result: { status: 'approved' } })
++        }
++        return res.json({ result: { status: 'pending' } })
++      }
++
++      case 'auth.signer.enrol.start': {
++        const { identity_id, password } = params || {}
++        if (password !== userState.passwordHash && password !== MOCK_PASSWORD) {
++          return res.json({ error: { code: -32603, message: 'Password Incorrect' } })
++        }
++        if (!mockSigner.linked.some(i => i.id === identity_id)) {
++          return res.json({ error: { code: -32603, message: 'Invalid identity: only an identity linked to a signer can log in' } })
++        }
++        if (mockSigner.enrolled) {
++          return res.json({ error: { code: -32603, message: 'Already exists: a login signer is enrolled; remove it first' } })
++        }
++        if (process.env.MOCK_SIGNER_OUTCOME === 'busy') {
++          return res.json({ error: { code: -32603, message: MOCK_SIGNER_TEXT.enrolBusy } })
++        }
++        return res.json({ result: mockSigner.begin('enrol', identity_id) })
++      }
++
++      case 'auth.signer.enrol.finish': {
++        const out = await mockSigner.poll(params?.attempt_id, 'enrol')
++        if (out.error) return res.json({ error: { code: -32603, message: out.error } })
++        if (out.status === 'approved') {
++          const id = mockSigner.linked.find(i => i.id === out.identityId)
++          mockSigner.enrolled = { identity_id: id.id, pubkey: id.nostr_pubkey, added_at: new Date().toISOString() }
++          const quick = process.env.MOCK_SIGNER_QUICK === '1'
++          return res.json({ result: { status: 'enrolled', ...mockSigner.enrolled, approval_ms: quick ? 300 : 4000, quick_approval: quick } })
++        }
++        return res.json({ result: { status: 'pending' } })
++      }
++
++      case 'auth.signer.list': {
++        const e = mockSigner.enrolled
++        const name = e ? mockSigner.linked.find(i => i.id === e.identity_id)?.name : ''
++        return res.json({ result: e ? [{ ...e, name }] : [] })
++      }
++
++      case 'auth.signer.status': {
++        const now = Math.floor(Date.now() / 1000)
++        const mode = process.env.MOCK_SIGNER_STATUS
++        const approved = { at: now - 3600, ip: '192.168.1.10', outcome: 'approved' }
++        const recent = {
++          paused: [
++            { at: now - 400, ip: '192.168.1.40', outcome: 'expired' },
++            { at: now - 300, ip: '192.168.1.40', outcome: 'expired' },
++            { at: now - 100, ip: null, outcome: 'refused-budget' },
++          ],
++          foreign: [{ at: now - 90, ip: '203.0.113.9', outcome: 'approved' }, { at: now - 200, ip: '203.0.113.9', outcome: 'denied' }],
++          pending: [{ at: now - 20, ip: '192.168.1.77', outcome: 'pending' }],
++          denied: [{ at: now - 500, ip: '192.168.1.40', outcome: 'denied' }, { at: now - 450, ip: '192.168.1.40', outcome: 'offline' }],
++        }[mode] ?? (mockSigner.enrolled ? [approved] : [])
++        return res.json({ result: { paused_until: mode === 'paused' ? now + 600 : null, recent } })
++      }
++
++      case 'auth.signer.remove': {
++        if (params?.password !== userState.passwordHash && params?.password !== MOCK_PASSWORD) {
++          return res.json({ error: { code: -32603, message: 'Password Incorrect' } })
++        }
++        const had = mockSigner.enrolled?.identity_id === params?.identity_id
++        if (had) mockSigner.enrolled = null
++        return res.json({ result: { removed: had } })
++      }
++
++      case 'identity.link-nip46': {
++        const { bunker_uri, name } = params || {}
++        if (typeof bunker_uri !== 'string' || !bunker_uri.startsWith('bunker://')) {
++          return res.json({ error: { code: -32603, message: 'Invalid bunker link: it must start with bunker://' } })
++        }
++        await new Promise(r => setTimeout(r, 2000))
++        return res.json({ result: mockSigner.link(String(name || 'My signer')) })
++      }
++
+       case 'auth.totp.status': {
+         return res.json({ result: { enabled: false } })
+       }
+@@ -2248,6 +2360,13 @@ app.post('/rpc/v1', (req, res) => {
+ 
+       case 'auth.login.totp':
+       case 'auth.login.backup': {
++        if (process.env.MOCK_SIGNER_2FA === '1') {
++          if (params?.code !== '123456') return res.json({ error: { code: -32603, message: 'Invalid code' } })
++          const sessionId = `session-${Date.now()}`
++          sessions.set(sessionId, { createdAt: new Date() })
++          res.cookie('session', sessionId, { httpOnly: true, maxAge: 24 * 60 * 60 * 1000 })
++          res.clearCookie('pending')
++        }
+         return res.json({ result: { success: true } })
+       }
+ 
+@@ -2332,6 +2451,7 @@ app.post('/rpc/v1', (req, res) => {
+                 nostr_npub: 'npub1mockmerchantidentitypubkeyvalue000000000000000000000000def',
+                 profile: { display_name: 'My Shop', website: 'https://myshop.onion', picture: '/demo-avatars/business.svg' },
+               },
++            ...mockSigner.linkedIdentities(),
+             ],
+           },
+         })
+@@ -6115,6 +6235,63 @@ function sessionBucketProxy(bucket) {
+ const mockData = sessionBucketProxy('mockData')
+ const walletState = sessionBucketProxy('walletState')
+ const userState = sessionBucketProxy('userState')
++
++// ── Linked-signer dev stand-in (see the auth.login.signer.* cases) ──────────
++const MOCK_SIGNER_TEXT = {
++  notEnabled: 'linked signer login is not enabled on this node',
++  busy: 'linked signer login is busy: another login is waiting for approval. If your signer is asking right now, that request did not come from this page: deny it',
++  paused: 'linked signer login is paused after recent attempts; log in with the password or try again in a few minutes',
++  expired: 'linked signer did not approve the login in time',
++  gone: 'Invalid signer login attempt: it is unknown, used or expired',
++  offline: 'linked signer is offline',
++  denied: 'linked signer denied the login',
++  refused: 'linked signer login was refused: the signed reply did not check out',
++  failed: 'linked signer login failed',
++  enrolBusy: 'linked signer is already waiting to approve an enrolment; approve or deny it on the signer first',
++}
++const mockSigner = {
++  linked: [],
++  enrolled: null,
++  attempts: new Map(),
++  linkedIdentities() {
++    return this.linked.map(i => ({
++      ...i, origin: 'linked',
++      signer: { remote_signer_pubkey: i.nostr_pubkey, relays: ['wss://relay.example'] },
++    }))
++  },
++  link(name) {
++    const n = this.linked.length + 1
++    const hex = (n.toString(16).padStart(2, '0')).repeat(32)
++    const rec = {
++      id: `linked-${n}`, name, purpose: 'personal', pubkey: hex,
++      did: `did:key:z6MkLinked${n}`, created_at: new Date().toISOString(), is_default: false,
++      nostr_pubkey: hex, nostr_npub: `npub1linked${n}`, profile: {},
++    }
++    this.linked.push(rec)
++    return { ...rec, origin: 'linked' }
++  },
++  begin(purpose, identityId) {
++    const attempt_id = Math.random().toString(16).slice(2).padEnd(32, '0').slice(0, 32)
++    const code = String(Math.floor(Math.random() * 10000)).padStart(4, '0')
++    this.attempts.set(attempt_id, { purpose, identityId, code, startedAt: Date.now() })
++    return { attempt_id, code }
++  },
++  async poll(attemptId, purpose) {
++    const a = this.attempts.get(attemptId)
++    if (!a || a.purpose !== purpose) return { error: MOCK_SIGNER_TEXT.gone }
++    const outcome = process.env.MOCK_SIGNER_OUTCOME
++    await new Promise(r => setTimeout(r, 1500))
++    if (Date.now() - a.startedAt < 4000) return { status: 'pending' }
++    this.attempts.delete(attemptId)
++    if (['denied', 'offline', 'expired', 'refused', 'failed'].includes(outcome)) return { error: MOCK_SIGNER_TEXT[outcome] }
++    return { status: 'approved', identityId: a.identityId }
++  },
++}
++if (process.env.MOCK_SIGNER_ENROLLED === '1') {
++  const r = mockSigner.link('Heartwood')
++  mockSigner.enrolled = { identity_id: r.id, pubkey: r.nostr_pubkey, added_at: new Date().toISOString() }
++}
++
+ const mockState = sessionBucketProxy('mockState')
+ 
+ // ── Lightning macaroon rotation (mock) ──────────────────────────────────────
+diff --git a/neode-ui/src/api/__tests__/signerLogin.test.ts b/neode-ui/src/api/__tests__/signerLogin.test.ts
+new file mode 100644
+index 0000000..8a6ae3a
+--- /dev/null
++++ b/neode-ui/src/api/__tests__/signerLogin.test.ts
+@@ -0,0 +1,162 @@
++import { afterEach, describe, expect, it } from 'vitest'
++import { signerLoginAllowedHere, summariseStatus, type SignerAttemptRecord } from '../signer-login'
++import { readDismissed, readLoginContext, recordLogin, writeDismissed } from '@/composables/loginRecord'
++
++const NOW = 1_790_000_000
++const at = (secondsAgo: number, outcome: SignerAttemptRecord['outcome'], ip: string | null = '10.0.0.9'): SignerAttemptRecord =>
++  ({ at: NOW - secondsAgo, ip, outcome })
++const none = { now: NOW, sinceLogin: null, ownSignerStarts: [] as number[] }
++
++describe('signerLoginAllowedHere', () => {
++  it('allows the dashboard on the default ports only', () => {
++    expect(signerLoginAllowedHere({ port: '', hostname: 'node.local' }, false)).toBe(true)
++    expect(signerLoginAllowedHere({ port: '443', hostname: 'node.local' }, false)).toBe(true)
++    expect(signerLoginAllowedHere({ port: '80', hostname: 'node.local' }, false)).toBe(true)
++    expect(signerLoginAllowedHere({ port: '8080', hostname: 'node.local' }, false)).toBe(false)
++  })
++
++  it('allows loopback on another port only in development', () => {
++    expect(signerLoginAllowedHere({ port: '8100', hostname: 'localhost' }, true)).toBe(true)
++    expect(signerLoginAllowedHere({ port: '8100', hostname: 'localhost' }, false)).toBe(false)
++    expect(signerLoginAllowedHere({ port: '8100', hostname: '192.0.2.10' }, true)).toBe(false)
++  })
++})
++
++describe('summariseStatus', () => {
++  it('counts every outcome nobody approved, not only unanswered ones', () => {
++    const s = summariseStatus({
++      paused_until: null,
++      recent: [at(900, 'denied'), at(800, 'expired'), at(700, 'offline'), at(600, 'refused'), at(500, 'failed'), at(400, 'refused-busy'), at(300, 'refused-budget')],
++    }, none)
++    expect(s.notApproved).toHaveLength(7)
++    expect(s.foreignApprovals).toHaveLength(0)
++    expect(s.pending).toHaveLength(0)
++  })
++
++  it('treats a fresh pending attempt as a prompt on the signer now, and ignores a stale one', () => {
++    const s = summariseStatus({ paused_until: null, recent: [at(20, 'pending', '192.168.1.77'), at(600, 'pending')] }, none)
++    expect(s.pending.map(a => a.ip)).toEqual(['192.168.1.77'])
++  })
++
++  it('flags an approval that did not lead to this login', () => {
++    const s = summariseStatus({ paused_until: null, recent: [at(60, 'approved', '203.0.113.9')] }, none)
++    expect(s.foreignApprovals.map(a => a.ip)).toEqual(['203.0.113.9'])
++  })
++
++  it('does not flag an approval this browser started, whenever it was approved', () => {
++    // `start` returned at NOW - 400; the owner approved a minute later and clicked Continue much later.
++    const s = summariseStatus(
++      { paused_until: null, recent: [at(401, 'approved', '10.0.0.1')] },
++      { now: NOW, sinceLogin: null, ownSignerStarts: [NOW - 400] },
++    )
++    expect(s.foreignApprovals).toHaveLength(0)
++  })
++
++  it('still flags another address approving, even next to our own', () => {
++    const s = summariseStatus(
++      { paused_until: null, recent: [at(900, 'approved', '203.0.113.9'), at(401, 'approved', '10.0.0.1')] },
++      { now: NOW, sinceLogin: null, ownSignerStarts: [NOW - 400] },
++    )
++    expect(s.foreignApprovals.map(a => a.ip)).toEqual(['203.0.113.9'])
++  })
++
++  it('flags an intruder\'s approval when the owner mistakenly approved it and then logged in within a minute', () => {
++    // Someone else starts a login (A), the owner gets busy, approves that prompt by
++    // mistake, then retries and logs in 20 s after A. `start` returned for the retry at NOW - 79.
++    const s = summariseStatus(
++      { paused_until: null, recent: [at(100, 'approved', '203.0.113.9'), at(80, 'approved', '10.0.0.1')] },
++      { now: NOW, sinceLogin: null, ownSignerStarts: [NOW - 79] },
++    )
++    expect(s.foreignApprovals.map(a => a.ip)).toEqual(['203.0.113.9'])
++  })
++
++  it('matches each remembered start to one approval only, nearest first', () => {
++    const s = summariseStatus(
++      { paused_until: null, recent: [at(100, 'approved', '203.0.113.9'), at(98, 'approved', '203.0.113.10'), at(97, 'approved', '10.0.0.1')] },
++      { now: NOW, sinceLogin: null, ownSignerStarts: [NOW - 97] },
++    )
++    expect(s.foreignApprovals.map(a => a.ip)).toEqual(['203.0.113.9', '203.0.113.10'])
++  })
++
++  it('does not flag the owner\'s own login when the browser clock is a few minutes off', () => {
++    // The node stamped the attempt 3 minutes before the browser thinks `start` returned.
++    const s = summariseStatus(
++      { paused_until: null, recent: [at(401, 'approved', '10.0.0.1')] },
++      { now: NOW, sinceLogin: null, ownSignerStarts: [NOW - 221] },
++    )
++    expect(s.foreignApprovals).toHaveLength(0)
++    const late = summariseStatus(
++      { paused_until: null, recent: [at(401, 'approved', '10.0.0.1')] },
++      { now: NOW, sinceLogin: null, ownSignerStarts: [NOW - 401 + 360] },
++    )
++    expect(late.foreignApprovals).toHaveLength(1)
++  })
++
++  it('recognises every signer login this browser remembers, not only the latest', () => {
++    const s = summariseStatus(
++      { paused_until: null, recent: [at(5000, 'approved'), at(300, 'approved')] },
++      { now: NOW, sinceLogin: null, ownSignerStarts: [NOW - 5001, NOW - 299] },
++    )
++    expect(s.foreignApprovals).toHaveLength(0)
++  })
++
++  it('ignores attempts from before the last login on this browser', () => {
++    const s = summariseStatus(
++      { paused_until: null, recent: [at(5000, 'expired'), at(4000, 'approved'), at(100, 'denied')] },
++      { now: NOW, sinceLogin: NOW - 1000, ownSignerStarts: [] },
++    )
++    expect(s.notApproved).toHaveLength(1)
++    expect(s.foreignApprovals).toHaveLength(0)
++  })
++
++  it('falls back to the last day when there is no earlier login to compare with', () => {
++    const s = summariseStatus({ paused_until: null, recent: [at(90_000, 'expired'), at(60, 'expired')] }, none)
++    expect(s.notApproved).toHaveLength(1)
++  })
++
++  it('passes on the pause and a null address', () => {
++    const s = summariseStatus({ paused_until: NOW + 600, recent: [at(10, 'refused-budget', null)] }, none)
++    expect(s.pausedUntil).toBe(NOW + 600)
++    expect(s.notApproved[0]!.ip).toBeNull()
++  })
++})
++
++describe('loginRecord', () => {
++  afterEach(() => { localStorage.clear(); sessionStorage.clear() })
++
++  it('uses the login before this one in the tab that just logged in', () => {
++    expect(readLoginContext()).toEqual({ sinceLogin: null, ownSignerStarts: [] })
++    recordLogin(false, 1000)
++    expect(readLoginContext().sinceLogin).toBeNull()
++    recordLogin(true, 2000, 1990)
++    expect(readLoginContext()).toEqual({ sinceLogin: 1000, ownSignerStarts: [1990] })
++  })
++
++  it('uses this browser\'s last login in a new tab', () => {
++    recordLogin(false, 1000)
++    recordLogin(true, 2000, 1990)
++    sessionStorage.clear()
++    expect(readLoginContext()).toEqual({ sinceLogin: 2000, ownSignerStarts: [1990] })
++  })
++
++  it('keeps the signer-login records bounded, in a namespaced localStorage key', () => {
++    for (let i = 0; i < 30; i++) recordLogin(true, 1000 + i, 500 + i)
++    const keys = Object.keys(localStorage)
++    expect(keys).toEqual(['archipelago:signer-login:v1'])
++    const starts = readLoginContext().ownSignerStarts
++    expect(starts).toHaveLength(20)
++    expect(starts[19]).toBe(529)
++    expect(starts[0]).toBe(510)
++  })
++
++  it('keeps the dismissal across tabs', () => {
++    writeDismissed('k1')
++    sessionStorage.clear()
++    expect(readDismissed()).toBe('k1')
++  })
++
++  it('survives a damaged record', () => {
++    localStorage.setItem('archipelago:signer-login:v1', '{not json')
++    expect(readLoginContext()).toEqual({ sinceLogin: null, ownSignerStarts: [] })
++  })
++})
+diff --git a/neode-ui/src/api/rpc-client.ts b/neode-ui/src/api/rpc-client.ts
+index 454bc5c..bd6fa0b 100644
+--- a/neode-ui/src/api/rpc-client.ts
++++ b/neode-ui/src/api/rpc-client.ts
+@@ -244,7 +244,7 @@ class RPCClient {
+   }
+ 
+   // Convenience methods
+-  async login(password: string): Promise<{ requires_totp?: boolean } | null> {
++  async login(password: string): Promise<{ requires_totp?: boolean; signer?: boolean } | null> {
+     return this.call({
+       method: 'auth.login',
+       params: {
+diff --git a/neode-ui/src/api/signer-login.ts b/neode-ui/src/api/signer-login.ts
+new file mode 100644
+index 0000000..092eae3
+--- /dev/null
++++ b/neode-ui/src/api/signer-login.ts
+@@ -0,0 +1,165 @@
++// RPC calls for logging in to the node with a linked signer. Kept in one place
++// so a backend rename is a one-line change here. Start and link calls are never
++// retried: a retry would put a second prompt on the owner's signer.
++
++import { rpcClient } from './rpc-client'
++
++export interface SignerAttempt {
++  attempt_id: string
++  code: string
++}
++
++export type LoginFinish = { status: 'pending' } | { status: 'approved' }
++
++export interface EnrolledSigner {
++  identity_id: string
++  pubkey: string
++  added_at: string
++  approval_ms: number
++  quick_approval: boolean
++}
++
++export type EnrolFinish = { status: 'pending' } | ({ status: 'enrolled' } & EnrolledSigner)
++
++export interface LoginSigner {
++  identity_id: string
++  pubkey: string
++  added_at: string
++  name: string
++}
++
++export interface LinkedIdentity {
++  id: string
++  name: string
++  [key: string]: unknown
++}
++
++/** How one recent signer attempt ended, as the node reports it. */
++export type AttemptOutcome =
++  | 'pending' | 'approved' | 'denied' | 'expired' | 'offline'
++  | 'refused' | 'failed' | 'refused-busy' | 'refused-budget'
++
++export interface SignerAttemptRecord {
++  /** Unix seconds (UTC). */
++  at: number
++  /** Address the attempt came from; null when the node could not tell. */
++  ip: string | null
++  outcome: AttemptOutcome
++}
++
++export interface SignerStatus {
++  /** Unix seconds (UTC) until which signer login is paused, or null. */
++  paused_until: number | null
++  /** Oldest first, at most 20. */
++  recent: SignerAttemptRecord[]
++}
++
++/** Signer prompts are only accepted from the dashboard on port 80 or 443 (and,
++ *  in development, a loopback host), so on any other port the signer options
++ *  are hidden. */
++export function signerLoginAllowedHere(
++  loc: Pick<Location, 'port' | 'hostname'> = window.location,
++  dev: boolean = import.meta.env.DEV,
++): boolean {
++  if (loc.port === '' || loc.port === '80' || loc.port === '443') return true
++  return dev && ['localhost', '127.0.0.1', '[::1]', '::1'].includes(loc.hostname)
++}
++
++const NOT_APPROVED: AttemptOutcome[] = ['denied', 'expired', 'offline', 'refused', 'failed', 'refused-busy', 'refused-budget']
++/** A pending attempt older than this has been given up on by the node. */
++const PENDING_FRESH_SECONDS = 130
++/** The node stamps an attempt when it starts; the browser notes when `start`
++ *  returned. Matching is one to one and nearest first, so this only bounds how
++ *  far apart the two clocks may be: it does not decide which approval is ours. */
++const OWN_START_TOLERANCE_SECONDS = 5 * 60
++const FALLBACK_WINDOW_SECONDS = 24 * 60 * 60
++
++export interface StatusSummary {
++  /** Approved logins that did not lead to this one: possibly someone else. */
++  foreignApprovals: SignerAttemptRecord[]
++  /** Prompts on the signer right now. */
++  pending: SignerAttemptRecord[]
++  /** Attempts nobody approved, since the owner's last login. */
++  notApproved: SignerAttemptRecord[]
++  pausedUntil: number | null
++}
++
++/** What the post-login notice should say. `sinceLogin` is where to start
++ *  counting (Unix seconds), `ownSignerStarts` the times `start` returned for the
++ *  signer logins this browser completed. */
++export function summariseStatus(
++  status: SignerStatus,
++  ctx: { now: number; sinceLogin: number | null; ownSignerStarts: number[] },
++): StatusSummary {
++  const cutoff = ctx.sinceLogin ?? ctx.now - FALLBACK_WINDOW_SECONDS
++  const relevant = (status.recent ?? []).filter(a => a.at >= cutoff)
++  // Each start this browser remembers accounts for at most one approval, the
++  // nearest in time. Anything left over was approved for someone else's attempt.
++  const approved = relevant.filter(a => a.outcome === 'approved')
++  const pairs: Array<{ dist: number; start: number; rec: SignerAttemptRecord }> = []
++  ctx.ownSignerStarts.forEach((start, si) => {
++    for (const rec of approved) {
++      const dist = Math.abs(rec.at - start)
++      if (dist <= OWN_START_TOLERANCE_SECONDS) pairs.push({ dist, start: si, rec })
++    }
++  })
++  pairs.sort((x, y) => x.dist - y.dist)
++  const usedStarts = new Set<number>()
++  const own = new Set<SignerAttemptRecord>()
++  for (const p of pairs) {
++    if (usedStarts.has(p.start) || own.has(p.rec)) continue
++    usedStarts.add(p.start)
++    own.add(p.rec)
++  }
++  return {
++    foreignApprovals: approved.filter(a => !own.has(a)),
++    pending: relevant.filter(a => a.outcome === 'pending' && a.at >= ctx.now - PENDING_FRESH_SECONDS),
++    notApproved: relevant.filter(a => NOT_APPROVED.includes(a.outcome)),
++    pausedUntil: status.paused_until ?? null,
++  }
++}
++
++/** One poll waits up to 10 s on the server; leave headroom. */
++const POLL_TIMEOUT_MS = 20000
++/** Linking asks the signer to approve twice, so the call can run for minutes. */
++const LINK_TIMEOUT_MS = 180000
++
++export const signerApi = {
++  loginAvailable(): Promise<boolean> {
++    return rpcClient.call<boolean>({ method: 'auth.login.signer.available', params: {}, timeout: 8000, maxRetries: 1 })
++  },
++  loginStart(): Promise<SignerAttempt> {
++    return rpcClient.call<SignerAttempt>({ method: 'auth.login.signer.start', params: {}, maxRetries: 1 })
++  },
++  loginFinish(attemptId: string, signal?: AbortSignal): Promise<LoginFinish> {
++    return rpcClient.call<LoginFinish>({
++      method: 'auth.login.signer.finish', params: { attempt_id: attemptId }, timeout: POLL_TIMEOUT_MS, maxRetries: 1, signal,
++    })
++  },
++  enrolStart(identityId: string, password: string): Promise<SignerAttempt> {
++    return rpcClient.call<SignerAttempt>({
++      method: 'auth.signer.enrol.start', params: { identity_id: identityId, password }, maxRetries: 1,
++    })
++  },
++  enrolFinish(attemptId: string, signal?: AbortSignal): Promise<EnrolFinish> {
++    return rpcClient.call<EnrolFinish>({
++      method: 'auth.signer.enrol.finish', params: { attempt_id: attemptId }, timeout: POLL_TIMEOUT_MS, maxRetries: 1, signal,
++    })
++  },
++  list(): Promise<LoginSigner[]> {
++    return rpcClient.call<LoginSigner[]>({ method: 'auth.signer.list', params: {}, maxRetries: 1 })
++  },
++  remove(identityId: string, password: string): Promise<{ removed: boolean }> {
++    return rpcClient.call<{ removed: boolean }>({
++      method: 'auth.signer.remove', params: { identity_id: identityId, password }, maxRetries: 1,
++    })
++  },
++  status(): Promise<SignerStatus> {
++    return rpcClient.call<SignerStatus>({ method: 'auth.signer.status', params: {}, maxRetries: 1 })
++  },
++  linkBunker(bunkerUri: string, name: string): Promise<LinkedIdentity> {
++    return rpcClient.call<LinkedIdentity>({
++      method: 'identity.link-nip46', params: { bunker_uri: bunkerUri, name }, timeout: LINK_TIMEOUT_MS, maxRetries: 1,
++    })
++  },
++}
+diff --git a/neode-ui/src/components/AppLauncherOverlay.vue b/neode-ui/src/components/AppLauncherOverlay.vue
+index a0ac81a..428ffb0 100644
+--- a/neode-ui/src/components/AppLauncherOverlay.vue
++++ b/neode-ui/src/components/AppLauncherOverlay.vue
+@@ -183,6 +183,8 @@
+               :app-name="store.consentRequest?.appName ?? ''"
+               :method="store.consentRequest?.method ?? ''"
+               :identity-label="store.consentRequest?.identityLabel"
++              :origin="store.consentRequest?.origin"
++              :signer-label="store.consentRequest?.signerLabel"
+               :event-kind="store.consentRequest?.eventKind"
+               :content="store.consentRequest?.content"
+               :phase="store.consentPhase"
+diff --git a/neode-ui/src/components/NostrIdentityPicker.vue b/neode-ui/src/components/NostrIdentityPicker.vue
+index 2c5426c..67f3a1f 100644
+--- a/neode-ui/src/components/NostrIdentityPicker.vue
++++ b/neode-ui/src/components/NostrIdentityPicker.vue
+@@ -131,6 +131,7 @@ interface Identity {
+   nostr_pubkey?: string
+   nostr_npub?: string
+   is_node?: boolean
++  origin?: 'local' | 'linked'
+ }
+ 
+ const props = defineProps<{
+diff --git a/neode-ui/src/components/NostrSignConsent.vue b/neode-ui/src/components/NostrSignConsent.vue
+index f604efc..f72c3a9 100644
+--- a/neode-ui/src/components/NostrSignConsent.vue
++++ b/neode-ui/src/components/NostrSignConsent.vue
+@@ -6,8 +6,9 @@
+           <div class="flex min-h-[300px] flex-col items-center justify-center text-center">
+             <NostrIdentityOrb size="medium" :state="phase === 'success' ? 'success' : 'loading'" :aria-label="phase === 'success' ? 'Nostr request approved' : 'Signing with Nostr identity'" />
+             <h3 :id="`${dialogId}-title`" class="mt-4 text-xl font-semibold text-white">{{ phase === 'success' ? successTitle : progressTitle }}</h3>
+-            <p class="mt-2 text-sm text-white/55">{{ phase === 'success' ? 'The app received the approved result.' : 'Your key stays on this node.' }}</p>
+-            <p class="mt-4 text-[10px] uppercase tracking-[0.22em] text-white/25">NIP-07 · signed locally</p>
++            <p class="mt-2 text-sm text-white/55">{{ phase === 'success' ? 'The app received the approved result.' : progressNote }}</p>
++            <p v-if="phase === 'signing' && linked && !sharesKey" class="mt-2 max-w-xs text-xs text-white/45">Check the details on your signer before you approve.</p>
++            <p class="mt-4 text-[10px] uppercase tracking-[0.22em] text-white/25">{{ footerNote }}</p>
+           </div>
+         </template>
+ 
+@@ -64,6 +65,8 @@ const METHOD_LABELS: Record<string, string> = {
+ }
+ const props = withDefaults(defineProps<{
+   show: boolean; appName: string; method: string; identityLabel?: string; eventKind?: number; content?: string
++  /** 'linked' when the identity's key is on a remote signer; anything else is signed on this node. */
++  origin?: string; signerLabel?: string
+   phase?: 'review' | 'signing' | 'success' | 'error'; error?: string
+ }>(), { phase: 'review', error: '' })
+ const emit = defineEmits<{ approve: [remember: boolean]; deny: [] }>()
+@@ -76,7 +79,13 @@ useModalKeyboard(modalRef, computed(() => props.show), () => {
+ })
+ const methodLabel = computed(() => METHOD_LABELS[props.method] ?? props.method)
+ const requestTitle = computed(() => props.method === 'getPublicKey' ? 'Share this identity?' : 'Approve this request?')
+-const progressTitle = computed(() => props.method === 'getPublicKey' ? 'Sharing identity…' : 'Signing locally…')
++const linked = computed(() => props.origin === 'linked')
++const progressTitle = computed(() => props.method === 'getPublicKey' ? 'Sharing identity…' : linked.value ? 'Waiting for your signer…' : 'Signing locally…')
++const sharesKey = computed(() => props.method === 'getPublicKey')
++const progressNote = computed(() => !linked.value ? 'Your key stays on this node.'
++  : sharesKey.value ? 'Your key stays on your signer.' : `Approve on ${props.signerLabel || 'your signer'}`)
++const footerNote = computed(() => !linked.value ? 'NIP-07 · signed locally'
++  : sharesKey.value ? 'NIP-46 · key held on your signer' : 'NIP-46 · signed on your signer')
+ const successTitle = computed(() => props.method === 'getPublicKey' ? 'Identity shared' : 'Request signed')
+ const contentPreview = computed(() => !props.content ? '' : props.content.length > 200 ? `${props.content.slice(0, 200)}…` : props.content)
+ const eventKindLabel = computed(() => props.eventKind === undefined ? '' : EVENT_KIND_LABELS[props.eventKind] ?? 'Unknown')
+diff --git a/neode-ui/src/components/__tests__/NostrSignConsent.test.ts b/neode-ui/src/components/__tests__/NostrSignConsent.test.ts
+index 02724be..57d2c38 100644
+--- a/neode-ui/src/components/__tests__/NostrSignConsent.test.ts
++++ b/neode-ui/src/components/__tests__/NostrSignConsent.test.ts
+@@ -32,4 +32,45 @@ describe('NostrSignConsent', () => {
+     expect(wrapper.text()).toContain('Request signed')
+     expect(wrapper.find('.nostr-orb-success').exists()).toBe(true)
+   })
++
++  describe('linked identities', () => {
++    const linked = { ...baseProps, origin: 'linked', signerLabel: 'Heartwood' }
++
++    it('waits for the signer instead of claiming local signing', () => {
++      const text = mount(NostrSignConsent, { props: { ...linked, phase: 'signing' } }).text()
++      expect(text).toContain('Waiting for your signer…')
++      expect(text).toContain('Approve on Heartwood')
++      expect(text).toContain('NIP-46 · signed on your signer')
++      expect(text).toContain('Check the details on your signer before you approve.')
++      expect(text).not.toContain('Signing locally')
++      expect(text).not.toContain('Your key stays on this node')
++      expect(text).not.toContain('signed locally')
++    })
++
++    it('falls back to "your signer" when the signer has no name', () => {
++      const text = mount(NostrSignConsent, { props: { ...linked, signerLabel: undefined, phase: 'signing' } }).text()
++      expect(text).toContain('Approve on your signer')
++    })
++
++    it('does not say a shared public key was signed', () => {
++      const text = mount(NostrSignConsent, { props: { ...linked, method: 'getPublicKey', phase: 'signing' } }).text()
++      expect(text).toContain('Sharing identity…')
++      expect(text).toContain('Your key stays on your signer.')
++      expect(text).not.toContain('signed on your signer')
++      expect(text).not.toContain('Approve on')
++    })
++
++    it('keeps the review step unchanged', () => {
++      const text = mount(NostrSignConsent, { props: linked }).text()
++      expect(text).toContain('Approve this request?')
++    })
++  })
++
++  it('keeps today\'s local copy for local identities', () => {
++    const text = mount(NostrSignConsent, { props: { ...baseProps, origin: 'local', phase: 'signing' } }).text()
++    expect(text).toContain('Signing locally…')
++    expect(text).toContain('Your key stays on this node.')
++    expect(text).toContain('NIP-07 · signed locally')
++    expect(text).not.toContain('NIP-46')
++  })
+ })
+diff --git a/neode-ui/src/components/signer/ConnectSignerStep.vue b/neode-ui/src/components/signer/ConnectSignerStep.vue
+new file mode 100644
+index 0000000..2e42cb4
+--- /dev/null
++++ b/neode-ui/src/components/signer/ConnectSignerStep.vue
+@@ -0,0 +1,68 @@
++<template>
++  <div data-testid="connect-signer-step">
++    <div class="mb-6 text-center">
++      <h2 class="text-lg font-semibold text-white mb-1">{{ t('signer.connect.title') }}</h2>
++      <p class="text-sm text-white/65">{{ t('signer.connect.intro') }}</p>
++    </div>
++
++    <LinkSignerForm v-if="step === 'link'" @linked="onLinked" />
++    <SignerEnrolProgress v-else :approval="approval" />
++
++    <button
++      type="button"
++      class="w-full mt-4 px-4 py-2 rounded-lg font-medium transition-colors"
++      :class="enrolledNow ? 'glass-button glass-button-warning' : 'text-white/70 hover:text-white text-sm'"
++      data-testid="connect-signer-continue"
++      @click="leave"
++    >{{ continueLabel }}</button>
++  </div>
++</template>
++
++<script setup lang="ts">
++import { computed, ref } from 'vue'
++import { useI18n } from 'vue-i18n'
++import LinkSignerForm from '@/components/signer/LinkSignerForm.vue'
++import SignerEnrolProgress from '@/components/signer/SignerEnrolProgress.vue'
++import { signerApi, type EnrolFinish, type LinkedIdentity } from '@/api/signer-login'
++import { useSignerApproval } from '@/composables/useSignerApproval'
++
++/** `password` is the one just chosen. It is held in memory for this step only
++ *  and is never written anywhere; the parent clears it when `done` fires. */
++const props = defineProps<{ password: string }>()
++const emit = defineEmits<{ done: [] }>()
++const { t } = useI18n()
++
++const step = ref<'link' | 'enrol'>('link')
++const identityId = ref('')
++
++const approval = useSignerApproval<EnrolFinish>(
++  () => signerApi.enrolStart(identityId.value, props.password),
++  (attemptId, signal) => signerApi.enrolFinish(attemptId, signal),
++  'enrolled',
++  { enrol: true },
++)
++
++const enrolledNow = computed(() => approval.phase.value === 'approved' || approval.late.value?.ok === true)
++const continueLabel = computed(() => {
++  if (enrolledNow.value) return t('signer.enrol.continue')
++  if (approval.waitingInBackground.value) return t('signer.enrol.continueAnyway')
++  return t('signer.enrol.skip')
++})
++
++function onLinked(identity: LinkedIdentity) {
++  identityId.value = identity.id
++  step.value = 'enrol'
++  void approval.run()
++}
++
++/** Skipping while the signer is being asked first says so, and keeps watching;
++ *  the next press leaves. */
++function leave() {
++  if (approval.phase.value === 'waiting' || approval.phase.value === 'starting') {
++    approval.cancel()
++    return
++  }
++  approval.stop()
++  emit('done')
++}
++</script>
+diff --git a/neode-ui/src/components/signer/LinkSignerForm.vue b/neode-ui/src/components/signer/LinkSignerForm.vue
+new file mode 100644
+index 0000000..54e2605
+--- /dev/null
++++ b/neode-ui/src/components/signer/LinkSignerForm.vue
+@@ -0,0 +1,101 @@
++<template>
++  <form class="space-y-4" data-testid="link-signer-form" @submit.prevent="link">
++    <p class="text-sm text-white/70">{{ t('signer.link.intro') }}</p>
++    <div>
++      <label for="link-signer-uri" class="block text-sm font-medium text-white/80 mb-2">{{ t('signer.link.uriLabel') }}</label>
++      <div class="relative">
++        <input
++          id="link-signer-uri"
++          v-model="bunkerUri"
++          :type="reveal ? 'text' : 'password'"
++          name="signer-link"
++          autocomplete="off"
++          autocapitalize="off"
++          spellcheck="false"
++          data-lpignore="true"
++          data-1p-ignore
++          data-form-type="other"
++          placeholder="bunker://…"
++          data-controller-no-submit
++          :disabled="busy"
++          class="w-full pl-3 pr-16 py-2 rounded-lg bg-white/10 text-white font-mono text-sm border border-white/20 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
++        />
++        <button
++          type="button"
++          class="absolute inset-y-0 right-0 px-3 text-xs text-white/70 hover:text-white"
++          data-testid="link-signer-reveal"
++          :aria-pressed="reveal"
++          :aria-label="reveal ? t('signer.link.hide') : t('signer.link.show')"
++          @click="reveal = !reveal"
++        >{{ reveal ? t('signer.link.hide') : t('signer.link.show') }}</button>
++      </div>
++    </div>
++    <div>
++      <label for="link-signer-name" class="block text-sm font-medium text-white/80 mb-2">{{ t('signer.link.nameLabel') }}</label>
++      <input
++        id="link-signer-name"
++        v-model="name"
++        type="text"
++        maxlength="100"
++        autocomplete="off"
++        data-controller-no-submit
++        :disabled="busy"
++        class="w-full px-3 py-2 rounded-lg bg-white/10 text-white border border-white/20 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
++      />
++    </div>
++    <p v-if="busy" class="text-sm text-orange-200" role="status" data-testid="link-signer-waiting">{{ t('signer.link.waiting') }}</p>
++    <p v-if="error" class="text-sm text-red-400" role="alert">{{ error }}</p>
++    <div class="flex gap-3">
++      <button
++        type="submit"
++        :disabled="busy || !canSubmit"
++        class="flex-1 px-4 py-2 rounded-lg glass-button glass-button-warning font-medium disabled:opacity-50 disabled:cursor-not-allowed"
++      >{{ busy ? t('signer.link.linking') : (submitLabel || t('signer.link.submit')) }}</button>
++      <button
++        v-if="cancelLabel"
++        type="button"
++        :disabled="busy"
++        class="px-4 py-2 rounded-lg glass-button font-medium disabled:opacity-50"
++        @click="emit('cancel')"
++      >{{ cancelLabel }}</button>
++    </div>
++  </form>
++</template>
++
++<script setup lang="ts">
++import { computed, ref } from 'vue'
++import { useI18n } from 'vue-i18n'
++import { signerApi, type LinkedIdentity } from '@/api/signer-login'
++
++withDefaults(defineProps<{ submitLabel?: string; cancelLabel?: string }>(), {
++  submitLabel: '',
++  cancelLabel: '',
++})
++const emit = defineEmits<{ linked: [identity: LinkedIdentity]; cancel: [] }>()
++const { t } = useI18n()
++
++const bunkerUri = ref('')
++const name = ref(t('signer.link.defaultName'))
++const reveal = ref(false)
++const busy = ref(false)
++const error = ref('')
++
++const canSubmit = computed(() => bunkerUri.value.trim().startsWith('bunker://') && name.value.trim().length > 0)
++
++async function link() {
++  if (busy.value || !canSubmit.value) return
++  busy.value = true
++  error.value = ''
++  try {
++    const identity = await signerApi.linkBunker(bunkerUri.value.trim(), name.value.trim())
++    bunkerUri.value = ''
++    reveal.value = false
++    emit('linked', identity)
++  } catch (err) {
++    const msg = err instanceof Error ? err.message : ''
++    error.value = /timeout/i.test(msg) ? t('signer.link.timeout') : msg || t('signer.link.failed')
++  } finally {
++    busy.value = false
++  }
++}
++</script>
+diff --git a/neode-ui/src/components/signer/SignerCodePrompt.vue b/neode-ui/src/components/signer/SignerCodePrompt.vue
+new file mode 100644
+index 0000000..bb2b0b9
+--- /dev/null
++++ b/neode-ui/src/components/signer/SignerCodePrompt.vue
+@@ -0,0 +1,20 @@
++<template>
++  <div class="text-center" role="status" aria-live="polite" data-testid="signer-code-prompt">
++    <p class="text-base text-white/90 mb-3">{{ t('signer.code.check') }}</p>
++    <p
++      class="text-5xl font-mono font-semibold tracking-[0.3em] text-orange-300 mb-4 select-all"
++      data-testid="signer-code"
++      :aria-label="t('signer.code.aria', { digits: code.split('').join(' ') })"
++    >{{ code }}</p>
++    <p class="text-base text-white/90 mb-3 -mt-2">{{ t('signer.code.then') }}</p>
++    <p class="text-sm text-white/80 mb-2">{{ t('signer.code.minute') }}</p>
++    <p class="text-sm font-medium text-orange-200">{{ t('signer.code.deny') }}</p>
++  </div>
++</template>
++
++<script setup lang="ts">
++import { useI18n } from 'vue-i18n'
++
++defineProps<{ code: string }>()
++const { t } = useI18n()
++</script>
+diff --git a/neode-ui/src/components/signer/SignerEnrolProgress.vue b/neode-ui/src/components/signer/SignerEnrolProgress.vue
+new file mode 100644
+index 0000000..00923dd
+--- /dev/null
++++ b/neode-ui/src/components/signer/SignerEnrolProgress.vue
+@@ -0,0 +1,50 @@
++<template>
++  <div data-testid="signer-enrol-progress">
++    <div v-if="approval.phase.value === 'starting'" class="text-center text-sm text-white/70" role="status">
++      {{ t('signer.enrol.asking') }}
++    </div>
++    <SignerCodePrompt v-else-if="approval.phase.value === 'waiting'" :code="approval.code.value" />
++
++    <!-- Cancelled, but the node may still be asking the signer -->
++    <div v-if="approval.waitingInBackground.value" class="text-center space-y-1" role="status" data-testid="signer-still-asking">
++      <p class="text-sm font-medium text-orange-200">{{ t('signer.enrol.cancelled') }}</p>
++      <p class="text-sm text-white/70">{{ t('signer.enrol.cancelledWatching') }}</p>
++    </div>
++
++    <div v-else-if="enrolled" class="space-y-3 text-center">
++      <p class="text-sm text-green-300" role="status" data-testid="signer-enrolled">{{ t('signer.enrol.done') }}</p>
++      <p
++        v-if="enrolled.quick_approval"
++        class="text-sm text-orange-200 bg-orange-500/10 border border-orange-400/30 rounded-lg p-3 text-left"
++        role="alert"
++        data-testid="quick-approval-warning"
++      >{{ t('signer.enrol.quick') }}</p>
++    </div>
++    <div v-else-if="approval.phase.value === 'failed'" class="space-y-3 text-center">
++      <p class="text-sm text-red-400" role="alert">{{ approval.error.value }}</p>
++      <button type="button" class="px-4 py-2 rounded-lg glass-button font-medium" @click="approval.run()">{{ t('signer.enrol.tryAgain') }}</button>
++    </div>
++    <p v-else-if="lateError" class="text-sm text-red-400 text-center" role="alert" data-testid="signer-late-error">{{ lateError }}</p>
++  </div>
++</template>
++
++<script setup lang="ts">
++import { computed } from 'vue'
++import { useI18n } from 'vue-i18n'
++import SignerCodePrompt from '@/components/signer/SignerCodePrompt.vue'
++import type { useSignerApproval } from '@/composables/useSignerApproval'
++import type { EnrolFinish, EnrolledSigner } from '@/api/signer-login'
++
++const props = defineProps<{ approval: ReturnType<typeof useSignerApproval<EnrolFinish>> }>()
++const { t } = useI18n()
++
++/** The enrolment, whether it finished in front of the owner or after a cancel. */
++const enrolled = computed<EnrolledSigner | null>(() => {
++  const r = props.approval.result.value ?? (props.approval.late.value?.ok ? props.approval.late.value.result : null)
++  return r && r.status === 'enrolled' ? r : null
++})
++const lateError = computed(() => {
++  const l = props.approval.late.value
++  return l && !l.ok ? l.message : ''
++})
++</script>
+diff --git a/neode-ui/src/components/signer/SignerLoginPanel.vue b/neode-ui/src/components/signer/SignerLoginPanel.vue
+new file mode 100644
+index 0000000..d9f81e2
+--- /dev/null
++++ b/neode-ui/src/components/signer/SignerLoginPanel.vue
+@@ -0,0 +1,61 @@
++<template>
++  <div data-testid="signer-login-panel">
++    <SignerCodePrompt v-if="approval.phase.value === 'waiting'" :code="approval.code.value" />
++
++    <!-- Cancelled, but the node may still be asking the signer -->
++    <div v-if="approval.waitingInBackground.value" class="text-center space-y-1 mb-3" role="status" data-testid="signer-still-asking">
++      <p class="text-sm font-medium text-orange-200">{{ t('signer.login.cancelled') }}</p>
++      <p class="text-sm text-white/75">{{ t('signer.login.cancelledWatching') }}</p>
++    </div>
++
++    <!-- An approval that arrived after the owner cancelled: the page stays put -->
++    <div v-if="lateApproved" class="space-y-3 text-center mb-3" role="alert" data-testid="signer-late-approved">
++      <p class="text-sm text-orange-200">{{ t('signer.login.lateApproved') }}</p>
++      <button
++        class="w-full glass-button glass-button-warning px-6 py-3 rounded-lg font-medium"
++        data-testid="signer-late-continue"
++        @click="emit('continue')"
++      >{{ t('signer.login.continueDashboard') }}</button>
++      <button
++        class="w-full text-white/80 text-sm hover:text-white transition-colors py-2"
++        data-testid="signer-late-signout"
++        @click="emit('signout')"
++      >{{ t('signer.login.signOut') }}</button>
++    </div>
++
++    <button
++      v-if="approval.phase.value === 'waiting' || approval.phase.value === 'approved'"
++      :disabled="approval.phase.value === 'approved'"
++      class="w-full text-white/75 text-sm hover:text-white transition-colors py-2 mt-2"
++      data-testid="signer-cancel"
++      @click="emit('cancel')"
++    >{{ t('common.cancel') }}</button>
++    <button
++      v-else-if="!lateApproved"
++      :disabled="disabled || approval.phase.value === 'starting' || approval.waitingInBackground.value"
++      class="w-full glass-button px-6 py-3 rounded-lg font-medium transition-all hover:bg-black/70 hover:border-white/30 disabled:opacity-50 disabled:cursor-not-allowed"
++      :class="{ 'glass-button-warning': warning }"
++      data-testid="signer-login-button"
++      @click="emit('start')"
++    >{{ approval.phase.value === 'starting' ? t('signer.login.asking') : label }}</button>
++    <p v-if="showOr" class="mt-3 text-center text-sm text-white/65">{{ t('signer.login.orPassword') }}</p>
++  </div>
++</template>
++
++<script setup lang="ts">
++import { useI18n } from 'vue-i18n'
++import SignerCodePrompt from '@/components/signer/SignerCodePrompt.vue'
++import type { useSignerApproval } from '@/composables/useSignerApproval'
++import type { LoginFinish } from '@/api/signer-login'
++
++defineProps<{
++  approval: ReturnType<typeof useSignerApproval<LoginFinish>>
++  label: string
++  disabled?: boolean
++  warning?: boolean
++  showOr?: boolean
++  lateApproved?: boolean
++}>()
++const emit = defineEmits<{ start: []; cancel: []; continue: []; signout: [] }>()
++const { t } = useI18n()
++</script>
+diff --git a/neode-ui/src/components/signer/__tests__/signerComponents.test.ts b/neode-ui/src/components/signer/__tests__/signerComponents.test.ts
+new file mode 100644
+index 0000000..3a1b5bf
+--- /dev/null
++++ b/neode-ui/src/components/signer/__tests__/signerComponents.test.ts
+@@ -0,0 +1,230 @@
++import { flushPromises, mount } from '@vue/test-utils'
++import { beforeEach, describe, expect, it, vi } from 'vitest'
++
++vi.mock('@/api/signer-login', () => ({
++  signerApi: {
++    linkBunker: vi.fn(),
++    enrolStart: vi.fn(),
++    enrolFinish: vi.fn(),
++  },
++}))
++
++import i18n from '@/i18n'
++import { signerApi } from '@/api/signer-login'
++import SignerCodePrompt from '../SignerCodePrompt.vue'
++import LinkSignerForm from '../LinkSignerForm.vue'
++import ConnectSignerStep from '../ConnectSignerStep.vue'
++
++const api = vi.mocked(signerApi)
++const global = { plugins: [i18n] }
++const enrolled = (quick: boolean) => ({
++  status: 'enrolled' as const, identity_id: 'linked-1', pubkey: 'ab', added_at: 'now', approval_ms: quick ? 200 : 4000, quick_approval: quick,
++})
++
++function mountStep(password = 'hunter2hunter2') {
++  return mount(ConnectSignerStep, { props: { password }, global })
++}
++
++async function link(w: ReturnType<typeof mountStep>) {
++  await w.find('#link-signer-uri').setValue('bunker://abc')
++  await w.find('form').trigger('submit')
++  await flushPromises()
++}
++
++describe('SignerCodePrompt', () => {
++  it('tells the owner to check the code and to deny anything they did not start', () => {
++    const text = mount(SignerCodePrompt, { props: { code: '4821' }, global }).text()
++    expect(text).toContain('Check your signer shows')
++    expect(text).toContain('4821')
++    expect(text).toContain('then approve')
++    expect(text).toContain('about a minute')
++    expect(text).toMatch(/did not start this, deny it/)
++  })
++})
++
++describe('LinkSignerForm', () => {
++  beforeEach(() => vi.clearAllMocks())
++
++  it('explains the two approvals and defaults the name to "My signer"', () => {
++    const w = mount(LinkSignerForm, { global })
++    expect(w.text()).toContain('approve twice')
++    expect((w.find('#link-signer-name').element as HTMLInputElement).value).toBe('My signer')
++  })
++
++  it('masks the signer link by default and keeps password managers away', () => {
++    const w = mount(LinkSignerForm, { global })
++    const input = w.find('#link-signer-uri')
++    expect(input.attributes('type')).toBe('password')
++    expect(input.attributes('autocomplete')).toBe('off')
++    expect(input.attributes('spellcheck')).toBe('false')
++    expect(input.attributes('name')).toBe('signer-link')
++    expect(w.find('[data-testid="link-signer-reveal"]').text()).toBe('Show')
++  })
++
++  it('shows and hides the link with the toggle', async () => {
++    const w = mount(LinkSignerForm, { global })
++    await w.find('#link-signer-uri').setValue('bunker://abc')
++    await w.find('[data-testid="link-signer-reveal"]').trigger('click')
++    expect(w.find('#link-signer-uri').attributes('type')).toBe('text')
++    expect(w.find('[data-testid="link-signer-reveal"]').text()).toBe('Hide')
++    expect(w.find('[data-testid="link-signer-reveal"]').attributes('aria-label')).toBe('Hide')
++    await w.find('[data-testid="link-signer-reveal"]').trigger('click')
++    expect(w.find('#link-signer-uri').attributes('type')).toBe('password')
++  })
++
++  it('still links a pasted link while it is masked, then clears and re-masks the field', async () => {
++    api.linkBunker.mockResolvedValue({ id: 'linked-1', name: 'My signer' })
++    const w = mount(LinkSignerForm, { global })
++    const input = w.find('#link-signer-uri')
++    await input.setValue('bunker://secret?relay=wss://r&secret=abc')
++    await w.find('[data-testid="link-signer-reveal"]').trigger('click')
++    await w.find('form').trigger('submit')
++    await flushPromises()
++    expect(api.linkBunker).toHaveBeenCalledWith('bunker://secret?relay=wss://r&secret=abc', 'My signer')
++    expect((input.element as HTMLInputElement).value).toBe('')
++    expect(input.attributes('type')).toBe('password')
++  })
++
++  it('only submits a bunker:// link', async () => {
++    const w = mount(LinkSignerForm, { global })
++    await w.find('#link-signer-uri').setValue('https://example.com')
++    expect(w.find('button[type="submit"]').attributes('disabled')).toBeDefined()
++    await w.find('#link-signer-uri').setValue('bunker://abc?relay=wss://r')
++    expect(w.find('button[type="submit"]').attributes('disabled')).toBeUndefined()
++  })
++
++  it('links, shows the waiting state, and emits the identity', async () => {
++    let finish!: (v: { id: string; name: string }) => void
++    api.linkBunker.mockReturnValue(new Promise(r => { finish = r }))
++    const w = mount(LinkSignerForm, { global })
++    await w.find('#link-signer-uri').setValue('bunker://abc')
++    await w.find('form').trigger('submit')
++    expect(api.linkBunker).toHaveBeenCalledWith('bunker://abc', 'My signer')
++    expect(w.find('[data-testid="link-signer-waiting"]').exists()).toBe(true)
++    finish({ id: 'linked-1', name: 'My signer' })
++    await flushPromises()
++    expect(w.emitted('linked')?.[0]).toEqual([{ id: 'linked-1', name: 'My signer' }])
++    expect(w.find('[data-testid="link-signer-waiting"]').exists()).toBe(false)
++  })
++
++  it('shows a clear message when the signer does not answer', async () => {
++    api.linkBunker.mockRejectedValue(new Error('Request timeout'))
++    const w = mount(LinkSignerForm, { global })
++    await w.find('#link-signer-uri').setValue('bunker://abc')
++    await w.find('form').trigger('submit')
++    await flushPromises()
++    expect(w.text()).toContain('did not answer in time')
++    expect(w.emitted('linked')).toBeUndefined()
++  })
++})
++
++describe('ConnectSignerStep', () => {
++  beforeEach(() => vi.clearAllMocks())
++
++  it('always offers to skip, and skipping emits done', async () => {
++    const w = mountStep()
++    const skip = w.find('[data-testid="connect-signer-continue"]')
++    expect(skip.text()).toBe('Skip for now')
++    await skip.trigger('click')
++    expect(w.emitted('done')).toHaveLength(1)
++  })
++
++  it('links, then enrols with the password and the linked identity', async () => {
++    api.linkBunker.mockResolvedValue({ id: 'linked-1', name: 'My signer' })
++    api.enrolStart.mockResolvedValue({ attempt_id: 'e1', code: '0042' })
++    api.enrolFinish.mockResolvedValue(enrolled(false))
++    const w = mountStep()
++    await link(w)
++
++    expect(api.enrolStart).toHaveBeenCalledWith('linked-1', 'hunter2hunter2')
++    expect(w.find('[data-testid="signer-enrolled"]').exists()).toBe(true)
++    expect(w.find('[data-testid="connect-signer-continue"]').text()).toBe('Continue')
++    expect(w.find('[data-testid="quick-approval-warning"]').exists()).toBe(false)
++  })
++
++  it('shows the code while the signer decides', async () => {
++    api.linkBunker.mockResolvedValue({ id: 'linked-1', name: 'My signer' })
++    api.enrolStart.mockResolvedValue({ attempt_id: 'e1', code: '0042' })
++    api.enrolFinish.mockReturnValue(new Promise(() => {}))
++    const w = mountStep('pw')
++    await link(w)
++    expect(w.find('[data-testid="signer-code"]').text()).toBe('0042')
++    expect(w.text()).toContain('deny it')
++    expect(w.find('[data-testid="connect-signer-continue"]').text()).toBe('Skip for now')
++  })
++
++  it('warns when the signer approved faster than a person could press', async () => {
++    api.linkBunker.mockResolvedValue({ id: 'linked-1', name: 'My signer' })
++    api.enrolStart.mockResolvedValue({ attempt_id: 'e1', code: '0042' })
++    api.enrolFinish.mockResolvedValue(enrolled(true))
++    const w = mountStep('pw')
++    await link(w)
++    expect(w.find('[data-testid="quick-approval-warning"]').text()).toBe(
++      'That came back faster than a person could press. This signer may approve logins automatically, which makes signer login only as strong as that signer.',
++    )
++  })
++
++  it('offers another go when enrolment fails, in friendly words, and still lets the owner skip', async () => {
++    api.linkBunker.mockResolvedValue({ id: 'linked-1', name: 'My signer' })
++    api.enrolStart.mockRejectedValue(new Error('linked signer is offline'))
++    const w = mountStep('pw')
++    await link(w)
++    expect(w.text()).toContain("Your signer is offline. Check it's connected, then try again.")
++    expect(w.find('[role="alert"]').text()).not.toMatch(/password/i)
++    expect(w.text()).not.toContain('linked signer is offline')
++    expect(w.text()).toContain('Try again')
++    expect(w.find('[data-testid="connect-signer-continue"]').text()).toBe('Skip for now')
++  })
++
++  it('words an enrolment that is already waiting without the login-busy warning', async () => {
++    api.linkBunker.mockResolvedValue({ id: 'linked-1', name: 'My signer' })
++    api.enrolStart.mockRejectedValue(new Error('linked signer is already waiting to approve an enrolment; approve or deny it on the signer first'))
++    const w = mountStep('pw')
++    await link(w)
++    expect(w.text()).toContain('Your signer is already handling a login or enrolment. Finish or deny that first.')
++    expect(w.text()).not.toContain("didn't come from this page")
++  })
++
++  describe('skipping while the signer is being asked', () => {
++    async function waiting() {
++      api.linkBunker.mockResolvedValue({ id: 'linked-1', name: 'My signer' })
++      api.enrolStart.mockResolvedValue({ attempt_id: 'e1', code: '0042' })
++      const polls: Array<(v: unknown) => void> = []
++      api.enrolFinish.mockImplementation(() => new Promise((resolve) => { polls.push(resolve) }) as never)
++      const w = mountStep('pw')
++      await link(w)
++      return { w, polls }
++    }
++
++    it('first says the signer may still be asking, and does not leave yet', async () => {
++      const { w } = await waiting()
++      await w.find('[data-testid="connect-signer-continue"]').trigger('click')
++      expect(w.emitted('done')).toBeUndefined()
++      expect(w.find('[data-testid="signer-code"]').exists()).toBe(false)
++      expect(w.find('[data-testid="signer-still-asking"]').text()).toContain('Your signer may still be asking. Deny it there.')
++      expect(w.find('[data-testid="connect-signer-continue"]').text()).toBe('Continue to the dashboard')
++    })
++
++    it('keeps polling and shows a late enrolment, with the quick-approval warning', async () => {
++      const { w, polls } = await waiting()
++      await w.find('[data-testid="connect-signer-continue"]').trigger('click')
++      polls[0]!({ status: 'pending' })
++      await flushPromises()
++      expect(polls).toHaveLength(2)
++      polls[1]!(enrolled(true))
++      await flushPromises()
++
++      expect(w.find('[data-testid="signer-enrolled"]').exists()).toBe(true)
++      expect(w.find('[data-testid="quick-approval-warning"]').exists()).toBe(true)
++      expect(w.find('[data-testid="signer-still-asking"]').exists()).toBe(false)
++      expect(w.find('[data-testid="connect-signer-continue"]').text()).toBe('Continue')
++    })
++
++    it('a second press leaves', async () => {
++      const { w } = await waiting()
++      await w.find('[data-testid="connect-signer-continue"]').trigger('click')
++      await w.find('[data-testid="connect-signer-continue"]').trigger('click')
++      expect(w.emitted('done')).toHaveLength(1)
++    })
++  })
++})
+diff --git a/neode-ui/src/composables/__tests__/useSignerApproval.test.ts b/neode-ui/src/composables/__tests__/useSignerApproval.test.ts
+new file mode 100644
+index 0000000..395ca33
+--- /dev/null
++++ b/neode-ui/src/composables/__tests__/useSignerApproval.test.ts
+@@ -0,0 +1,245 @@
++import { describe, expect, it, vi } from 'vitest'
++import { defineComponent, h } from 'vue'
++import { mount } from '@vue/test-utils'
++import i18n from '@/i18n'
++import { describeSignerError, signerErrorKey, useSignerApproval } from '../useSignerApproval'
++
++type Finish = { status: 'pending' } | { status: 'approved' }
++const t = (key: string) => i18n.global.t(key)
++
++function setup(
++  start: () => Promise<{ attempt_id: string; code: string }>,
++  finish: (id: string, s: AbortSignal) => Promise<Finish>,
++  opts: { totp?: () => boolean } = {},
++) {
++  let api!: ReturnType<typeof useSignerApproval<Finish>>
++  const wrapper = mount(defineComponent({
++    setup() {
++      api = useSignerApproval<Finish>(start, finish, 'approved', opts)
++      return () => h('div')
++    },
++  }), { global: { plugins: [i18n] } })
++  return { api, wrapper }
++}
++
++const attempt = () => Promise.resolve({ attempt_id: 'a1', code: '4821' })
++
++describe('useSignerApproval', () => {
++  it('shows the code, polls while pending, then reports approval', async () => {
++    const seen: Array<{ phase: string; code: string }> = []
++    let api!: ReturnType<typeof useSignerApproval<Finish>>
++    const finish = vi.fn(async (): Promise<Finish> => {
++      seen.push({ phase: api.phase.value, code: api.code.value })
++      return seen.length < 3 ? { status: 'pending' } : { status: 'approved' }
++    })
++    api = setup(attempt, finish).api
++
++    const res = await api.run()
++
++    // The code is on screen from the first poll onwards.
++    expect(seen.every(s => s.phase === 'waiting' && s.code === '4821')).toBe(true)
++    expect(res).toEqual({ status: 'approved' })
++    expect(api.phase.value).toBe('approved')
++    expect(finish).toHaveBeenCalledTimes(3)
++  })
++
++  it('fails with friendly copy when the signer denies', async () => {
++    const { api } = setup(attempt, () => Promise.reject(new Error('linked signer denied the login')))
++    expect(await api.run()).toBeNull()
++    expect(api.phase.value).toBe('failed')
++    expect(api.error.value).toBe('Your signer denied the login.')
++    expect(api.rawError.value).toBe('linked signer denied the login')
++    expect(api.code.value).toBe('')
++  })
++
++  it('fails when the attempt cannot start (offline signer)', async () => {
++    const { api } = setup(() => Promise.reject(new Error('linked signer is offline')), vi.fn())
++    await api.run()
++    expect(api.phase.value).toBe('failed')
++    expect(api.error.value).toBe("Your signer is offline. Check it's connected, or use your password.")
++  })
++
++  it('refuses an unexpected status rather than polling forever', async () => {
++    const finish = vi.fn().mockResolvedValue({ status: 'weird' })
++    const { api } = setup(attempt, finish)
++    await api.run()
++    expect(api.phase.value).toBe('failed')
++    expect(finish).toHaveBeenCalledTimes(1)
++  })
++
++  it('stops polling when stopped or unmounted', async () => {
++    let calls = 0
++    const finish = (_id: string, signal: AbortSignal) => new Promise<Finish>((resolve) => {
++      calls += 1
++      signal.addEventListener('abort', () => resolve({ status: 'pending' }))
++    })
++    const { api, wrapper } = setup(attempt, finish)
++    const run = api.run()
++    await vi.waitFor(() => expect(calls).toBe(1))
++    wrapper.unmount()
++    expect(await run).toBeNull()
++    expect(calls).toBe(1)
++  })
++
++  describe('cancelling while the signer is being asked', () => {
++    function gated() {
++      const polls: Array<(v: Finish | Error) => void> = []
++      const finish = (_id: string, signal: AbortSignal) => new Promise<Finish>((resolve, reject) => {
++        polls.push(v => (v instanceof Error ? reject(v) : resolve(v)))
++        signal.addEventListener('abort', () => resolve({ status: 'pending' }))
++      })
++      return { polls, finish }
++    }
++
++    it('hides the prompt but keeps watching, and reports a late approval', async () => {
++      const { polls, finish } = gated()
++      const { api } = setup(attempt, finish)
++      const run = api.run()
++      await vi.waitFor(() => expect(polls).toHaveLength(1))
++
++      api.cancel()
++      expect(api.phase.value).toBe('idle')
++      expect(api.code.value).toBe('')
++      expect(api.waitingInBackground.value).toBe(true)
++
++      polls[0]!({ status: 'pending' })
++      await vi.waitFor(() => expect(polls).toHaveLength(2))
++      expect(api.waitingInBackground.value).toBe(true)
++
++      polls[1]!({ status: 'approved' })
++      expect(await run).toBeNull()
++      expect(api.waitingInBackground.value).toBe(false)
++      expect(api.late.value).toEqual({ ok: true, result: { status: 'approved' } })
++      expect(api.phase.value).toBe('idle')
++    })
++
++    it('reports how a cancelled attempt ended when it failed', async () => {
++      const { polls, finish } = gated()
++      const { api } = setup(attempt, finish)
++      const run = api.run()
++      await vi.waitFor(() => expect(polls).toHaveLength(1))
++      api.cancel()
++      polls[0]!(new Error('linked signer did not approve the login in time'))
++      await run
++      expect(api.late.value).toEqual({ ok: false, message: "Your signer didn't approve in time." })
++      expect(api.error.value).toBe('')
++      expect(api.waitingInBackground.value).toBe(false)
++    })
++
++    it('stop() really ends the watching', async () => {
++      const { polls, finish } = gated()
++      const { api } = setup(attempt, finish)
++      const run = api.run()
++      await vi.waitFor(() => expect(polls).toHaveLength(1))
++      api.cancel()
++      api.stop()
++      expect(await run).toBeNull()
++      expect(api.waitingInBackground.value).toBe(false)
++      expect(api.late.value).toBeNull()
++    })
++
++    it('still watches when cancelled before the node has answered the start', async () => {
++      const polls: Array<(v: Finish) => void> = []
++      let release!: () => void
++      const start = () => new Promise<{ attempt_id: string; code: string }>((r) => { release = () => r({ attempt_id: 'a1', code: '1111' }) })
++      const finish = () => new Promise<Finish>((resolve) => { polls.push(resolve) })
++      const { api } = setup(start, finish)
++      const run = api.run()
++      api.cancel()
++      release()
++      await vi.waitFor(() => expect(polls).toHaveLength(1))
++      expect(api.code.value).toBe('')
++      polls[0]!({ status: 'approved' })
++      await run
++      expect(api.late.value?.ok).toBe(true)
++    })
++  })
++})
++
++describe('signer error wording', () => {
++  // The node's own fixed texts (signer_login.rs), each with the copy it must show.
++  const cases: Array<[string, string, string]> = [
++    ['NOT_ENABLED', 'linked signer login is not enabled on this node', 'notEnabled'],
++    ['ALREADY_WAITING', 'linked signer login is busy: another login is waiting for approval. If your signer is asking right now, that request did not come from this page: deny it', 'busyLogin'],
++    ['PAUSED', 'linked signer login is paused after recent attempts; log in with the password or try again in a few minutes', 'paused'],
++    ['EXPIRED', 'linked signer did not approve the login in time', 'timeout'],
++    ['GONE', 'Invalid signer login attempt: it is unknown, used or expired', 'gone'],
++    ['OTHER_BROWSER', 'Invalid signer login attempt: it was started in another browser', 'otherBrowser'],
++    ['PUBLIC_OFFLINE', 'linked signer is offline', 'offline'],
++    ['PUBLIC_DENIED', 'linked signer denied the login', 'denied'],
++    ['PUBLIC_TIMEOUT', 'linked signer did not answer in time', 'timeout'],
++    ['PUBLIC_REFUSED', 'linked signer login was refused: the signed reply did not check out', 'refused'],
++    ['PUBLIC_FAILED', 'linked signer login failed', 'failed'],
++    ['ENROL_BUSY_LOGIN', 'linked signer is busy: a login is waiting for approval on it. If you did not start one, deny it on the signer, then try again', 'enrolBusyLogin'],
++    ['ENROL_BUSY', 'linked signer is already waiting to approve an enrolment; approve or deny it on the signer first', 'enrolBusy'],
++    ['ENROL_EXPIRED', 'linked signer did not approve the enrolment in time', 'enrolTimeout'],
++  ]
++
++  it.each(cases)('%s gets its own sentence-case copy', (_name, text, key) => {
++    expect(signerErrorKey(text)).toBe(key)
++    const shown = describeSignerError(new Error(text), t)
++    expect(shown).toBe(t(`signer.errors.${key}`))
++    expect(shown).not.toBe(text)
++    expect(shown.charAt(0)).toBe(shown.charAt(0).toUpperCase())
++  })
++
++  it('keeps the enrolment-busy copy away from the login-busy warning', () => {
++    const enrol = describeSignerError(new Error(cases.find(c => c[0] === 'ENROL_BUSY')![1]), t)
++    const enrolLogin = describeSignerError(new Error(cases.find(c => c[0] === 'ENROL_BUSY_LOGIN')![1]), t)
++    expect(enrol).toBe('Your signer is already handling a login or enrolment. Finish or deny that first.')
++    expect(enrol).not.toContain("didn't come from this page")
++    expect(enrolLogin).not.toContain("didn't come from this page")
++    expect(describeSignerError(new Error(cases[1]![1]), t)).toBe(
++      "A login is already waiting on your signer, and it didn't come from this page. If your signer is asking right now, deny it.",
++    )
++  })
++
++  it('points a paused 2FA login to the authenticator code, not the password', () => {
++    const paused = cases[2]![1]
++    expect(describeSignerError(new Error(paused), t, { totp: true })).toMatch(/authenticator code/)
++    expect(describeSignerError(new Error(paused), t)).toMatch(/Use your password/)
++  })
++
++  it('maps transport failures, and passes unknown text through', () => {
++    expect(describeSignerError(new Error('HTTP 429: Too Many Requests'), t)).toMatch(/Too many attempts/)
++    expect(describeSignerError(new Error('Request timeout'), t)).toMatch(/could not be reached/)
++    expect(describeSignerError(new Error('Password Incorrect'), t)).toBe('Password Incorrect')
++    expect(describeSignerError(new Error(''), t)).toBe(t('signer.errors.fallback'))
++  })
++})
++
++describe('enrolment error wording', () => {
++  const enrol = (text: string) => describeSignerError(new Error(text), t, { enrol: true })
++
++  it('maps the signer\'s own error texts to enrolment copy', () => {
++    expect(enrol('linked signer denied the request')).toBe('Your signer denied the enrolment.')
++    expect(enrol('linked signer did not answer within 60 s')).toBe("Your signer didn't approve the enrolment in time.")
++    expect(enrol('linked signer sent a bad response: nonsense')).toBe("Your signer's reply didn't check out. Check the signer, then try again.")
++  })
++
++  it('does not tell the owner to use their password when enrolling', () => {
++    const offline = enrol('linked signer is offline (no reply from wss://relay.example)')
++    expect(offline).toBe("Your signer is offline. Check it's connected, then try again.")
++    expect(offline).not.toMatch(/password/i)
++    expect(describeSignerError(new Error('linked signer is offline'), t)).toMatch(/use your password/)
++  })
++
++  it('never leaks the relay list', () => {
++    expect(enrol('linked signer is offline (no reply from wss://private.example)')).not.toContain('wss://')
++  })
++
++  it('is used by the enrolment approval', async () => {
++    let api!: ReturnType<typeof useSignerApproval<Finish>>
++    mount(defineComponent({
++      setup() {
++        api = useSignerApproval<Finish>(
++          () => Promise.reject(new Error('linked signer is offline (no reply from wss://x)')),
++          vi.fn(), 'approved', { enrol: true },
++        )
++        return () => h('div')
++      },
++    }), { global: { plugins: [i18n] } })
++    await api.run()
++    expect(api.error.value).toBe("Your signer is offline. Check it's connected, then try again.")
++  })
++})
+diff --git a/neode-ui/src/composables/loginRecord.ts b/neode-ui/src/composables/loginRecord.ts
+new file mode 100644
+index 0000000..c7aab38
+--- /dev/null
++++ b/neode-ui/src/composables/loginRecord.ts
+@@ -0,0 +1,81 @@
++// What this browser remembers about its own logins, so the post-login notice can
++// tell the owner's own signer login from someone else's. Timestamps and a
++// dismissal marker only: no secrets. Kept in localStorage (not per tab), so a
++// new tab reads the same record.
++
++const KEY = 'archipelago:signer-login:v1'
++const FRESH_KEY = 'archipelago:signer-login:fresh'
++/** How many of this browser's own signer logins to remember. */
++const MAX_STARTS = 20
++
++interface Record {
++  /** Unix seconds of this browser's latest login, and of the one before it. */
++  last: number | null
++  prev: number | null
++  /** When `start` returned for each signer login this browser completed (Unix seconds). */
++  starts: number[]
++  dismissed: string | null
++}
++
++const EMPTY: Record = { last: null, prev: null, starts: [], dismissed: null }
++
++function isNum(v: unknown): v is number {
++  return typeof v === 'number' && Number.isFinite(v)
++}
++
++function read(): Record {
++  try {
++    const raw = localStorage.getItem(KEY)
++    if (!raw) return { ...EMPTY, starts: [] }
++    const p = JSON.parse(raw) as Partial<Record>
++    return {
++      last: isNum(p.last) ? p.last : null,
++      prev: isNum(p.prev) ? p.prev : null,
++      starts: Array.isArray(p.starts) ? p.starts.filter(isNum).slice(-MAX_STARTS) : [],
++      dismissed: typeof p.dismissed === 'string' ? p.dismissed : null,
++    }
++  } catch {
++    return { ...EMPTY, starts: [] }
++  }
++}
++
++function write(rec: Record): void {
++  try { localStorage.setItem(KEY, JSON.stringify(rec)) } catch { /* storage unavailable: the notice falls back to the last day */ }
++}
++
++/** Call when a login completes. For a signer login, `startedAt` is when `start`
++ *  returned (the node stamps the attempt when it starts, not when it is approved
++ *  or the owner clicks Continue). */
++export function recordLogin(
++  viaSigner: boolean,
++  nowSeconds: number = Math.floor(Date.now() / 1000),
++  startedAt?: number,
++): void {
++  const rec = read()
++  rec.prev = rec.last
++  rec.last = nowSeconds
++  if (viaSigner && startedAt !== undefined) rec.starts = [...rec.starts, startedAt].slice(-MAX_STARTS)
++  write(rec)
++  try { sessionStorage.setItem(FRESH_KEY, String(nowSeconds)) } catch { /* ignore */ }
++}
++
++/** `sinceLogin` is where to start counting attempts. In the tab that just logged
++ *  in it is the login before this one; in any other tab it is this
++ *  browser's last login. */
++export function readLoginContext(): { sinceLogin: number | null; ownSignerStarts: number[] } {
++  const rec = read()
++  let fresh: string | null = null
++  try { fresh = sessionStorage.getItem(FRESH_KEY) } catch { /* ignore */ }
++  const justLoggedIn = rec.last !== null && fresh === String(rec.last)
++  return { sinceLogin: justLoggedIn ? rec.prev : rec.last, ownSignerStarts: rec.starts }
++}
++
++export function readDismissed(): string | null {
++  return read().dismissed
++}
++
++export function writeDismissed(key: string): void {
++  const rec = read()
++  rec.dismissed = key
++  write(rec)
++}
+diff --git a/neode-ui/src/composables/useSignerApproval.ts b/neode-ui/src/composables/useSignerApproval.ts
+new file mode 100644
+index 0000000..7109bcb
+--- /dev/null
++++ b/neode-ui/src/composables/useSignerApproval.ts
+@@ -0,0 +1,181 @@
++// Drives one "approve on your signer" attempt: start it, show the code, poll
++// until the signer answers. The same flow serves login and enrolment.
++//
++// Cancelling while the signer is being asked does not end the attempt on the
++// node: the prompt may still be on the device, and an enrolment is saved the
++// moment the owner presses approve. So `cancel` hides the prompt but keeps
++// polling quietly until the attempt settles; the outcome lands in `late`.
++
++import { onBeforeUnmount, ref } from 'vue'
++import { useI18n } from 'vue-i18n'
++import type { SignerAttempt } from '@/api/signer-login'
++
++export type ApprovalPhase = 'idle' | 'starting' | 'waiting' | 'approved' | 'failed'
++
++export type LateOutcome<F> = { ok: true; result: F } | { ok: false; message: string }
++
++/** The node gives up on an attempt after two minutes. */
++const BACKGROUND_LIMIT_MS = 130_000
++
++/** i18n key (under `signer.errors`) for each fixed message the node sends,
++ *  or null for text we don't recognise, which is shown as it is. */
++export function signerErrorKey(raw: string, opts: { totp?: boolean; enrol?: boolean } = {}): string | null {
++  const m = raw.toLowerCase()
++  if (m.includes('linked signer login is busy')) return 'busyLogin'
++  if (m.includes('already waiting to approve an enrolment')) return 'enrolBusy'
++  if (m.includes('linked signer is busy: a login is waiting')) return 'enrolBusyLogin'
++  if (m.includes('did not approve the enrolment in time')) return 'enrolTimeout'
++  if (m.includes('did not approve the login in time') || m.includes('did not answer in time')) return 'timeout'
++  // The enrolment path passes the signer's own error texts through (RemoteSignerError).
++  if (m.includes('linked signer did not answer within')) return 'enrolTimeout'
++  if (m.includes('linked signer denied the request')) return 'enrolDenied'
++  if (m.includes('linked signer sent a bad response')) return 'enrolRefused'
++  if (m.includes('linked signer is offline')) return opts.enrol ? 'enrolOffline' : 'offline'
++  if (m.includes('denied the login')) return 'denied'
++  if (m.includes('login was refused')) return 'refused'
++  if (m.includes('login is paused')) return opts.totp ? 'pausedTotp' : 'paused'
++  if (m.includes('login is not enabled')) return 'notEnabled'
++  if (m.includes('unknown, used or expired')) return 'gone'
++  if (m.includes('started in another browser')) return 'otherBrowser'
++  if (m === 'linked signer login failed') return 'failed'
++  if (/429|too many/.test(m)) return 'rateLimited'
++  if (/502|503|bad gateway|timeout|fetch|network/.test(m)) return 'network'
++  return null
++}
++
++export function describeSignerError(
++  err: unknown,
++  t: (key: string) => string,
++  opts: { totp?: boolean; enrol?: boolean } = {},
++): string {
++  const msg = err instanceof Error ? err.message : ''
++  const key = signerErrorKey(msg, opts)
++  if (key) return t(`signer.errors.${key}`)
++  return msg || t('signer.errors.fallback')
++}
++
++export function useSignerApproval<F extends { status: string }>(
++  start: () => Promise<SignerAttempt>,
++  finish: (attemptId: string, signal: AbortSignal) => Promise<F>,
++  doneStatus: F['status'],
++  /** `totp` says whether the node is asking for a 2FA code, which changes the pause advice. */
++  opts: {
++    totp?: () => boolean
++    /** An enrolment, whose errors carry the signer's own texts. */
++    enrol?: boolean
++    /** Called as soon as the node has started the attempt. */
++    onStarted?: () => void
++  } = {},
++) {
++  const { t } = useI18n()
++  const phase = ref<ApprovalPhase>('idle')
++  const code = ref('')
++  const error = ref('')
++  /** The node's own text for the failure, for logic that must not depend on wording. */
++  const rawError = ref('')
++  const result = ref<F | null>(null)
++  /** True once the code has been on screen. */
++  const reachedWaiting = ref(false)
++  /** Cancelled, but the node may still be asking the signer. */
++  const waitingInBackground = ref(false)
++  /** How an attempt that was cancelled in the end settled. */
++  const late = ref<LateOutcome<F> | null>(null)
++  let controller: AbortController | null = null
++  let silent = false
++
++  /** Leave for good: stop polling. Nothing more will be reported. */
++  function stop() {
++    controller?.abort()
++    controller = null
++    silent = false
++    waitingInBackground.value = false
++  }
++
++  /** Hide the prompt but keep watching until the attempt settles. */
++  function cancel() {
++    if (phase.value !== 'waiting' && phase.value !== 'starting') return
++    silent = true
++    waitingInBackground.value = true
++    phase.value = 'idle'
++    code.value = ''
++  }
++
++  async function run(): Promise<F | null> {
++    stop()
++    const mine = new AbortController()
++    controller = mine
++    phase.value = 'starting'
++    code.value = ''
++    error.value = ''
++    rawError.value = ''
++    result.value = null
++    late.value = null
++    reachedWaiting.value = false
++    const deadline = Date.now() + BACKGROUND_LIMIT_MS
++    const settle = (outcome: LateOutcome<F>) => {
++      late.value = outcome
++      waitingInBackground.value = false
++      silent = false
++    }
++    try {
++      const attempt = await start()
++      if (mine.signal.aborted) return null
++      opts.onStarted?.()
++      if (!silent) {
++        code.value = attempt.code
++        phase.value = 'waiting'
++        reachedWaiting.value = true
++      }
++      while (!mine.signal.aborted) {
++        if (silent && Date.now() > deadline) {
++          waitingInBackground.value = false
++          silent = false
++          return null
++        }
++        const res = await finish(attempt.attempt_id, mine.signal)
++        if (mine.signal.aborted) return null
++        if (res.status === doneStatus) {
++          if (silent) {
++            settle({ ok: true, result: res })
++            return null
++          }
++          result.value = res
++          phase.value = 'approved'
++          return res
++        }
++        if (res.status !== 'pending') throw new Error(t('signer.errors.unexpected'))
++      }
++      return null
++    } catch (err) {
++      if (mine.signal.aborted) return null
++      const message = describeSignerError(err, t, { totp: opts.totp?.(), enrol: opts.enrol })
++      if (silent) {
++        settle({ ok: false, message })
++        return null
++      }
++      rawError.value = err instanceof Error ? err.message : ''
++      error.value = message
++      phase.value = 'failed'
++      code.value = ''
++      return null
++    } finally {
++      if (controller === mine) controller = null
++    }
++  }
++
++  /** Forget everything, including any attempt still being watched. */
++  function reset() {
++    stop()
++    phase.value = 'idle'
++    code.value = ''
++    error.value = ''
++    rawError.value = ''
++    result.value = null
++    late.value = null
++    reachedWaiting.value = false
++  }
++
++  onBeforeUnmount(stop)
++
++  return { phase, code, error, rawError, result, reachedWaiting, waitingInBackground, late, run, cancel, stop, reset }
++}
+diff --git a/neode-ui/src/locales/en.json b/neode-ui/src/locales/en.json
+index 7cfa192..43877c6 100644
+--- a/neode-ui/src/locales/en.json
++++ b/neode-ui/src/locales/en.json
+@@ -819,5 +819,121 @@
+     "done": "Done",
+     "inProgress": "In Progress",
+     "start": "Start"
++  },
++  "signer": {
++    "login": {
++      "button": "Log in with your signer",
++      "asking": "Asking your signer…",
++      "orPassword": "or use your password",
++      "approveInstead": "Approve on your signer instead",
++      "cancelled": "Your signer may still be asking. Deny it there.",
++      "cancelledWatching": "This page will tell you if it was approved. You can try again once it clears.",
++      "lateApproved": "Your signer approved the login you cancelled, so this browser is now signed in. If that wasn't you, deny logins on your signer and change your password.",
++      "continueDashboard": "Continue to the dashboard",
++      "signOut": "Sign this browser out"
++    },
++    "code": {
++      "check": "Check your signer shows",
++      "then": "then approve.",
++      "minute": "Your signer has about a minute to approve.",
++      "deny": "If the code on your signer is different, or you did not start this, deny it.",
++      "aria": "Code {digits}"
++    },
++    "link": {
++      "intro": "On your signer, copy a bunker:// link and paste it here. Your signer will ask you to approve twice: once to connect, then once more to confirm the key. Your key stays on the signer.",
++      "show": "Show",
++    "hide": "Hide",
++    "uriLabel": "Signer link",
++      "nameLabel": "Name",
++      "defaultName": "My signer",
++      "waiting": "Waiting for your signer. Approve the connection on it, twice.",
++      "submit": "Link signer",
++      "linking": "Linking…",
++      "timeout": "Your signer did not answer in time. Check it is online, then try again.",
++      "failed": "Could not link the signer.",
++      "button": "Link a signer",
++      "linked": "Signer linked",
++      "badge": "Linked",
++      "badgeTitle": "The key for this identity lives on your signer"
++    },
++    "enrol": {
++      "asking": "Asking your signer…",
++      "done": "Done. You can now log in with this signer.",
++      "quick": "That came back faster than a person could press. This signer may approve logins automatically, which makes signer login only as strong as that signer.",
++      "tryAgain": "Try again",
++      "skip": "Skip for now",
++      "continue": "Continue",
++      "continueAnyway": "Continue to the dashboard",
++      "cancelled": "Your signer may still be asking. Deny it there.",
++      "cancelledWatching": "This page will show the result if you approve it."
++    },
++    "connect": {
++      "title": "Connect a signer",
++      "intro": "Optional. Log in by approving on a hardware signer instead of typing your password. Your password still works either way."
++    },
++    "settings": {
++      "title": "Login signers",
++      "desc": "Log in by approving on a hardware signer. Your password still works.",
++      "none": "None",
++      "add": "Add a login signer",
++      "addTitle": "Add a login signer",
++      "addDesc": "Pick a linked signer and enter your password. Your signer will ask you to approve once.",
++      "pick": "Signer",
++      "password": "Password",
++      "close": "Close",
++      "done": "Done",
++      "noLinked": "No signer is linked yet. Link one from the Identities page first.",
++      "remove": "Remove",
++      "removeTitle": "Remove login signer",
++      "removeDesc": "{name} will no longer log in to this node. The identity stays linked. Enter your password to confirm.",
++      "removing": "Removing…",
++      "removeFailed": "Could not remove the signer.",
++      "loadFailed": "Could not load login signers.",
++      "wrongPort": "Open the dashboard on its usual address, without a port number, to use a signer.",
++      "recent": "Recent attempts",
++      "pausedUntil": "Signer login is paused until {time}. Logging in with your password clears it."
++    },
++    "outcome": {
++      "pending": "Waiting for approval",
++      "approved": "Approved",
++      "denied": "Denied on the signer",
++      "expired": "Not answered",
++      "offline": "Signer offline",
++      "refused": "Reply refused",
++      "failed": "Failed",
++      "refused-busy": "Refused: another login was waiting",
++      "refused-budget": "Refused: too many attempts",
++      "unknownIp": "unknown address"
++    },
++    "notice": {
++      "approvedElsewhere": "Your signer approved a login from {ips}. If that was not you, someone else may have access: deny logins on your signer and change your password.",
++      "pending": "A login is waiting on your signer, started from {ip}. If your signer is asking, deny it.",
++      "notApproved": "One signer login attempt since your last login was not approved (from {ips}). | {count} signer login attempts since your last login were not approved (from {ips}).",
++      "paused": "Signer login is paused until {time}. Logging in with your password clears it.",
++      "dismiss": "Dismiss"
++    },
++    "errors": {
++      "busyLogin": "A login is already waiting on your signer, and it didn't come from this page. If your signer is asking right now, deny it.",
++      "enrolBusy": "Your signer is already handling a login or enrolment. Finish or deny that first.",
++      "enrolBusyLogin": "A login is waiting on your signer that you didn't start here. Deny it on the signer, then try again.",
++      "offline": "Your signer is offline. Check it's connected, or use your password.",
++      "denied": "Your signer denied the login.",
++      "timeout": "Your signer didn't approve in time.",
++      "enrolTimeout": "Your signer didn't approve the enrolment in time.",
++      "refused": "Your signer's reply didn't check out. Use your password, and check the signer.",
++      "failed": "Signer login failed. Use your password.",
++      "paused": "Signer login is paused after recent attempts. Use your password; logging in with it clears the pause.",
++      "pausedTotp": "Signer login is paused after recent attempts. Use your authenticator code instead.",
++      "notEnabled": "Signer login isn't available. Use your password.",
++      "gone": "That attempt is no longer valid. Try again.",
++      "otherBrowser": "That attempt was started in another browser. Try again here.",
++      "rateLimited": "Too many attempts. Wait a minute, or log in with your password.",
++      "network": "The node could not be reached. Try again in a moment.",
++      "fallback": "Your signer did not approve. Try again, or use your password.",
++      "unexpected": "The node sent an unexpected reply.",
++      "enrolOffline": "Your signer is offline. Check it's connected, then try again.",
++      "enrolDenied": "Your signer denied the enrolment.",
++      "enrolRefused": "Your signer's reply didn't check out. Check the signer, then try again."
++    }
+   }
+ }
+diff --git a/neode-ui/src/locales/es.json b/neode-ui/src/locales/es.json
+index 950e2e6..2064670 100644
+--- a/neode-ui/src/locales/es.json
++++ b/neode-ui/src/locales/es.json
+@@ -800,5 +800,121 @@
+     "done": "Listo",
+     "inProgress": "En progreso",
+     "start": "Iniciar"
++  },
++  "signer": {
++    "login": {
++      "button": "Iniciar sesión con tu firmante",
++      "asking": "Consultando a tu firmante…",
++      "orPassword": "o usa tu contraseña",
++      "approveInstead": "Aprobar en tu firmante en su lugar",
++      "cancelled": "Es posible que tu firmante siga preguntando. Recházalo allí.",
++      "cancelledWatching": "Esta página te avisará si se aprobó. Podrás volver a intentarlo cuando se libere.",
++      "lateApproved": "Tu firmante aprobó el inicio de sesión que cancelaste, así que este navegador ya tiene la sesión iniciada. Si no fuiste tú, rechaza los inicios de sesión en tu firmante y cambia tu contraseña.",
++      "continueDashboard": "Continuar al panel",
++      "signOut": "Cerrar la sesión de este navegador"
++    },
++    "code": {
++      "check": "Comprueba que tu firmante muestra",
++      "then": "y luego aprueba.",
++      "minute": "Tu firmante tiene aproximadamente un minuto para aprobar.",
++      "deny": "Si el código de tu firmante es distinto, o no iniciaste esto, recházalo.",
++      "aria": "Código {digits}"
++    },
++    "link": {
++      "intro": "En tu firmante, copia un enlace bunker:// y pégalo aquí. Tu firmante te pedirá aprobar dos veces: una para conectar y otra para confirmar la clave. Tu clave permanece en el firmante.",
++      "show": "Mostrar",
++    "hide": "Ocultar",
++    "uriLabel": "Enlace del firmante",
++      "nameLabel": "Nombre",
++      "defaultName": "Mi firmante",
++      "waiting": "Esperando a tu firmante. Aprueba la conexión en él, dos veces.",
++      "submit": "Vincular firmante",
++      "linking": "Vinculando…",
++      "timeout": "Tu firmante no respondió a tiempo. Comprueba que está en línea e inténtalo de nuevo.",
++      "failed": "No se pudo vincular el firmante.",
++      "button": "Vincular un firmante",
++      "linked": "Firmante vinculado",
++      "badge": "Vinculado",
++      "badgeTitle": "La clave de esta identidad está en tu firmante"
++    },
++    "enrol": {
++      "asking": "Consultando a tu firmante…",
++      "done": "Listo. Ya puedes iniciar sesión con este firmante.",
++      "quick": "Eso llegó más rápido de lo que una persona podría pulsar. Este firmante podría aprobar los inicios de sesión automáticamente, lo que hace que el acceso con firmante sea solo tan seguro como ese firmante.",
++      "tryAgain": "Reintentar",
++      "skip": "Omitir por ahora",
++      "continue": "Continuar",
++      "continueAnyway": "Continuar al panel",
++      "cancelled": "Es posible que tu firmante siga preguntando. Recházalo allí.",
++      "cancelledWatching": "Esta página mostrará el resultado si lo apruebas."
++    },
++    "connect": {
++      "title": "Conectar un firmante",
++      "intro": "Opcional. Inicia sesión aprobando en un firmante de hardware en lugar de escribir tu contraseña. Tu contraseña sigue funcionando en ambos casos."
++    },
++    "settings": {
++      "title": "Firmantes de acceso",
++      "desc": "Inicia sesión aprobando en un firmante de hardware. Tu contraseña sigue funcionando.",
++      "none": "Ninguno",
++      "add": "Añadir un firmante de acceso",
++      "addTitle": "Añadir un firmante de acceso",
++      "addDesc": "Elige un firmante vinculado e introduce tu contraseña. Tu firmante te pedirá aprobar una vez.",
++      "pick": "Firmante",
++      "password": "Contraseña",
++      "close": "Cerrar",
++      "done": "Hecho",
++      "noLinked": "Aún no hay ningún firmante vinculado. Vincula uno primero desde la página de Identidades.",
++      "remove": "Quitar",
++      "removeTitle": "Quitar firmante de acceso",
++      "removeDesc": "{name} dejará de iniciar sesión en este nodo. La identidad sigue vinculada. Introduce tu contraseña para confirmar.",
++      "removing": "Quitando…",
++      "removeFailed": "No se pudo quitar el firmante.",
++      "loadFailed": "No se pudieron cargar los firmantes de acceso.",
++      "wrongPort": "Abre el panel en su dirección habitual, sin número de puerto, para usar un firmante.",
++      "recent": "Intentos recientes",
++      "pausedUntil": "El acceso con firmante está en pausa hasta las {time}. Iniciar sesión con tu contraseña levanta la pausa."
++    },
++    "outcome": {
++      "pending": "Esperando aprobación",
++      "approved": "Aprobado",
++      "denied": "Rechazado en el firmante",
++      "expired": "Sin respuesta",
++      "offline": "Firmante sin conexión",
++      "refused": "Respuesta rechazada",
++      "failed": "Fallido",
++      "refused-busy": "Rechazado: había otro inicio de sesión esperando",
++      "refused-budget": "Rechazado: demasiados intentos",
++      "unknownIp": "dirección desconocida"
++    },
++    "notice": {
++      "approvedElsewhere": "Tu firmante aprobó un inicio de sesión desde {ips}. Si no fuiste tú, otra persona podría tener acceso: rechaza los inicios de sesión en tu firmante y cambia tu contraseña.",
++      "pending": "Hay un inicio de sesión esperando en tu firmante, iniciado desde {ip}. Si tu firmante está preguntando, recházalo.",
++      "notApproved": "Un intento de inicio de sesión con firmante desde tu último acceso no fue aprobado (desde {ips}). | {count} intentos de inicio de sesión con firmante desde tu último acceso no fueron aprobados (desde {ips}).",
++      "paused": "El acceso con firmante está en pausa hasta las {time}. Iniciar sesión con tu contraseña levanta la pausa.",
++      "dismiss": "Descartar"
++    },
++    "errors": {
++      "busyLogin": "Ya hay un inicio de sesión esperando en tu firmante y no procede de esta página. Si tu firmante está preguntando ahora mismo, recházalo.",
++      "enrolBusy": "Tu firmante ya está atendiendo un inicio de sesión o un registro. Termínalo o recházalo primero.",
++      "enrolBusyLogin": "Hay un inicio de sesión esperando en tu firmante que no iniciaste aquí. Recházalo en el firmante y vuelve a intentarlo.",
++      "offline": "Tu firmante está sin conexión. Comprueba que está conectado o usa tu contraseña.",
++      "denied": "Tu firmante rechazó el inicio de sesión.",
++      "timeout": "Tu firmante no aprobó a tiempo.",
++      "enrolTimeout": "Tu firmante no aprobó el registro a tiempo.",
++      "refused": "La respuesta de tu firmante no se pudo verificar. Usa tu contraseña y revisa el firmante.",
++      "failed": "Falló el inicio de sesión con firmante. Usa tu contraseña.",
++      "paused": "El acceso con firmante está en pausa tras intentos recientes. Usa tu contraseña; iniciar sesión con ella levanta la pausa.",
++      "pausedTotp": "El acceso con firmante está en pausa tras intentos recientes. Usa en su lugar tu código de autenticación.",
++      "notEnabled": "El acceso con firmante no está disponible. Usa tu contraseña.",
++      "gone": "Ese intento ya no es válido. Inténtalo de nuevo.",
++      "otherBrowser": "Ese intento se inició en otro navegador. Inténtalo de nuevo aquí.",
++      "rateLimited": "Demasiados intentos. Espera un minuto o inicia sesión con tu contraseña.",
++      "network": "No se pudo conectar con el nodo. Inténtalo de nuevo en un momento.",
++      "fallback": "Tu firmante no aprobó. Inténtalo de nuevo o usa tu contraseña.",
++      "unexpected": "El nodo envió una respuesta inesperada.",
++      "enrolOffline": "Tu firmante está sin conexión. Comprueba que está conectado y vuelve a intentarlo.",
++      "enrolDenied": "Tu firmante rechazó el registro.",
++      "enrolRefused": "La respuesta de tu firmante no se pudo verificar. Revisa el firmante y vuelve a intentarlo."
++    }
+   }
+ }
+diff --git a/neode-ui/src/stores/__tests__/app.test.ts b/neode-ui/src/stores/__tests__/app.test.ts
+index 7754fb1..50bd1e4 100644
+--- a/neode-ui/src/stores/__tests__/app.test.ts
++++ b/neode-ui/src/stores/__tests__/app.test.ts
+@@ -78,6 +78,14 @@ describe('useAppStore', () => {
+     expect(store.isAuthenticated).toBe(false)
+   })
+ 
++  it('login passes on that a signer can stand in for the TOTP code', async () => {
++    mockedRpc.login.mockResolvedValue({ requires_totp: true, signer: true })
++    const store = useAppStore()
++
++    expect(await store.login('password123')).toEqual({ requires_totp: true, signer: true })
++    expect(store.isAuthenticated).toBe(false)
++  })
++
+   it('login sets error on failure', async () => {
+     mockedRpc.login.mockRejectedValue(new Error('Invalid password'))
+     const store = useAppStore()
+diff --git a/neode-ui/src/stores/__tests__/appLauncher.test.ts b/neode-ui/src/stores/__tests__/appLauncher.test.ts
+index 68bf8ee..46d95d1 100644
+--- a/neode-ui/src/stores/__tests__/appLauncher.test.ts
++++ b/neode-ui/src/stores/__tests__/appLauncher.test.ts
+@@ -531,4 +531,40 @@ describe('useAppLauncherStore', () => {
+       expect(senderMatchesApp('', 'https://framework-pt.local:7778')).toBe(false)
+     })
+   })
++
++  describe('consent copy source', () => {
++    const appUrl = 'http://192.0.2.10:3001/'
++
++    async function askToSign(stored: Record<string, unknown> | null) {
++      localStorage.clear()
++      if (stored) localStorage.setItem(`archipelago_app_identity_${appUrl.replace(/[^a-z0-9]/gi, '_')}`, JSON.stringify(stored))
++      const store = useAppLauncherStore()
++      store.url = appUrl
++      store.title = 'Gitea'
++      store.isOpen = true
++      await Promise.resolve()
++      window.dispatchEvent(new MessageEvent('message', {
++        data: { type: 'nostr-request', id: 1, method: 'signEvent', params: { event: { kind: 1, content: 'hi' } } },
++        origin: 'http://192.0.2.10:3001',
++        source: window,
++      }))
++      await Promise.resolve()
++      return store
++    }
++
++    it('marks a linked identity so the dialog waits for the signer', async () => {
++      const store = await askToSign({ id: 'linked-1', name: 'Heartwood', origin: 'linked' })
++      expect(store.consentRequest).toMatchObject({ origin: 'linked', signerLabel: 'Heartwood' })
++      store.isOpen = false
++    })
++
++    it('leaves local and unmarked identities with the local copy', async () => {
++      const local = await askToSign({ id: 'id-primary', name: 'Primary', origin: 'local' })
++      expect(local.consentRequest?.origin).toBeUndefined()
++      local.isOpen = false
++      const unmarked = await askToSign({ id: 'id-primary', name: 'Primary' })
++      expect(unmarked.consentRequest?.origin).toBeUndefined()
++      unmarked.isOpen = false
++    })
++  })
+ })
+diff --git a/neode-ui/src/stores/appLauncher.ts b/neode-ui/src/stores/appLauncher.ts
+index aca7a02..643a807 100644
+--- a/neode-ui/src/stores/appLauncher.ts
++++ b/neode-ui/src/stores/appLauncher.ts
+@@ -194,6 +194,8 @@ export interface NostrConsentRequest {
+   eventKind?: number
+   content?: string
+   identityLabel?: string
++  origin?: 'local' | 'linked'
++  signerLabel?: string
+   resolve: (remember: boolean) => void
+   reject: () => void
+ }
+@@ -561,11 +563,12 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
+     consentPhase.value = 'error'
+   }
+ 
+-  function requestConsent(appName: string, method: string, eventKind?: number, content?: string, identityLabel?: string): Promise<boolean> {
++  function requestConsent(appName: string, method: string, eventKind?: number, content?: string, identityLabel?: string, linkedSignerName?: string): Promise<boolean> {
+     return new Promise((resolve, reject) => {
+       consentGeneration += 1
+       consentRequest.value = {
+         appName, method, eventKind, content, identityLabel,
++        ...(linkedSignerName !== undefined ? { origin: 'linked' as const, signerLabel: linkedSignerName } : {}),
+         resolve, reject,
+       }
+       consentPhase.value = 'review'
+@@ -593,6 +596,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
+     const IDENTITY_KEY = 'archipelago_app_identity_'
+     const appKey = IDENTITY_KEY + (url.value || '').replace(/[^a-z0-9]/gi, '_')
+     let appIdentityId: string | null = null
++    let linkedSignerName: string | undefined
+     try {
+       const stored = localStorage.getItem(appKey)
+       if (stored) {
+@@ -600,6 +604,8 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
+         if (typeof parsed === 'object' && parsed !== null && 'id' in parsed) {
+           const idVal = (parsed as Record<string, unknown>).id
+           appIdentityId = typeof idVal === 'string' ? idVal : null
++          const rec = parsed as Record<string, unknown>
++          if (rec.origin === 'linked') linkedSignerName = typeof rec.name === 'string' ? rec.name : ''
+         }
+       }
+     } catch { /* ignore */ }
+@@ -622,6 +628,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
+         const remember = await requestConsent(
+           title.value || 'App', method, eventKind, content,
+           appIdentityId || 'Node default identity',
++          linkedSignerName,
+         )
+         if (remember) rememberConsent(scopedKey)
+       } catch {
+diff --git a/neode-ui/src/stores/auth.ts b/neode-ui/src/stores/auth.ts
+index 77606ef..98d3476 100644
+--- a/neode-ui/src/stores/auth.ts
++++ b/neode-ui/src/stores/auth.ts
+@@ -14,14 +14,14 @@ export const useAuthStore = defineStore('auth', () => {
+   let sessionValidated = false
+ 
+   // Actions
+-  async function login(password: string): Promise<{ requires_totp?: boolean }> {
++  async function login(password: string): Promise<{ requires_totp?: boolean; signer?: boolean }> {
+     isLoading.value = true
+     error.value = null
+ 
+     try {
+       const result = await rpcClient.login(password)
+       if (result && result.requires_totp) {
+-        return { requires_totp: true }
++        return result.signer ? { requires_totp: true, signer: true } : { requires_totp: true }
+       }
+ 
+       isAuthenticated.value = true
+diff --git a/neode-ui/src/views/AppSession.vue b/neode-ui/src/views/AppSession.vue
+index 4e9fc1d..318c483 100644
+--- a/neode-ui/src/views/AppSession.vue
++++ b/neode-ui/src/views/AppSession.vue
+@@ -94,6 +94,8 @@
+         :app-name="nostrBridge.consentRequest.value?.appName ?? appTitle"
+         :method="nostrBridge.consentRequest.value?.method ?? ''"
+         :identity-label="nostrBridge.consentRequest.value?.identityLabel"
++        :origin="nostrBridge.consentRequest.value?.origin"
++        :signer-label="nostrBridge.consentRequest.value?.signerLabel"
+         :event-kind="nostrBridge.consentRequest.value?.eventKind"
+         :content="nostrBridge.consentRequest.value?.content"
+         :phase="nostrBridge.consentPhase.value"
+diff --git a/neode-ui/src/views/Dashboard.vue b/neode-ui/src/views/Dashboard.vue
+index 437078a..8b14413 100644
+--- a/neode-ui/src/views/Dashboard.vue
++++ b/neode-ui/src/views/Dashboard.vue
+@@ -108,6 +108,7 @@
+ 
+     <!-- Health Notifications Toast -->
+     <HealthNotifications />
++    <SignerLoginNotice />
+ 
+     <!-- First-use companion intro overlay -->
+     <CompanionIntroOverlay />
+@@ -129,6 +130,7 @@ import DashboardMobileNav from '@/views/dashboard/DashboardMobileNav.vue'
+ import DashboardRouterView from '@/views/dashboard/DashboardRouterView.vue'
+ import ConnectionBanner from '@/views/dashboard/ConnectionBanner.vue'
+ import HealthNotifications from '@/views/dashboard/HealthNotifications.vue'
++import SignerLoginNotice from '@/views/dashboard/SignerLoginNotice.vue'
+ import CompanionIntroOverlay from '@/components/CompanionIntroOverlay.vue'
+ import { isDetailRoute, ROUTE_BACKGROUNDS } from '@/views/dashboard/useRouteTransitions'
+ import { useIbdFinishWatcher } from '@/composables/useIbdFinishWatcher'
+diff --git a/neode-ui/src/views/Login.vue b/neode-ui/src/views/Login.vue
+index 1af96dc..deb09bc 100644
+--- a/neode-ui/src/views/Login.vue
++++ b/neode-ui/src/views/Login.vue
+@@ -47,6 +47,9 @@
+           </svg>
+         </div>
+ 
++        <!-- After setup: optional signer step (password is held in memory for it only) -->
++        <ConnectSignerStep v-else-if="connectingSigner" :password="password.trim()" @done="finishConnectSigner" />
++
+         <!-- Setup Mode: Password Setup -->
+         <template v-else-if="isSetupMode && !isSetup">
+           <div class="mb-4 p-4 bg-white/5 border border-white/10 rounded-lg text-white/80 text-sm">
+@@ -159,6 +162,20 @@
+           >
+             {{ useBackupCode ? t('login.useAuthCode') : t('login.useBackupCode') }}
+           </button>
++
++          <!-- On a 2FA node the signer stands in for the code, after the password -->
++          <div v-if="totpSigner" class="mt-3 pt-4 border-t border-white/10" data-testid="totp-signer">
++            <SignerLoginPanel
++              :approval="signerApproval"
++              :label="t('signer.login.approveInstead')"
++              :disabled="loading"
++              :late-approved="lateSignerApproved"
++              @start="handleSignerLogin"
++              @cancel="cancelSignerLogin"
++              @continue="enterDashboardAfterSigner()"
++              @signout="signOutBrowser"
++            />
++          </div>
+         </template>
+ 
+         <!-- Normal Login Mode -->
+@@ -174,6 +191,22 @@
+                focusable" is Replay Intro — the companion's auto-login injects
+                Enter before Vue re-enables the button, which replayed the intro
+                in a loop on every app connect. -->
++          <!-- Log in by approving on a linked signer (only offered when one is enrolled and there is no 2FA) -->
++          <div v-if="signerAvailable" class="mb-6" data-testid="signer-login">
++            <SignerLoginPanel
++              :approval="signerApproval"
++              :label="t('signer.login.button')"
++              :disabled="loading || formDisabled"
++              :late-approved="lateSignerApproved"
++              warning
++              show-or
++              @start="handleSignerLogin"
++              @cancel="cancelSignerLogin"
++              @continue="enterDashboardAfterSigner()"
++              @signout="signOutBrowser"
++            />
++          </div>
++
+           <div class="mb-6">
+             <label for="login-password" class="block text-sm font-medium text-white/80 mb-2">
+               {{ t('login.password') }}
+@@ -245,6 +278,11 @@ import { isLocalRedirect } from '../router'
+ import { useI18n } from 'vue-i18n'
+ import AnimatedLogo from '@/components/AnimatedLogo.vue'
+ import { useAppStore } from '../stores/app'
++import ConnectSignerStep from '@/components/signer/ConnectSignerStep.vue'
++import SignerLoginPanel from '@/components/signer/SignerLoginPanel.vue'
++import { signerApi, signerLoginAllowedHere, type LoginFinish } from '@/api/signer-login'
++import { useSignerApproval } from '@/composables/useSignerApproval'
++import { recordLogin } from '@/composables/loginRecord'
+ 
+ const { t } = useI18n()
+ import { useLoginTransitionStore } from '../stores/loginTransition'
+@@ -277,6 +315,29 @@ const useBackupCode = ref(false)
+ const totpInputRef = ref<HTMLInputElement | null>(null)
+ const confirmPasswordInputRef = ref<HTMLInputElement | null>(null)
+ 
++// Signer login. `signerAvailable` is the public "a signer is enrolled and there
++// is no 2FA" answer; `totpSigner` is set by the password step on a 2FA node.
++const signerAvailable = ref(false)
++const totpSigner = ref(false)
++// The node only accepts signer prompts from the dashboard on port 80 or 443.
++const signerPortOk = signerLoginAllowedHere()
++const connectingSigner = ref(false)
++let signerStartedAt: number | undefined
++const signerApproval = useSignerApproval<LoginFinish>(
++  () => signerApi.loginStart(),
++  (attemptId, signal) => signerApi.loginFinish(attemptId, signal),
++  'approved',
++  {
++    totp: () => requiresTotp.value,
++    // The node stamps the attempt when it starts: remember when that was, to
++    // recognise our own approval later in the notice.
++    onStarted: () => { signerStartedAt = Math.floor(Date.now() / 1000) },
++  },
++)
++// An approval that arrived after the owner cancelled. The node has already set
++// the session cookies, so the page offers to continue instead of navigating.
++const lateSignerApproved = computed(() => signerApproval.late.value?.ok === true)
++
+ // Server startup state
+ const serverReady = ref(false)
+ const serverChecking = ref(true)
+@@ -402,8 +463,19 @@ onMounted(async () => {
+   } finally {
+     isCheckingSetup.value = false
+   }
++  if (isSetup.value) void probeSignerLogin()
+ })
+ 
++/** Never blocks the password form: any failure just means no signer button. */
++async function probeSignerLogin() {
++  if (!signerPortOk) return
++  try {
++    signerAvailable.value = (await signerApi.loginAvailable()) === true
++  } catch {
++    signerAvailable.value = false
++  }
++}
++
+ /** Re-probe auth.isSetup until it answers, then honour the real state. */
+ async function retrySetupProbe() {
+   for (let i = 0; i < 10; i++) {
+@@ -412,6 +484,7 @@ async function retrySetupProbe() {
+       const result = await rpcClient.call<boolean>({ method: 'auth.isSetup', params: {}, timeout: 8000 })
+       isSetup.value = Boolean(result)
+       isSetupMode.value = !isSetup.value
++      if (isSetup.value) void probeSignerLogin()
+       return
+     } catch {
+       // still unreachable — keep the login form up and try again
+@@ -456,17 +529,10 @@ async function handleSetup() {
+       store.logout()
+       return
+     }
+-    stopSynthwave()
+-    whooshAway.value = true
+-    playLoginSuccessWhoosh()
+-    loginTransition.setJustCompletedOnboarding(true)
+-    loginTransition.setJustLoggedIn(true)
+-    // First password setup counts as the first login (video → static rotation).
+-    try { localStorage.setItem('neode_first_login_done', '1') } catch { /* ignore */ }
+-    await new Promise(r => setTimeout(r, 520))
+-    await router.replace(loginRedirectTo.value).catch(() => {
+-      window.location.href = loginRedirectTo.value
+-    })
++    // Optional next step: connect a signer. The password stays in memory only
++    // until that step ends.
++    if (signerPortOk) connectingSigner.value = true
++    else await finishConnectSigner()
+   } catch (err) {
+     whooshAway.value = false
+     const msg = err instanceof Error ? err.message : ''
+@@ -481,6 +547,25 @@ async function handleSetup() {
+   }
+ }
+ 
++/** The signer step is over (connected or skipped): forget the password, then
++ *  enter the dashboard as the setup always did. */
++async function finishConnectSigner() {
++  password.value = ''
++  confirmPassword.value = ''
++  connectingSigner.value = false
++  stopSynthwave()
++  whooshAway.value = true
++  playLoginSuccessWhoosh()
++  loginTransition.setJustCompletedOnboarding(true)
++  loginTransition.setJustLoggedIn(true)
++  // First password setup counts as the first login (video → static rotation).
++  try { localStorage.setItem('neode_first_login_done', '1') } catch { /* ignore */ }
++  await new Promise(r => setTimeout(r, 520))
++  await router.replace(loginRedirectTo.value).catch(() => {
++    window.location.href = loginRedirectTo.value
++  })
++}
++
+ function handleLoginWithSound() {
+   if (!loading.value && password.value) {
+     playPop()
+@@ -498,6 +583,7 @@ async function handleLogin() {
+     const result = await store.login(password.value.trim())
+     if (result?.requires_totp) {
+       requiresTotp.value = true
++      totpSigner.value = result.signer === true && signerPortOk
+       loading.value = false
+       // Focus the TOTP input after DOM update
+       setTimeout(() => totpInputRef.value?.focus(), 100)
+@@ -514,6 +600,7 @@ async function handleLogin() {
+     stopSynthwave()
+     whooshAway.value = true
+     playLoginSuccessWhoosh()
++    recordLogin(false)
+     consumeOnboardingFinale()
+     loginTransition.setJustLoggedIn(true)
+     await new Promise(r => setTimeout(r, 520))
+@@ -534,7 +621,66 @@ async function handleLogin() {
+   }
+ }
+ 
++async function handleSignerLogin() {
++  if (loading.value || signerApproval.phase.value === 'starting' || signerApproval.phase.value === 'waiting') return
++  if (signerApproval.waitingInBackground.value) return
++  error.value = null
++  const res = await signerApproval.run()
++  if (!res) {
++    if (signerApproval.phase.value === 'failed') {
++      error.value = signerApproval.error.value
++      // The password step's pending session lapsed during the press: start over.
++      if (requiresTotp.value && /^session expired/i.test(signerApproval.rawError.value)) {
++        requiresTotp.value = false
++        totpSigner.value = false
++        totpCode.value = ''
++        signerApproval.reset()
++      }
++    }
++    return
++  }
++  await enterDashboardAfterSigner()
++}
++
++/** The server has set the session cookies, exactly as for a password login. */
++async function enterDashboardAfterSigner(viaSigner = true) {
++  loading.value = true
++  try {
++    await store.completeLoginAfterTotp()
++    stopSynthwave()
++    whooshAway.value = true
++    playLoginSuccessWhoosh()
++    recordLogin(viaSigner, undefined, viaSigner ? signerStartedAt : undefined)
++    consumeOnboardingFinale()
++    loginTransition.setJustLoggedIn(true)
++    await new Promise(r => setTimeout(r, 520))
++    await router.replace(loginRedirectTo.value).catch(() => {
++      window.location.href = loginRedirectTo.value
++    })
++  } catch (err) {
++    whooshAway.value = false
++    error.value = err instanceof Error && err.message ? err.message : t('login.errorLoginFailed')
++    signerApproval.reset()
++  } finally {
++    loading.value = false
++  }
++}
++
++/** A late approval signed this browser in; the owner may not want that. */
++async function signOutBrowser() {
++  signerApproval.reset()
++  try { await store.logout() } catch { /* the cookies are cleared on the node's side or expire */ }
++}
++
++/** Cancelling hides the prompt, but the signer may still be asking: the panel
++ *  says so and keeps watching until the node gives up on the attempt. */
++function cancelSignerLogin() {
++  signerApproval.cancel()
++  error.value = null
++}
++
+ async function handleTotpVerify() {
++  const viaSigner = false
+   if (!totpCode.value) return
+ 
+   loading.value = true
+@@ -550,6 +696,7 @@ async function handleTotpVerify() {
+     stopSynthwave()
+     whooshAway.value = true
+     playLoginSuccessWhoosh()
++    recordLogin(viaSigner)
+     consumeOnboardingFinale()
+     loginTransition.setJustLoggedIn(true)
+     await new Promise(r => setTimeout(r, 520))
+@@ -561,6 +708,8 @@ async function handleTotpVerify() {
+     if (/expired|too many/i.test(msg)) {
+       // Session expired, go back to password step
+       requiresTotp.value = false
++      totpSigner.value = false
++      signerApproval.reset()
+       totpCode.value = ''
+       error.value = msg
+     } else {
+diff --git a/neode-ui/src/views/NostrTabSigner.vue b/neode-ui/src/views/NostrTabSigner.vue
+index 8fa4830..0690840 100644
+--- a/neode-ui/src/views/NostrTabSigner.vue
++++ b/neode-ui/src/views/NostrTabSigner.vue
+@@ -11,6 +11,8 @@
+       :app-name="bridge.consentRequest.value?.appName ?? appName"
+       :method="bridge.consentRequest.value?.method ?? ''"
+       :identity-label="bridge.consentRequest.value?.identityLabel"
++      :origin="bridge.consentRequest.value?.origin"
++      :signer-label="bridge.consentRequest.value?.signerLabel"
+       :event-kind="bridge.consentRequest.value?.eventKind"
+       :content="bridge.consentRequest.value?.content"
+       :phase="bridge.consentPhase.value"
+diff --git a/neode-ui/src/views/__tests__/loginSigner.test.ts b/neode-ui/src/views/__tests__/loginSigner.test.ts
+new file mode 100644
+index 0000000..ab6425e
+--- /dev/null
++++ b/neode-ui/src/views/__tests__/loginSigner.test.ts
+@@ -0,0 +1,422 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
++import { flushPromises, mount } from '@vue/test-utils'
++import { createPinia, setActivePinia } from 'pinia'
++import i18n from '@/i18n'
++import { defineComponent, h } from 'vue'
++
++const store = vi.hoisted(() => ({
++  login: vi.fn(),
++  completeLoginAfterTotp: vi.fn().mockResolvedValue(undefined),
++  logout: vi.fn(),
++}))
++const replaceMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
++
++vi.mock('@/stores/app', () => ({ useAppStore: () => store }))
++vi.mock('@/api/rpc-client', () => ({
++  rpcClient: { call: vi.fn(), loginTotp: vi.fn(), loginBackup: vi.fn() },
++}))
++vi.mock('@/api/signer-login', async (orig) => ({
++  ...(await orig<typeof import('@/api/signer-login')>()),
++  signerApi: {
++    loginAvailable: vi.fn(),
++    loginStart: vi.fn(),
++    loginFinish: vi.fn(),
++    linkBunker: vi.fn(),
++    enrolStart: vi.fn(),
++    enrolFinish: vi.fn(),
++  },
++}))
++vi.mock('@/composables/useLoginSounds', () => ({
++  resumeAudioContext: vi.fn(), startSynthwave: vi.fn(), stopSynthwave: vi.fn(),
++  playPop: vi.fn(), playLoginSuccessWhoosh: vi.fn(),
++}))
++vi.mock('@/components/AnimatedLogo.vue', () => ({
++  default: defineComponent({ name: 'AnimatedLogo', render: () => h('div') }),
++}))
++vi.mock('vue-router', () => ({
++  useRouter: () => ({ push: vi.fn(), replace: replaceMock }),
++  useRoute: () => ({ query: {} }),
++  createRouter: vi.fn(),
++  createWebHistory: vi.fn(),
++}))
++vi.mock('../../router', () => ({ isLocalRedirect: () => true }))
++vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({}) }))
++
++import Login from '../Login.vue'
++import { rpcClient } from '@/api/rpc-client'
++import { signerApi } from '@/api/signer-login'
++
++const rpc = vi.mocked(rpcClient)
++const api = vi.mocked(signerApi)
++
++function mountLogin() {
++  return mount(Login, { global: { plugins: [createPinia(), i18n], stubs: { Transition: true } } })
++}
++
++function setupProbe(isSetup: boolean) {
++  rpc.call.mockImplementation(async (opts: { method: string }) => {
++    if (opts.method === 'auth.isSetup') return isSetup
++    return null
++  })
++}
++
++describe('Login with a signer', () => {
++  beforeEach(() => {
++    setActivePinia(createPinia())
++    vi.clearAllMocks()
++    store.completeLoginAfterTotp.mockResolvedValue(undefined)
++    replaceMock.mockResolvedValue(undefined)
++    setupProbe(true)
++    api.loginAvailable.mockResolvedValue(false)
++  })
++  afterEach(() => vi.useRealTimers())
++
++  it('shows no signer button unless the node says a signer is enrolled', async () => {
++    const w = mountLogin()
++    await flushPromises()
++    expect(w.find('[data-testid="signer-login"]').exists()).toBe(false)
++    expect(w.find('#login-password').exists()).toBe(true)
++  })
++
++  it('treats a failed availability check as "no signer"', async () => {
++    api.loginAvailable.mockRejectedValue(new Error('nope'))
++    const w = mountLogin()
++    await flushPromises()
++    expect(w.find('[data-testid="signer-login"]').exists()).toBe(false)
++    expect(w.find('#login-password').exists()).toBe(true)
++  })
++
++  it('offers the signer above the password form, which stays', async () => {
++    api.loginAvailable.mockResolvedValue(true)
++    const w = mountLogin()
++    await flushPromises()
++    const btn = w.find('[data-testid="signer-login-button"]')
++    expect(btn.text()).toBe('Log in with your signer')
++    expect(w.find('#login-password').exists()).toBe(true)
++    const html = w.html()
++    expect(html.indexOf('signer-login-button')).toBeLessThan(html.indexOf('login-password'))
++  })
++
++  it('shows the code and the safety copy while waiting', async () => {
++    api.loginAvailable.mockResolvedValue(true)
++    api.loginStart.mockResolvedValue({ attempt_id: 'a1', code: '4821' })
++    api.loginFinish.mockReturnValue(new Promise(() => {}))
++    const w = mountLogin()
++    await flushPromises()
++    await w.find('[data-testid="signer-login-button"]').trigger('click')
++    await flushPromises()
++
++    expect(w.find('[data-testid="signer-code"]').text()).toBe('4821')
++    expect(w.text()).toContain('Check your signer shows')
++    expect(w.text()).toContain('deny it')
++    expect(w.find('[data-testid="signer-login-button"]').exists()).toBe(false)
++  })
++
++  describe('cancelling while the signer is being asked', () => {
++    function gated() {
++      const polls: Array<(v: unknown) => void> = []
++      const fails: Array<(e: Error) => void> = []
++      api.loginAvailable.mockResolvedValue(true)
++      api.loginStart.mockResolvedValue({ attempt_id: 'a1', code: '4821' })
++      api.loginFinish.mockImplementation(() => new Promise((resolve, reject) => {
++        polls.push(resolve)
++        fails.push(reject)
++      }) as never)
++      return { polls, fails }
++    }
++
++    async function startAndCancel() {
++      const g = gated()
++      const w = mountLogin()
++      await flushPromises()
++      await w.find('[data-testid="signer-login-button"]').trigger('click')
++      await flushPromises()
++      await w.find('[data-testid="signer-cancel"]').trigger('click')
++      await flushPromises()
++      return { w, ...g }
++    }
++
++    it('says the signer may still be asking, and does not offer another start yet', async () => {
++      const { w } = await startAndCancel()
++      expect(w.find('[data-testid="signer-code"]').exists()).toBe(false)
++      expect(w.find('[data-testid="signer-still-asking"]').text()).toContain('Your signer may still be asking. Deny it there.')
++      expect(w.find('[data-testid="signer-login-button"]').attributes('disabled')).toBeDefined()
++      expect(w.find('#login-password').exists()).toBe(true)
++    })
++
++    it('lets the owner try again once the attempt has settled, without a busy refusal', async () => {
++      const { w, fails } = await startAndCancel()
++      fails[0]!(new Error('linked signer did not approve the login in time'))
++      await flushPromises()
++      expect(w.find('[data-testid="signer-still-asking"]').exists()).toBe(false)
++      expect(w.find('[data-testid="signer-login-button"]').attributes('disabled')).toBeUndefined()
++      // The quiet settle is not reported as an error.
++      expect(w.find('[role="alert"]').exists()).toBe(false)
++    })
++
++    it('shows a late approval as a notice and does not navigate', async () => {
++      const { w, polls } = await startAndCancel()
++      polls[0]!({ status: 'approved' })
++      await flushPromises()
++      expect(w.find('[data-testid="signer-late-approved"]').text()).toContain('approved the login you cancelled')
++      expect(store.completeLoginAfterTotp).not.toHaveBeenCalled()
++      expect(replaceMock).not.toHaveBeenCalled()
++    })
++
++    it('offers to sign this browser out, which logs out and does not navigate', async () => {
++      const { w, polls } = await startAndCancel()
++      polls[0]!({ status: 'approved' })
++      await flushPromises()
++      await w.find('[data-testid="signer-late-signout"]').trigger('click')
++      await flushPromises()
++      expect(store.logout).toHaveBeenCalledTimes(1)
++      expect(replaceMock).not.toHaveBeenCalled()
++      expect(w.find('[data-testid="signer-late-approved"]').exists()).toBe(false)
++    })
++
++    it('continues to the dashboard only when the owner chooses to', async () => {
++      vi.useFakeTimers({ shouldAdvanceTime: true })
++      const { w, polls } = await startAndCancel()
++      polls[0]!({ status: 'approved' })
++      await flushPromises()
++      await w.find('[data-testid="signer-late-continue"]').trigger('click')
++      await vi.advanceTimersByTimeAsync(700)
++      await flushPromises()
++      expect(store.completeLoginAfterTotp).toHaveBeenCalledTimes(1)
++      expect(replaceMock).toHaveBeenCalledWith('/dashboard')
++    })
++  })
++
++  it('on approval behaves like a password login: session established, then the redirect', async () => {
++    vi.useFakeTimers({ shouldAdvanceTime: true })
++    api.loginAvailable.mockResolvedValue(true)
++    api.loginStart.mockResolvedValue({ attempt_id: 'a1', code: '4821' })
++    api.loginFinish
++      .mockResolvedValueOnce({ status: 'pending' })
++      .mockResolvedValueOnce({ status: 'approved' })
++    const w = mountLogin()
++    await flushPromises()
++    await w.find('[data-testid="signer-login-button"]').trigger('click')
++    await flushPromises()
++    await vi.advanceTimersByTimeAsync(700)
++    await flushPromises()
++
++    expect(api.loginFinish).toHaveBeenCalledTimes(2)
++    expect(store.completeLoginAfterTotp).toHaveBeenCalledTimes(1)
++    expect(replaceMock).toHaveBeenCalledWith('/dashboard')
++  })
++
++  it('remembers when start returned, not when the login finished, as this browser\'s own signer login', async () => {
++    vi.useFakeTimers({ shouldAdvanceTime: true })
++    localStorage.clear()
++    api.loginAvailable.mockResolvedValue(true)
++    api.loginStart.mockResolvedValue({ attempt_id: 'a1', code: '4821' })
++    api.loginFinish.mockResolvedValue({ status: 'approved' })
++    const startedNear = Math.floor(Date.now() / 1000)
++    const w = mountLogin()
++    await flushPromises()
++    await w.find('[data-testid="signer-login-button"]').trigger('click')
++    await flushPromises()
++    await vi.advanceTimersByTimeAsync(700)
++    await flushPromises()
++    const rec = JSON.parse(localStorage.getItem('archipelago:signer-login:v1') ?? '{}')
++    expect(rec.starts).toHaveLength(1)
++    expect(Math.abs(rec.starts[0] - startedNear)).toBeLessThanOrEqual(2)
++  })
++
++  it.each([
++    ['linked signer is offline', "Your signer is offline. Check it's connected, or use your password."],
++    ['linked signer denied the login', 'Your signer denied the login.'],
++    ['linked signer did not answer in time', "Your signer didn't approve in time."],
++    ['linked signer did not approve the login in time', "Your signer didn't approve in time."],
++    ['linked signer login was refused: the signed reply did not check out', "Your signer's reply didn't check out. Use your password, and check the signer."],
++    ['linked signer login failed', 'Signer login failed. Use your password.'],
++  ])('shows friendly copy for a failure and lets the owner retry: %s', async (message, shown) => {
++    api.loginAvailable.mockResolvedValue(true)
++    api.loginStart.mockResolvedValue({ attempt_id: 'a1', code: '4821' })
++    api.loginFinish.mockRejectedValue(new Error(message))
++    const w = mountLogin()
++    await flushPromises()
++    await w.find('[data-testid="signer-login-button"]').trigger('click')
++    await flushPromises()
++
++    expect(w.find('[role="alert"]').text()).toBe(shown)
++    expect(w.find('[data-testid="signer-code"]').exists()).toBe(false)
++    expect(w.find('[data-testid="signer-login-button"]').exists()).toBe(true)
++    expect(store.completeLoginAfterTotp).not.toHaveBeenCalled()
++  })
++
++  it('words the busy refusal as a warning, never an invitation to wait and press', async () => {
++    api.loginAvailable.mockResolvedValue(true)
++    api.loginStart.mockRejectedValue(new Error('linked signer login is busy: another login is waiting for approval. If your signer is asking right now, that request did not come from this page: deny it'))
++    const w = mountLogin()
++    await flushPromises()
++    await w.find('[data-testid="signer-login-button"]').trigger('click')
++    await flushPromises()
++    expect(w.find('[role="alert"]').text()).toBe(
++      "A login is already waiting on your signer, and it didn't come from this page. If your signer is asking right now, deny it.",
++    )
++  })
++
++  it('hides the signer button on a port the node will not accept prompts from', async () => {
++    api.loginAvailable.mockResolvedValue(true)
++    const orig = window.location
++    Object.defineProperty(window, 'location', { value: { ...orig, port: '8080', hostname: '192.0.2.10' }, writable: true, configurable: true })
++    try {
++      const w = mountLogin()
++      await flushPromises()
++      expect(api.loginAvailable).not.toHaveBeenCalled()
++      expect(w.find('[data-testid="signer-login"]').exists()).toBe(false)
++      expect(w.find('#login-password').exists()).toBe(true)
++    } finally {
++      Object.defineProperty(window, 'location', { value: orig, writable: true, configurable: true })
++    }
++  })
++
++  it('shows the paused refusal without a code', async () => {
++    api.loginAvailable.mockResolvedValue(true)
++    api.loginStart.mockRejectedValue(new Error('linked signer login is paused after recent attempts; log in with the password or try again in a few minutes'))
++    const w = mountLogin()
++    await flushPromises()
++    await w.find('[data-testid="signer-login-button"]').trigger('click')
++    await flushPromises()
++    expect(w.find('[role="alert"]').text()).toBe('Signer login is paused after recent attempts. Use your password; logging in with it clears the pause.')
++    expect(w.find('[data-testid="signer-code"]').exists()).toBe(false)
++  })
++})
++
++describe('Login on a 2FA node', () => {
++  async function toTotpStep(signer: boolean) {
++    store.login.mockResolvedValue(signer ? { requires_totp: true, signer: true } : { requires_totp: true })
++    const w = mountLogin()
++    await flushPromises()
++    await w.find('#login-password').setValue('correct horse')
++    await w.find('#login-password').trigger('keydown.enter')
++    await flushPromises()
++    return w
++  }
++
++  beforeEach(() => {
++    setActivePinia(createPinia())
++    vi.clearAllMocks()
++    store.completeLoginAfterTotp.mockResolvedValue(undefined)
++    replaceMock.mockResolvedValue(undefined)
++    setupProbe(true)
++    api.loginAvailable.mockResolvedValue(false)
++  })
++
++  it('does not offer the signer up front, only at the code step when the password answer says so', async () => {
++    const w = await toTotpStep(true)
++    expect(api.loginAvailable).toHaveBeenCalledTimes(1)
++    expect(w.find('[data-testid="totp-signer"]').exists()).toBe(true)
++    expect(w.find('[data-testid="signer-login-button"]').text()).toBe('Approve on your signer instead')
++    expect(w.find('input[autocomplete="one-time-code"]').exists()).toBe(true)
++  })
++
++  it('offers nothing extra when no signer is enrolled', async () => {
++    const w = await toTotpStep(false)
++    expect(w.find('[data-testid="totp-signer"]').exists()).toBe(false)
++  })
++
++  it('approving on the signer completes the login, as the TOTP code would', async () => {
++    vi.useFakeTimers({ shouldAdvanceTime: true })
++    api.loginStart.mockResolvedValue({ attempt_id: 'a1', code: '7310' })
++    api.loginFinish.mockResolvedValue({ status: 'approved' })
++    const w = await toTotpStep(true)
++    await w.find('[data-testid="signer-login-button"]').trigger('click')
++    await flushPromises()
++    await vi.advanceTimersByTimeAsync(700)
++    await flushPromises()
++    expect(store.completeLoginAfterTotp).toHaveBeenCalledTimes(1)
++    expect(replaceMock).toHaveBeenCalledWith('/dashboard')
++    vi.useRealTimers()
++  })
++
++  it('points a paused 2FA login to the authenticator code', async () => {
++    api.loginStart.mockRejectedValue(new Error('linked signer login is paused after recent attempts; log in with the password or try again in a few minutes'))
++    const w = await toTotpStep(true)
++    await w.find('[data-testid="signer-login-button"]').trigger('click')
++    await flushPromises()
++    expect(w.find('[role="alert"]').text()).toBe('Signer login is paused after recent attempts. Use your authenticator code instead.')
++    expect(w.find('input[autocomplete="one-time-code"]').exists()).toBe(true)
++  })
++
++  it('returns to the password step when the pending session lapsed during the press', async () => {
++    api.loginStart.mockResolvedValue({ attempt_id: 'a1', code: '7310' })
++    api.loginFinish.mockRejectedValue(new Error('Session expired. Please log in with your password again.'))
++    const w = await toTotpStep(true)
++    await w.find('[data-testid="signer-login-button"]').trigger('click')
++    await flushPromises()
++    expect(w.find('#login-password').exists()).toBe(true)
++    expect(w.find('[role="alert"]').text()).toContain('Session expired')
++  })
++})
++
++describe('Setup then connect a signer', () => {
++  beforeEach(() => {
++    setActivePinia(createPinia())
++    vi.clearAllMocks()
++    replaceMock.mockResolvedValue(undefined)
++    setupProbe(false)
++    store.login.mockResolvedValue({})
++  })
++
++  async function finishSetup() {
++    const w = mountLogin()
++    await flushPromises()
++    await w.find('#setup-password').setValue('a long password')
++    await w.find('#setup-confirm-password').setValue('a long password')
++    await w.find('#setup-confirm-password').trigger('keydown.enter')
++    await flushPromises()
++    return w
++  }
++
++  it('pauses on an optional "Connect a signer" step with skip visible, instead of redirecting', async () => {
++    const w = await finishSetup()
++    expect(w.find('[data-testid="connect-signer-step"]').exists()).toBe(true)
++    expect(w.find('[data-testid="connect-signer-continue"]').text()).toBe('Skip for now')
++    expect(replaceMock).not.toHaveBeenCalled()
++  })
++
++  it('skips the step on a port the node will not accept signer prompts from', async () => {
++    vi.useFakeTimers({ shouldAdvanceTime: true })
++    const orig = window.location
++    Object.defineProperty(window, 'location', { value: { ...orig, port: '8080', hostname: '192.0.2.10' }, writable: true, configurable: true })
++    try {
++      const w = mountLogin()
++      await flushPromises()
++      await w.find('#setup-password').setValue('a long password')
++      await w.find('#setup-confirm-password').setValue('a long password')
++      await w.find('#setup-confirm-password').trigger('keydown.enter')
++      await flushPromises()
++      await vi.advanceTimersByTimeAsync(700)
++      expect(w.find('[data-testid="connect-signer-step"]').exists()).toBe(false)
++      expect(replaceMock).toHaveBeenCalledWith('/dashboard')
++    } finally {
++      Object.defineProperty(window, 'location', { value: orig, writable: true, configurable: true })
++    }
++  })
++
++  it('skipping carries on to the dashboard', async () => {
++    vi.useFakeTimers({ shouldAdvanceTime: true })
++    const w = await finishSetup()
++    await w.find('[data-testid="connect-signer-continue"]').trigger('click')
++    await vi.advanceTimersByTimeAsync(700)
++    await flushPromises()
++    expect(replaceMock).toHaveBeenCalledWith('/dashboard')
++    expect(w.find('[data-testid="connect-signer-step"]').exists()).toBe(false)
++    vi.useRealTimers()
++  })
++
++  it('enrols with the password just set', async () => {
++    api.linkBunker.mockResolvedValue({ id: 'linked-1', name: 'My signer' })
++    api.enrolStart.mockResolvedValue({ attempt_id: 'e1', code: '0042' })
++    api.enrolFinish.mockReturnValue(new Promise(() => {}))
++    const w = await finishSetup()
++    await w.find('#link-signer-uri').setValue('bunker://abc')
++    await w.find('[data-testid="link-signer-form"]').trigger('submit')
++    await flushPromises()
++    expect(api.enrolStart).toHaveBeenCalledWith('linked-1', 'a long password')
++    expect(w.find('[data-testid="signer-code"]').text()).toBe('0042')
++  })
++})
+diff --git a/neode-ui/src/views/appSession/__tests__/nostrBridgeLinked.test.ts b/neode-ui/src/views/appSession/__tests__/nostrBridgeLinked.test.ts
+new file mode 100644
+index 0000000..e32fc95
+--- /dev/null
++++ b/neode-ui/src/views/appSession/__tests__/nostrBridgeLinked.test.ts
+@@ -0,0 +1,53 @@
++import { describe, expect, it, vi } from 'vitest'
++
++vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
++
++import { useNostrBridge } from '../useNostrBridge'
++import type { SelectedIdentity } from '../useAppIdentity'
++
++function bridgeFor(identity: SelectedIdentity | null) {
++  const frame = { postMessage: vi.fn() } as unknown as Window
++  const bridge = useNostrBridge(() => identity, {
++    appId: () => 'app',
++    appName: () => 'App',
++    appUrl: () => 'http://localhost:5173/app',
++    frameWindow: () => frame,
++  })
++  const send = (method: string) => {
++    void bridge.handleNostrRequest({
++      data: { type: 'nostr-request', id: 1, method, params: { event: { kind: 1, content: 'hi' } } },
++      source: frame,
++      origin: 'http://localhost:5173',
++    } as unknown as MessageEvent)
++  }
++  return { bridge, send }
++}
++
++const base = { id: 'i1', name: 'Heartwood', did: 'did:key:z', pubkey: 'aa', nostr_pubkey: 'bb' }
++
++describe('consent request for linked identities', () => {
++  it('carries origin and the signer name for a linked identity', () => {
++    const { bridge, send } = bridgeFor({ ...base, origin: 'linked' })
++    send('signEvent')
++    expect(bridge.consentRequest.value).toMatchObject({ origin: 'linked', signerLabel: 'Heartwood', identityLabel: 'Heartwood' })
++  })
++
++  it('leaves a local identity without origin, so the local copy shows', () => {
++    const { bridge, send } = bridgeFor({ ...base, origin: 'local' })
++    send('signEvent')
++    expect(bridge.consentRequest.value?.origin).toBeUndefined()
++  })
++
++  it('treats an identity stored before this field existed as local', () => {
++    const { bridge, send } = bridgeFor({ ...base })
++    send('signEvent')
++    expect(bridge.consentRequest.value?.origin).toBeUndefined()
++  })
++
++  it('treats the node default identity as local', () => {
++    const { bridge, send } = bridgeFor(null)
++    send('signEvent')
++    expect(bridge.consentRequest.value?.origin).toBeUndefined()
++    expect(bridge.consentRequest.value?.identityLabel).toBe('Node default identity')
++  })
++})
+diff --git a/neode-ui/src/views/appSession/useAppIdentity.ts b/neode-ui/src/views/appSession/useAppIdentity.ts
+index a906488..827a6f0 100644
+--- a/neode-ui/src/views/appSession/useAppIdentity.ts
++++ b/neode-ui/src/views/appSession/useAppIdentity.ts
+@@ -13,6 +13,8 @@ export interface SelectedIdentity {
+   pubkey: string
+   nostr_pubkey?: string
+   nostr_npub?: string
++  /** 'linked' when the key lives on a remote signer. Absent on older stored picks. */
++  origin?: 'local' | 'linked'
+ }
+ 
+ function isIdentityAwareApp(id: string): boolean {
+diff --git a/neode-ui/src/views/appSession/useNostrBridge.ts b/neode-ui/src/views/appSession/useNostrBridge.ts
+index a218713..04c9233 100644
+--- a/neode-ui/src/views/appSession/useNostrBridge.ts
++++ b/neode-ui/src/views/appSession/useNostrBridge.ts
+@@ -20,6 +20,10 @@ export interface BridgeConsentRequest {
+   appName: string
+   method: string
+   identityLabel: string
++  /** Where the identity's key lives; 'linked' means a remote signer. */
++  origin?: 'local' | 'linked'
++  /** Name of the signer to approve on (a linked identity's name). */
++  signerLabel?: string
+   eventKind?: number
+   content?: string
+   resolve: (remember: boolean) => void
+@@ -59,11 +63,13 @@ export function useNostrBridge(
+     identityLabel: string,
+     eventKind?: number,
+     content?: string,
++    linkedSignerName?: string,
+   ): Promise<boolean> {
+     return new Promise((resolve, reject) => {
+       consentGeneration += 1
+       consentRequest.value = {
+         appName: options.appName(), method, identityLabel, eventKind, content,
++        ...(linkedSignerName !== undefined ? { origin: 'linked' as const, signerLabel: linkedSignerName } : {}),
+         resolve, reject,
+       }
+       consentPhase.value = 'review'
+@@ -133,6 +139,7 @@ export function useNostrBridge(
+             identityLabel,
+             method === 'signEvent' ? params?.event?.kind : undefined,
+             method === 'signEvent' ? params?.event?.content : undefined,
++            storedIdentity?.origin === 'linked' ? storedIdentity.name : undefined,
+           )
+           if (remember) rememberConsent(key)
+         }
+diff --git a/neode-ui/src/views/dashboard/SignerLoginNotice.vue b/neode-ui/src/views/dashboard/SignerLoginNotice.vue
+new file mode 100644
+index 0000000..288705b
+--- /dev/null
++++ b/neode-ui/src/views/dashboard/SignerLoginNotice.vue
+@@ -0,0 +1,72 @@
++<template>
++  <div
++    v-if="notice"
++    class="fixed top-4 left-1/2 -translate-x-1/2 z-40 w-[min(92vw,34rem)]"
++    role="alert"
++    data-testid="signer-login-notice"
++  >
++    <div
++      class="path-option-card px-5 py-3 border-l-4 flex items-start gap-3 shadow-2xl"
++      :class="notice.urgent ? 'border-red-500 text-red-100' : 'border-yellow-500 text-yellow-100'"
++    >
++      <div class="flex-1 space-y-2 text-sm">
++        <p
++          v-for="(line, i) in notice.lines"
++          :key="i"
++          :class="{ 'font-semibold': line.urgent }"
++          :data-testid="line.urgent ? 'signer-notice-urgent' : undefined"
++        >{{ line.text }}</p>
++      </div>
++      <button class="text-sm text-white/70 hover:text-white" data-testid="signer-login-notice-dismiss" @click="dismiss">{{ t('signer.notice.dismiss') }}</button>
++    </div>
++  </div>
++</template>
++
++<script setup lang="ts">
++import { onMounted, ref } from 'vue'
++import { useI18n } from 'vue-i18n'
++import { signerApi, summariseStatus, type SignerAttemptRecord } from '@/api/signer-login'
++import { readDismissed, readLoginContext, writeDismissed } from '@/composables/loginRecord'
++
++const { t } = useI18n()
++const notice = ref<{ lines: Array<{ text: string; urgent: boolean }>; urgent: boolean; key: string } | null>(null)
++
++function addresses(list: SignerAttemptRecord[]): string {
++  return [...new Set(list.map(a => a.ip ?? t('signer.outcome.unknownIp')))].join(', ')
++}
++
++onMounted(async () => {
++  try {
++    const status = await signerApi.status()
++    const now = Math.floor(Date.now() / 1000)
++    const sum = summariseStatus(status, { now, ...readLoginContext() })
++    const lines: Array<{ text: string; urgent: boolean }> = []
++    if (sum.foreignApprovals.length) {
++      lines.push({ text: t('signer.notice.approvedElsewhere', { ips: addresses(sum.foreignApprovals) }), urgent: true })
++    }
++    if (sum.pending.length) {
++      lines.push({ text: t('signer.notice.pending', { ip: addresses(sum.pending) }), urgent: true })
++    }
++    if (sum.notApproved.length) {
++      lines.push({ text: t('signer.notice.notApproved', { count: sum.notApproved.length, ips: addresses(sum.notApproved) }, sum.notApproved.length), urgent: false })
++    }
++    if (sum.pausedUntil != null) {
++      lines.push({ text: t('signer.notice.paused', { time: new Date(sum.pausedUntil * 1000).toLocaleTimeString() }), urgent: false })
++    }
++    if (!lines.length) return
++    const all = [...sum.foreignApprovals, ...sum.pending, ...sum.notApproved]
++    const key = `${sum.pausedUntil ?? ''}|${all.map(a => `${a.at}${a.outcome}`).join(',')}`
++    if (readDismissed() === key) return
++    notice.value = { lines, urgent: lines.some(l => l.urgent), key }
++  } catch {
++    // Older node without the method, or not signed in: no notice.
++  }
++})
++
++function dismiss() {
++  if (notice.value) {
++    writeDismissed(notice.value.key)
++  }
++  notice.value = null
++}
++</script>
+diff --git a/neode-ui/src/views/dashboard/__tests__/SignerLoginNotice.test.ts b/neode-ui/src/views/dashboard/__tests__/SignerLoginNotice.test.ts
+new file mode 100644
+index 0000000..f99d64d
+--- /dev/null
++++ b/neode-ui/src/views/dashboard/__tests__/SignerLoginNotice.test.ts
+@@ -0,0 +1,144 @@
++import { flushPromises, mount } from '@vue/test-utils'
++import { beforeEach, describe, expect, it, vi } from 'vitest'
++
++vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
++vi.mock('@/api/signer-login', async (orig) => ({
++  ...(await orig<typeof import('@/api/signer-login')>()),
++  signerApi: { status: vi.fn() },
++}))
++
++import i18n from '@/i18n'
++import { signerApi, type SignerAttemptRecord } from '@/api/signer-login'
++import { recordLogin } from '@/composables/loginRecord'
++import SignerLoginNotice from '../SignerLoginNotice.vue'
++
++const status = vi.mocked(signerApi.status)
++const now = () => Math.floor(Date.now() / 1000)
++const rec = (secondsAgo: number, outcome: SignerAttemptRecord['outcome'], ip: string | null = '10.0.0.9'): SignerAttemptRecord =>
++  ({ at: now() - secondsAgo, ip, outcome })
++
++async function mountNotice() {
++  const w = mount(SignerLoginNotice, { global: { plugins: [i18n] } })
++  await flushPromises()
++  return w
++}
++
++describe('SignerLoginNotice', () => {
++  beforeEach(() => {
++    vi.clearAllMocks()
++    sessionStorage.clear()
++    localStorage.clear()
++  })
++
++  it('says nothing when there is nothing to report', async () => {
++    status.mockResolvedValue({ paused_until: null, recent: [] })
++    expect((await mountNotice()).find('[data-testid="signer-login-notice"]').exists()).toBe(false)
++  })
++
++  it('counts every kind of attempt nobody approved and names the addresses', async () => {
++    status.mockResolvedValue({
++      paused_until: null,
++      recent: [rec(500, 'denied', '10.0.0.9'), rec(400, 'expired', '10.0.0.9'), rec(300, 'offline', null)],
++    })
++    const w = await mountNotice()
++    expect(w.text()).toContain('3 signer login attempts since your last login were not approved (from 10.0.0.9, unknown address).')
++  })
++
++  it('uses the singular for one attempt', async () => {
++    status.mockResolvedValue({ paused_until: null, recent: [rec(300, 'denied')] })
++    expect((await mountNotice()).text()).toContain('One signer login attempt since your last login was not approved (from 10.0.0.9).')
++  })
++
++  it('warns about a prompt waiting on the signer right now', async () => {
++    status.mockResolvedValue({ paused_until: null, recent: [rec(15, 'pending', '192.168.1.77')] })
++    const w = await mountNotice()
++    expect(w.find('[data-testid="signer-notice-urgent"]').text()).toBe(
++      'A login is waiting on your signer, started from 192.168.1.77. If your signer is asking, deny it.',
++    )
++  })
++
++  it('flags an approved login that did not lead to this one, prominently', async () => {
++    recordLogin(false)
++    status.mockResolvedValue({ paused_until: null, recent: [rec(30, 'approved', '203.0.113.9')] })
++    const w = await mountNotice()
++    const urgent = w.find('[data-testid="signer-notice-urgent"]')
++    expect(urgent.text()).toContain('Your signer approved a login from 203.0.113.9.')
++    expect(urgent.text()).toContain('someone else may have access')
++    expect(w.find('[data-testid="signer-login-notice"] .border-red-500').exists()).toBe(true)
++  })
++
++  it('does not flag the approval behind this very signer login', async () => {
++    recordLogin(true, now(), now() - 6)
++    status.mockResolvedValue({ paused_until: null, recent: [rec(6, 'approved', '10.0.0.1')] })
++    expect((await mountNotice()).find('[data-testid="signer-login-notice"]').exists()).toBe(false)
++  })
++
++  describe('a tab that did not do the login (a new tab)', () => {
++    it('does not show the owner\'s own signer login as someone else', async () => {
++      recordLogin(true, now() - 3000, now() - 3006)
++      sessionStorage.clear()
++      status.mockResolvedValue({ paused_until: null, recent: [rec(3006, 'approved', '10.0.0.1')] })
++      expect((await mountNotice()).find('[data-testid="signer-login-notice"]').exists()).toBe(false)
++    })
++
++    it('does not show an earlier signer login either', async () => {
++      recordLogin(true, now() - 9000, now() - 9005)
++      recordLogin(false, now() - 100)
++      sessionStorage.clear()
++      status.mockResolvedValue({ paused_until: null, recent: [rec(9005, 'approved', '10.0.0.1')] })
++      expect((await mountNotice()).find('[data-testid="signer-login-notice"]').exists()).toBe(false)
++    })
++
++    it('still flags another address approving after the last login', async () => {
++      recordLogin(true, now() - 3000, now() - 3006)
++      sessionStorage.clear()
++      status.mockResolvedValue({
++        paused_until: null,
++        recent: [rec(3006, 'approved', '10.0.0.1'), rec(120, 'approved', '203.0.113.9')],
++      })
++      const w = await mountNotice()
++      expect(w.find('[data-testid="signer-notice-urgent"]').text()).toContain('203.0.113.9')
++      expect(w.text()).not.toContain('10.0.0.1')
++    })
++
++    it('stays dismissed in another tab', async () => {
++      status.mockResolvedValue({ paused_until: null, recent: [rec(300, 'expired')] })
++      const w = await mountNotice()
++      await w.find('[data-testid="signer-login-notice-dismiss"]').trigger('click')
++      sessionStorage.clear()
++      expect((await mountNotice()).find('[data-testid="signer-login-notice"]').exists()).toBe(false)
++    })
++  })
++
++  it('only mentions a pause when one is set, and never claims it was reset', async () => {
++    status.mockResolvedValue({ paused_until: now() + 600, recent: [rec(300, 'refused-budget')] })
++    const w = await mountNotice()
++    expect(w.text()).toMatch(/Signer login is paused until .+\. Logging in with your password clears it\./)
++    expect(w.text()).not.toContain('has reset it')
++
++    sessionStorage.clear()
++    status.mockResolvedValue({ paused_until: null, recent: [rec(300, 'expired')] })
++    const unpaused = await mountNotice()
++    expect(unpaused.text()).not.toMatch(/paused|reset/i)
++    expect(unpaused.text()).toContain('not approved')
++  })
++
++  it('ignores attempts from before the last login on this browser', async () => {
++    recordLogin(false, now() - 1000)
++    recordLogin(false)
++    status.mockResolvedValue({ paused_until: null, recent: [rec(5000, 'expired'), rec(4000, 'approved')] })
++    expect((await mountNotice()).find('[data-testid="signer-login-notice"]').exists()).toBe(false)
++  })
++
++  it('stays dismissed for the session, and quiet when the node lacks the method', async () => {
++    status.mockResolvedValue({ paused_until: null, recent: [rec(300, 'expired')] })
++    const w = await mountNotice()
++    await w.find('[data-testid="signer-login-notice-dismiss"]').trigger('click')
++    expect(w.find('[data-testid="signer-login-notice"]').exists()).toBe(false)
++    expect((await mountNotice()).find('[data-testid="signer-login-notice"]').exists()).toBe(false)
++
++    sessionStorage.clear()
++    status.mockRejectedValue(new Error('Method not found'))
++    expect((await mountNotice()).find('[data-testid="signer-login-notice"]').exists()).toBe(false)
++  })
++})
+diff --git a/neode-ui/src/views/settings/AccountSection.vue b/neode-ui/src/views/settings/AccountSection.vue
+index 5f88814..8130b9a 100644
+--- a/neode-ui/src/views/settings/AccountSection.vue
++++ b/neode-ui/src/views/settings/AccountSection.vue
+@@ -5,6 +5,7 @@ import { useAppStore } from '@/stores/app'
+ import AccountInfoSection from '@/views/settings/AccountInfoSection.vue'
+ import ChangePasswordSection from '@/views/settings/ChangePasswordSection.vue'
+ import TwoFactorSection from '@/views/settings/TwoFactorSection.vue'
++import LoginSignersSection from '@/views/settings/LoginSignersSection.vue'
+ import SessionTimeoutSection from '@/views/settings/SessionTimeoutSection.vue'
+ 
+ const router = useRouter()
+@@ -25,6 +26,7 @@ async function handleLogout() {
+     <AccountInfoSection />
+     <ChangePasswordSection />
+     <TwoFactorSection />
++    <LoginSignersSection />
+     <SessionTimeoutSection />
+ 
+     <!-- Logout Button -->
+diff --git a/neode-ui/src/views/settings/LoginSignersSection.vue b/neode-ui/src/views/settings/LoginSignersSection.vue
+new file mode 100644
+index 0000000..140c4fd
+--- /dev/null
++++ b/neode-ui/src/views/settings/LoginSignersSection.vue
+@@ -0,0 +1,312 @@
++<script setup lang="ts">
++import { computed, ref, watch } from 'vue'
++import { useI18n } from 'vue-i18n'
++import { signerApi, signerLoginAllowedHere, type EnrolFinish, type LoginSigner, type SignerStatus } from '@/api/signer-login'
++import { rpcClient } from '@/api/rpc-client'
++import { useSignerApproval } from '@/composables/useSignerApproval'
++import SignerEnrolProgress from '@/components/signer/SignerEnrolProgress.vue'
++import type { ManagedIdentity } from '@/views/web5/types'
++
++const { t } = useI18n()
++
++const signers = ref<LoginSigner[]>([])
++const linkedIdentities = ref<ManagedIdentity[]>([])
++const loadError = ref('')
++/** The signer methods are admin-only: anyone else just doesn't see the section. */
++const forbidden = ref(false)
++const status = ref<SignerStatus | null>(null)
++const portOk = signerLoginAllowedHere()
++
++const showAdd = ref(false)
++const addIdentityId = ref('')
++const addPassword = ref('')
++const addError = ref('')
++const addStarted = ref(false)
++
++const removeTarget = ref<LoginSigner | null>(null)
++const removePassword = ref('')
++const removeError = ref('')
++const removing = ref(false)
++
++const approval = useSignerApproval<EnrolFinish>(
++  () => signerApi.enrolStart(addIdentityId.value, addPassword.value),
++  (attemptId, signal) => signerApi.enrolFinish(attemptId, signal),
++  'enrolled',
++  { enrol: true },
++)
++
++// The node takes one login signer; adding another means removing this one first.
++const canAdd = computed(() => signers.value.length === 0)
++const recentNewestFirst = computed(() => [...(status.value?.recent ?? [])].reverse())
++const pausedUntil = computed(() => status.value?.paused_until != null
++  ? new Date(status.value.paused_until * 1000).toLocaleTimeString()
++  : '')
++
++function outcomeLabel(outcome: string): string {
++  const key = `signer.outcome.${outcome}`
++  const label = t(key)
++  return label === key ? outcome : label
++}
++
++function formatAt(at: number): string {
++  return new Date(at * 1000).toLocaleString()
++}
++
++async function load() {
++  try {
++    signers.value = await signerApi.list()
++    loadError.value = ''
++    status.value = await signerApi.status().catch(() => null)
++  } catch (e) {
++    const msg = e instanceof Error ? e.message : ''
++    if (/forbidden|insufficient/i.test(msg)) forbidden.value = true
++    else loadError.value = msg || t('signer.settings.loadFailed')
++  }
++}
++
++async function loadLinked() {
++  try {
++    const res = await rpcClient.call<{ identities: ManagedIdentity[] }>({ method: 'identity.list' })
++    linkedIdentities.value = (res.identities || []).filter(i => i.origin === 'linked')
++    if (!addIdentityId.value) addIdentityId.value = linkedIdentities.value[0]?.id ?? ''
++  } catch {
++    linkedIdentities.value = []
++  }
++}
++
++function openAdd() {
++  showAdd.value = true
++  addStarted.value = false
++  addPassword.value = ''
++  addError.value = ''
++  addIdentityId.value = ''
++  approval.reset()
++  void loadLinked()
++}
++
++async function startAdd() {
++  if (!addIdentityId.value || !addPassword.value) return
++  addStarted.value = true
++  addError.value = ''
++  const res = await approval.run()
++  if (res) {
++    addPassword.value = ''
++    await load()
++  } else if (approval.phase.value === 'failed' && !approval.reachedWaiting.value) {
++    // Refused before the signer was asked (wrong password, busy): back to the form.
++    addStarted.value = false
++    addError.value = approval.error.value
++  }
++}
++
++// An enrolment that went through after the owner cancelled still has to show up.
++watch(() => approval.late.value, (late) => { if (late?.ok) void load() })
++
++/** Cancel while the signer is being asked only hides the prompt; close ends it. */
++function cancelOrClose() {
++  if (approval.phase.value === 'waiting' || approval.phase.value === 'starting') {
++    approval.cancel()
++    return
++  }
++  closeAdd()
++}
++
++function closeAdd() {
++  approval.reset()
++  showAdd.value = false
++  addPassword.value = ''
++  addStarted.value = false
++  void load()
++}
++
++function openRemove(signer: LoginSigner) {
++  removeTarget.value = signer
++  removePassword.value = ''
++  removeError.value = ''
++}
++
++function closeRemove() {
++  removeTarget.value = null
++  removePassword.value = ''
++  removeError.value = ''
++}
++
++async function confirmRemove() {
++  if (!removeTarget.value || !removePassword.value || removing.value) return
++  removing.value = true
++  removeError.value = ''
++  try {
++    await signerApi.remove(removeTarget.value.identity_id, removePassword.value)
++    closeRemove()
++    await load()
++  } catch (e) {
++    removeError.value = e instanceof Error ? e.message : t('signer.settings.removeFailed')
++  } finally {
++    removing.value = false
++  }
++}
++
++function shortKey(pubkey: string): string {
++  return pubkey.length > 16 ? `${pubkey.slice(0, 8)}…${pubkey.slice(-6)}` : pubkey
++}
++
++defineExpose({ load })
++load()
++</script>
++
++<template>
++  <div v-if="!forbidden" class="mb-6" data-testid="login-signers">
++    <div class="flex items-center justify-between mb-3">
++      <div class="flex items-center gap-3">
++        <svg class="w-5 h-5 text-white/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
++          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
++        </svg>
++        <div>
++          <p class="text-sm font-medium text-white/90">{{ t('signer.settings.title') }}</p>
++          <p class="text-xs text-white/50">{{ t('signer.settings.desc') }}</p>
++        </div>
++      </div>
++      <span
++        class="text-xs font-semibold px-2 py-1 rounded-full"
++        :class="signers.length ? 'status-success' : 'bg-white/10 text-white/50'"
++      >{{ signers.length ? t('common.enabled') : t('signer.settings.none') }}</span>
++    </div>
++
++    <p v-if="loadError" class="text-sm text-red-400 mb-2" role="alert">{{ loadError }}</p>
++
++    <ul v-if="signers.length" class="space-y-2 mb-3">
++      <li
++        v-for="s in signers"
++        :key="s.identity_id"
++        class="flex items-center justify-between gap-3 p-3 rounded-lg bg-white/[0.08]"
++        data-testid="login-signer-row"
++      >
++        <div class="min-w-0">
++          <p class="text-sm font-medium text-white truncate">{{ s.name }}</p>
++          <p class="text-xs font-mono text-white/45 truncate" :title="s.pubkey">{{ shortKey(s.pubkey) }}</p>
++        </div>
++        <button class="glass-button glass-button-danger px-3 py-1.5 rounded-lg text-sm" @click="openRemove(s)">{{ t('signer.settings.remove') }}</button>
++      </li>
++    </ul>
++
++    <div v-if="status && (status.paused_until != null || status.recent.length)" class="mb-3" data-testid="signer-attempts">
++      <p v-if="status.paused_until != null" class="text-sm text-yellow-200 mb-2" data-testid="signer-paused">
++        {{ t('signer.settings.pausedUntil', { time: pausedUntil }) }}
++      </p>
++      <p class="text-xs font-medium text-white/60 mb-1">{{ t('signer.settings.recent') }}</p>
++      <ul class="space-y-1">
++        <li v-for="(a, i) in recentNewestFirst" :key="i" class="flex justify-between gap-3 text-xs text-white/70" data-testid="signer-attempt-row">
++          <span>{{ outcomeLabel(a.outcome) }}</span>
++          <span class="font-mono text-white/45 truncate">{{ a.ip ?? t('signer.outcome.unknownIp') }} · {{ formatAt(a.at) }}</span>
++        </li>
++      </ul>
++    </div>
++
++    <template v-if="canAdd">
++      <p v-if="!portOk" class="text-sm text-white/60" data-testid="signer-wrong-port">{{ t('signer.settings.wrongPort') }}</p>
++      <button
++        v-else
++        class="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg glass-button glass-button-warning font-medium"
++        data-testid="add-login-signer"
++        @click="openAdd"
++      >{{ t('signer.settings.add') }}</button>
++    </template>
++  </div>
++
++  <Teleport to="body">
++    <div
++      v-if="showAdd"
++      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
++      @click.self="addStarted || closeAdd()"
++      @keydown.escape="cancelOrClose"
++    >
++      <div class="glass-card p-6 max-w-md w-full" role="dialog" aria-modal="true" aria-labelledby="add-login-signer-title">
++        <h3 id="add-login-signer-title" class="text-lg font-semibold text-white mb-2">{{ t('signer.settings.addTitle') }}</h3>
++
++        <template v-if="!addStarted">
++          <p class="text-white/60 text-sm mb-4">{{ t('signer.settings.addDesc') }}</p>
++          <p v-if="!linkedIdentities.length" class="text-sm text-white/60 mb-4" data-testid="no-linked-identities">
++            {{ t('signer.settings.noLinked') }}
++          </p>
++          <form v-else class="space-y-4" @submit.prevent="startAdd">
++            <div>
++              <label for="add-signer-identity" class="block text-sm font-medium text-white/80 mb-2">{{ t('signer.settings.pick') }}</label>
++              <select
++                id="add-signer-identity"
++                v-model="addIdentityId"
++                class="w-full px-3 py-2 rounded-lg bg-white/10 text-white border border-white/20 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
++              >
++                <option v-for="i in linkedIdentities" :key="i.id" :value="i.id" class="text-black">{{ i.name }}</option>
++              </select>
++            </div>
++            <div>
++              <label for="add-signer-password" class="block text-sm font-medium text-white/80 mb-2">{{ t('signer.settings.password') }}</label>
++              <input
++                id="add-signer-password"
++                v-model="addPassword"
++                type="password"
++                required
++                autocomplete="current-password"
++                class="w-full px-3 py-2 rounded-lg bg-white/10 text-white border border-white/20 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
++              />
++            </div>
++            <p v-if="addError" class="text-sm text-red-400" role="alert">{{ addError }}</p>
++            <div class="flex gap-3">
++              <button
++                type="submit"
++                :disabled="!addIdentityId || !addPassword"
++                class="flex-1 px-4 py-2 rounded-lg bg-orange-500 text-white font-medium hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
++              >{{ t('common.continue') }}</button>
++              <button type="button" class="px-4 py-2 rounded-lg bg-white/10 text-white font-medium hover:bg-white/20 transition-colors" @click="closeAdd">{{ t('common.cancel') }}</button>
++            </div>
++          </form>
++          <button v-if="!linkedIdentities.length" class="w-full px-4 py-2 rounded-lg bg-white/10 text-white font-medium hover:bg-white/20 transition-colors" @click="closeAdd">{{ t('signer.settings.close') }}</button>
++        </template>
++
++        <template v-else>
++          <div class="my-4">
++            <SignerEnrolProgress :approval="approval" />
++          </div>
++          <button
++            class="w-full px-4 py-2 rounded-lg bg-white/10 text-white font-medium hover:bg-white/20 transition-colors"
++            data-testid="add-login-signer-close"
++            @click="cancelOrClose"
++          >{{ approval.phase.value === 'waiting' || approval.phase.value === 'starting' ? t('common.cancel') : (approval.phase.value === 'approved' || approval.late.value?.ok ? t('signer.settings.done') : t('signer.settings.close')) }}</button>
++        </template>
++      </div>
++    </div>
++  </Teleport>
++
++  <Teleport to="body">
++    <div
++      v-if="removeTarget"
++      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
++      @click.self="closeRemove"
++      @keydown.escape="closeRemove"
++    >
++      <div class="glass-card p-6 max-w-md w-full" role="dialog" aria-modal="true" aria-labelledby="remove-login-signer-title">
++        <h3 id="remove-login-signer-title" class="text-lg font-semibold text-white mb-2">{{ t('signer.settings.removeTitle') }}</h3>
++        <p class="text-white/60 text-sm mb-4">{{ t('signer.settings.removeDesc', { name: removeTarget.name }) }}</p>
++        <form class="space-y-4" @submit.prevent="confirmRemove">
++          <input
++            v-model="removePassword"
++            type="password"
++            required
++            autocomplete="current-password"
++            :aria-label="t('signer.settings.password')"
++            class="w-full px-3 py-2 rounded-lg bg-white/10 text-white border border-white/20 focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
++          />
++          <p v-if="removeError" class="text-sm text-red-400" role="alert">{{ removeError }}</p>
++          <div class="flex gap-3">
++            <button
++              type="submit"
++              :disabled="removing || !removePassword"
++              class="flex-1 px-4 py-2 rounded-lg bg-red-500 text-white font-medium hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
++            >{{ removing ? t('signer.settings.removing') : t('signer.settings.remove') }}</button>
++            <button type="button" class="px-4 py-2 rounded-lg bg-white/10 text-white font-medium hover:bg-white/20 transition-colors" @click="closeRemove">{{ t('common.cancel') }}</button>
++          </div>
++        </form>
++      </div>
++    </div>
++  </Teleport>
++</template>
+diff --git a/neode-ui/src/views/settings/__tests__/LoginSignersSection.test.ts b/neode-ui/src/views/settings/__tests__/LoginSignersSection.test.ts
+new file mode 100644
+index 0000000..c987350
+--- /dev/null
++++ b/neode-ui/src/views/settings/__tests__/LoginSignersSection.test.ts
+@@ -0,0 +1,244 @@
++import { flushPromises, mount } from '@vue/test-utils'
++import { beforeEach, describe, expect, it, vi } from 'vitest'
++
++vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
++vi.mock('@/api/signer-login', async (orig) => ({
++  ...(await orig<typeof import('@/api/signer-login')>()),
++  signerApi: { list: vi.fn(), status: vi.fn(), remove: vi.fn(), enrolStart: vi.fn(), enrolFinish: vi.fn() },
++}))
++
++import { rpcClient } from '@/api/rpc-client'
++import { signerApi } from '@/api/signer-login'
++import i18n from '@/i18n'
++import LoginSignersSection from '../LoginSignersSection.vue'
++
++const api = vi.mocked(signerApi)
++const rpc = vi.mocked(rpcClient)
++
++const enrolled = { identity_id: 'linked-1', pubkey: 'ab'.repeat(32), added_at: '2026-10-04T00:00:00Z', name: 'Heartwood' }
++const linked = { id: 'linked-1', name: 'Heartwood', origin: 'linked' }
++const local = { id: 'id-primary', name: 'Primary', origin: 'local' }
++
++function mountSection() {
++  return mount(LoginSignersSection, { global: { plugins: [i18n], stubs: { Teleport: true } } })
++}
++
++describe('LoginSignersSection', () => {
++  beforeEach(() => {
++    vi.clearAllMocks()
++    api.list.mockResolvedValue([])
++    api.status.mockResolvedValue({ paused_until: null, recent: [] })
++    rpc.call.mockResolvedValue({ identities: [local, linked] })
++  })
++
++  it('lists the enrolled signer with a remove button and no add button', async () => {
++    api.list.mockResolvedValue([enrolled])
++    const w = mountSection()
++    await flushPromises()
++    expect(w.findAll('[data-testid="login-signer-row"]')).toHaveLength(1)
++    expect(w.text()).toContain('Heartwood')
++    expect(w.find('[data-testid="add-login-signer"]').exists()).toBe(false)
++  })
++
++  it('offers only linked identities when adding', async () => {
++    const w = mountSection()
++    await flushPromises()
++    await w.find('[data-testid="add-login-signer"]').trigger('click')
++    await flushPromises()
++    const options = w.findAll('#add-signer-identity option').map(o => o.text())
++    expect(options).toEqual(['Heartwood'])
++  })
++
++  it('points to the Identities page when nothing is linked yet', async () => {
++    rpc.call.mockResolvedValue({ identities: [local] })
++    const w = mountSection()
++    await flushPromises()
++    await w.find('[data-testid="add-login-signer"]').trigger('click')
++    await flushPromises()
++    expect(w.find('[data-testid="no-linked-identities"]').text()).toContain('Identities page')
++  })
++
++  it('enrols with the password, shows the code, then lists the signer', async () => {
++    api.enrolStart.mockResolvedValue({ attempt_id: 'e1', code: '0042' })
++    let finish!: (v: unknown) => void
++    api.enrolFinish.mockReturnValue(new Promise(r => { finish = r }) as never)
++    const w = mountSection()
++    await flushPromises()
++    await w.find('[data-testid="add-login-signer"]').trigger('click')
++    await flushPromises()
++    await w.find('#add-signer-password').setValue('my password')
++    await w.find('form').trigger('submit')
++    await flushPromises()
++
++    expect(api.enrolStart).toHaveBeenCalledWith('linked-1', 'my password')
++    expect(w.find('[data-testid="signer-code"]').text()).toBe('0042')
++    expect(w.text()).toContain('deny it')
++
++    api.list.mockResolvedValue([enrolled])
++    finish({ status: 'enrolled', ...enrolled, approval_ms: 4000, quick_approval: true })
++    await flushPromises()
++    expect(w.find('[data-testid="signer-enrolled"]').exists()).toBe(true)
++    expect(w.find('[data-testid="quick-approval-warning"]').exists()).toBe(true)
++    expect(w.findAll('[data-testid="login-signer-row"]')).toHaveLength(1)
++  })
++
++  it('shows a wrong-password refusal from the node', async () => {
++    api.enrolStart.mockRejectedValue(new Error('Password Incorrect'))
++    const w = mountSection()
++    await flushPromises()
++    await w.find('[data-testid="add-login-signer"]').trigger('click')
++    await flushPromises()
++    await w.find('#add-signer-password').setValue('nope')
++    await w.find('form').trigger('submit')
++    await flushPromises()
++    expect(w.text()).toContain('Password Incorrect')
++  })
++
++  it('removes a signer only with the password', async () => {
++    api.list.mockResolvedValue([enrolled])
++    api.remove.mockResolvedValue({ removed: true })
++    const w = mountSection()
++    await flushPromises()
++    await w.find('[data-testid="login-signer-row"] button').trigger('click')
++    const submit = w.find('#remove-login-signer-title').element.parentElement!.querySelector('button[type="submit"]') as HTMLButtonElement
++    expect(submit.disabled).toBe(true)
++
++    api.list.mockResolvedValue([])
++    await w.find('input[aria-label="Password"]').setValue('my password')
++    await w.findAll('form')[w.findAll('form').length - 1]!.trigger('submit')
++    await flushPromises()
++
++    expect(api.remove).toHaveBeenCalledWith('linked-1', 'my password')
++    expect(w.findAll('[data-testid="login-signer-row"]')).toHaveLength(0)
++  })
++
++  it('keeps the signer and shows the error when removal is refused', async () => {
++    api.list.mockResolvedValue([enrolled])
++    api.remove.mockRejectedValue(new Error('Password Incorrect'))
++    const w = mountSection()
++    await flushPromises()
++    await w.find('[data-testid="login-signer-row"] button').trigger('click')
++    await w.find('input[aria-label="Password"]').setValue('wrong')
++    await w.findAll('form')[w.findAll('form').length - 1]!.trigger('submit')
++    await flushPromises()
++    expect(w.text()).toContain('Password Incorrect')
++    expect(w.findAll('[data-testid="login-signer-row"]')).toHaveLength(1)
++  })
++
++  it('lists recent attempts newest first, in words, and says when signer login is paused', async () => {
++    api.list.mockResolvedValue([enrolled])
++    api.status.mockResolvedValue({
++      paused_until: 1790000000,
++      recent: [
++        { at: 1789999000, ip: '192.168.1.40', outcome: 'expired' },
++        { at: 1789999100, ip: null, outcome: 'refused-budget' },
++        { at: 1789999200, ip: '192.168.1.41', outcome: 'pending' },
++        { at: 1789999300, ip: '192.168.1.42', outcome: 'refused' },
++      ],
++    })
++    const w = mountSection()
++    await flushPromises()
++    const rows = w.findAll('[data-testid="signer-attempt-row"]').map(r => r.text())
++    expect(rows).toHaveLength(4)
++    expect(rows[0]).toContain('Reply refused')
++    expect(rows[0]).toContain('192.168.1.42')
++    expect(rows[1]).toContain('Waiting for approval')
++    expect(rows[2]).toContain('Refused: too many attempts')
++    expect(rows[2]).toContain('unknown address')
++    expect(rows[3]).toContain('Not answered')
++    expect(w.find('[data-testid="signer-paused"]').text()).toMatch(/^Signer login is paused until .+\. Logging in with your password clears it\.$/)
++    expect(w.text()).not.toContain('unanswered')
++  })
++
++  it('goes back to the form when the node refuses before asking the signer (wrong password)', async () => {
++    api.enrolStart.mockRejectedValue(new Error('Password Incorrect'))
++    const w = mountSection()
++    await flushPromises()
++    await w.find('[data-testid="add-login-signer"]').trigger('click')
++    await flushPromises()
++    await w.find('#add-signer-password').setValue('nope')
++    await w.find('form').trigger('submit')
++    await flushPromises()
++    expect(w.find('#add-signer-password').exists()).toBe(true)
++    expect((w.find('#add-signer-password').element as HTMLInputElement).value).toBe('nope')
++    expect(w.find('[role="alert"]').text()).toBe('Password Incorrect')
++  })
++
++  it('words an enrolment that is already waiting as its own problem', async () => {
++    api.enrolStart.mockRejectedValue(new Error('linked signer is already waiting to approve an enrolment; approve or deny it on the signer first'))
++    const w = mountSection()
++    await flushPromises()
++    await w.find('[data-testid="add-login-signer"]').trigger('click')
++    await flushPromises()
++    await w.find('#add-signer-password').setValue('my password')
++    await w.find('form').trigger('submit')
++    await flushPromises()
++    expect(w.text()).toContain('Your signer is already handling a login or enrolment. Finish or deny that first.')
++    expect(w.text()).not.toContain("didn't come from this page")
++  })
++
++  describe('cancelling while the signer is being asked', () => {
++    async function cancelled() {
++      api.enrolStart.mockResolvedValue({ attempt_id: 'e1', code: '0042' })
++      const polls: Array<(v: unknown) => void> = []
++      api.enrolFinish.mockImplementation(() => new Promise((resolve) => { polls.push(resolve) }) as never)
++      const w = mountSection()
++      await flushPromises()
++      await w.find('[data-testid="add-login-signer"]').trigger('click')
++      await flushPromises()
++      await w.find('#add-signer-password').setValue('my password')
++      await w.find('form').trigger('submit')
++      await flushPromises()
++      await w.find('[data-testid="add-login-signer-close"]').trigger('click')
++      await flushPromises()
++      return { w, polls }
++    }
++
++    it('says the signer may still be asking and keeps the dialog open', async () => {
++      const { w } = await cancelled()
++      expect(w.find('[data-testid="signer-still-asking"]').text()).toContain('Your signer may still be asking. Deny it there.')
++      expect(w.find('[data-testid="signer-code"]').exists()).toBe(false)
++      expect(w.find('[data-testid="add-login-signer-close"]').text()).toBe('Close')
++    })
++
++    it('shows a late enrolment, with the quick-approval warning, and refreshes the list', async () => {
++      const { w, polls } = await cancelled()
++      api.list.mockResolvedValue([enrolled])
++      polls[0]!({ status: 'enrolled', ...enrolled, approval_ms: 200, quick_approval: true })
++      await flushPromises()
++      expect(w.find('[data-testid="signer-enrolled"]').exists()).toBe(true)
++      expect(w.find('[data-testid="quick-approval-warning"]').exists()).toBe(true)
++      expect(w.findAll('[data-testid="login-signer-row"]')).toHaveLength(1)
++      expect(w.find('[data-testid="add-login-signer-close"]').text()).toBe('Done')
++    })
++  })
++
++  it('hides the section for someone who may not manage signers', async () => {
++    api.list.mockRejectedValue(new Error('Forbidden: insufficient permissions'))
++    const w = mountSection()
++    await flushPromises()
++    expect(w.find('[data-testid="login-signers"]').exists()).toBe(false)
++  })
++
++  it('explains the address to use when the dashboard is on another port', async () => {
++    const orig = window.location
++    Object.defineProperty(window, 'location', { value: { ...orig, port: '8080', hostname: '192.0.2.10' }, writable: true, configurable: true })
++    try {
++      const w = mountSection()
++      await flushPromises()
++      expect(w.find('[data-testid="add-login-signer"]').exists()).toBe(false)
++      expect(w.find('[data-testid="signer-wrong-port"]').text()).toContain('usual address')
++    } finally {
++      Object.defineProperty(window, 'location', { value: orig, writable: true, configurable: true })
++    }
++  })
++
++  it('still lists signers when the status call is unavailable', async () => {
++    api.list.mockResolvedValue([enrolled])
++    api.status.mockRejectedValue(new Error('Method not found'))
++    const w = mountSection()
++    await flushPromises()
++    expect(w.findAll('[data-testid="login-signer-row"]')).toHaveLength(1)
++    expect(w.find('[data-testid="signer-attempts"]').exists()).toBe(false)
++  })
++})
+diff --git a/neode-ui/src/views/web5/Web5Identities.vue b/neode-ui/src/views/web5/Web5Identities.vue
+index d953caa..c4714f2 100644
+--- a/neode-ui/src/views/web5/Web5Identities.vue
++++ b/neode-ui/src/views/web5/Web5Identities.vue
+@@ -125,6 +125,7 @@
+                 'bg-orange-500/20 text-orange-300': identity.purpose === 'business',
+                 'bg-purple-500/20 text-purple-300': identity.purpose === 'anonymous',
+               }">{{ identity.purpose }}</span>
++              <span v-if="identity.origin === 'linked'" class="text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-300" :title="t('signer.link.badgeTitle')" data-testid="linked-badge">{{ t('signer.link.badge') }}</span>
+             </div>
+             <p v-if="identity.profile?.about" class="text-white/60 text-xs mt-1 leading-relaxed">{{ identity.profile.about }}</p>
+             <div class="mt-2 space-y-0.5">
+@@ -182,6 +183,7 @@
+               'bg-orange-500/20 text-orange-300': identity.purpose === 'business',
+               'bg-purple-500/20 text-purple-300': identity.purpose === 'anonymous',
+             }">{{ identity.purpose }}</span>
++            <span v-if="identity.origin === 'linked'" class="text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-300" :title="t('signer.link.badgeTitle')" data-testid="linked-badge">{{ t('signer.link.badge') }}</span>
+           </div>
+           <div class="flex items-center gap-1 mt-0.5">
+             <p class="text-white/50 text-xs font-mono truncate" :title="identity.did">{{ identity.did }}</p>
+@@ -220,11 +222,26 @@
+       </div>
+     </div>
+ 
+-    <button @click="showCreateIdentityModal = true" class="web5-card-actions-bottom mt-4 mobile-card-action glass-button rounded-lg text-sm font-medium">
+-      Create
+-    </button>
++    <div class="web5-card-actions-bottom-grid grid-cols-2 gap-3 mt-4">
++      <button @click="showCreateIdentityModal = true" class="mobile-card-action glass-button rounded-lg text-sm font-medium">
++        Create
++      </button>
++      <button @click="showLinkSignerModal = true" class="mobile-card-action glass-button rounded-lg text-sm font-medium" data-testid="link-signer-button">
++        {{ t('signer.link.button') }}
++      </button>
++    </div>
+   </div>
+ 
++  <!-- Link a signer Modal -->
++  <Teleport to="body">
++  <div v-if="showLinkSignerModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md" @click.self="showLinkSignerModal = false" @keydown.escape="showLinkSignerModal = false">
++    <div class="glass-card p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="link-signer-title">
++      <h2 id="link-signer-title" class="text-lg font-bold text-white mb-4">{{ t('signer.link.button') }}</h2>
++      <LinkSignerForm :cancel-label="t('common.cancel')" @linked="onSignerLinked" @cancel="showLinkSignerModal = false" />
++    </div>
++  </div>
++  </Teleport>
++
+   <!-- Create Identity Modal -->
+   <Teleport to="body">
+   <div v-if="showCreateIdentityModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md" @click.self="showCreateIdentityModal = false" @keydown.escape="showCreateIdentityModal = false">
+@@ -483,6 +500,7 @@ import { rpcClient } from '@/api/rpc-client'
+ import { safeClipboardWrite } from './utils'
+ import type { ManagedIdentity, IdentityProfile } from './types'
+ import IdentitySuccessPane from '@/components/IdentitySuccessPane.vue'
++import LinkSignerForm from '@/components/signer/LinkSignerForm.vue'
+ 
+ const { t } = useI18n()
+ 
+@@ -520,6 +538,7 @@ const emit = defineEmits<{
+ const managedIdentities = ref<ManagedIdentity[]>(readIdentitiesCache())
+ const identitiesLoading = ref(false)
+ const showCreateIdentityModal = ref(false)
++const showLinkSignerModal = ref(false)
+ const newIdentityName = ref('Personal')
+ const newIdentityPurpose = ref('personal')
+ const creatingIdentity = ref(false)
+@@ -674,6 +693,12 @@ async function createIdentity() {
+   }
+ }
+ 
++async function onSignerLinked() {
++  showLinkSignerModal.value = false
++  await loadIdentities()
++  emit('toast', t('signer.link.linked'))
++}
++
+ function copyIdentityDid(did: string) {
+   safeClipboardWrite(did)
+   emit('toast', t('web5.didCopied'))
+diff --git a/neode-ui/src/views/web5/__tests__/Web5Identities.test.ts b/neode-ui/src/views/web5/__tests__/Web5Identities.test.ts
+index f6f77f9..42f63f1 100644
+--- a/neode-ui/src/views/web5/__tests__/Web5Identities.test.ts
++++ b/neode-ui/src/views/web5/__tests__/Web5Identities.test.ts
+@@ -105,4 +105,50 @@ describe('Web5Identities', () => {
+     expect(wrapper.text()).toContain('wss://two rejected the event: write denied')
+     expect(wrapper.text()).toContain('event-123')
+   })
++
++  it('badges linked identities and offers to link a signer', async () => {
++    const linked = { ...makeIdentity('Heartwood'), origin: 'linked' as const }
++    const local = { ...makeIdentity('Personal'), is_default: false }
++    vi.mocked(rpcClient.call).mockResolvedValue({ identities: [linked, local] })
++    const wrapper = mount(Web5Identities, {
++      props: { showStagger: false },
++      global: { stubs: { Teleport: true } },
++    })
++    await (wrapper.vm as unknown as { loadIdentities: () => Promise<void> }).loadIdentities()
++    await flushPromises()
++
++    // One badge per layout (phone card + wide row) for the linked identity only.
++    expect(wrapper.findAll('[data-testid="linked-badge"]')).toHaveLength(2)
++    // useI18n is mocked to echo keys in this file.
++    expect(wrapper.find('[data-testid="link-signer-button"]').text()).toBe('signer.link.button')
++    expect(wrapper.find('[data-testid="linked-badge"]').text()).toBe('signer.link.badge')
++    expect(wrapper.find('[data-testid="link-signer-form"]').exists()).toBe(false)
++
++    await wrapper.find('[data-testid="link-signer-button"]').trigger('click')
++    expect(wrapper.find('[data-testid="link-signer-form"]').exists()).toBe(true)
++  })
++
++  it('refreshes the list after a signer is linked', async () => {
++    vi.mocked(rpcClient.call).mockImplementation((request: { method: string }) => {
++      if (request.method === 'identity.link-nip46') return Promise.resolve({ id: 'linked-1', name: 'My signer' })
++      return Promise.resolve({ identities: [] })
++    })
++    const wrapper = mount(Web5Identities, {
++      props: { showStagger: false },
++      global: { stubs: { Teleport: true } },
++    })
++    await wrapper.find('[data-testid="link-signer-button"]').trigger('click')
++    await wrapper.find('#link-signer-uri').setValue('bunker://abc')
++    await wrapper.find('#link-signer-name').setValue('My signer')
++    await wrapper.find('[data-testid="link-signer-form"]').trigger('submit')
++    await flushPromises()
++
++    expect(rpcClient.call).toHaveBeenCalledWith(expect.objectContaining({
++      method: 'identity.link-nip46', params: { bunker_uri: 'bunker://abc', name: 'My signer' },
++    }))
++    expect(rpcClient.call).toHaveBeenCalledWith(expect.objectContaining({ method: 'identity.list' }))
++    const toasts = wrapper.emitted('toast') ?? []
++    expect(toasts[toasts.length - 1]).toEqual(['signer.link.linked'])
++    expect(wrapper.find('[data-testid="link-signer-form"]').exists()).toBe(false)
++  })
+ })
+diff --git a/neode-ui/src/views/web5/types.ts b/neode-ui/src/views/web5/types.ts
+index a6af7a4..3a0c259 100644
+--- a/neode-ui/src/views/web5/types.ts
++++ b/neode-ui/src/views/web5/types.ts
+@@ -120,6 +120,9 @@ export interface ManagedIdentity {
+   nostr_pubkey?: string
+   nostr_npub?: string
+   profile?: IdentityProfile
++  /** 'linked' when the key lives on a remote signer rather than this node. */
++  origin?: 'local' | 'linked'
++  signer?: { remote_signer_pubkey: string; relays: string[] }
+ }
+ 
+ export interface DwnStatusData {
+-- 
+2.53.0
+

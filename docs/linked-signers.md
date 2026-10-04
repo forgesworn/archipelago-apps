@@ -64,6 +64,34 @@ the board, and its button and policy engine gate every signature.
   `ttyUSB*`/`ttyACM*` port, which can include the Heartwood. Pin the mesh
   radio to its own device path, or leave mesh off.
 
+## Logging in with your signer
+
+With backend `-p5` and frontend `-p1` or later (`upstream/patches/0006` and
+`0007`), a linked identity can also log you in to the dashboard. Your password
+always keeps working.
+
+- **Enrol it:** Settings → Security, "Add a login signer", or the optional
+  "Connect a signer" step at the end of onboarding. You confirm your password,
+  the page shows a 4-digit code, and you approve on the signer once it shows
+  the same code.
+- **Log in:** "Log in with your signer" on the login page. The page shows a
+  code; check your signer shows the same one, then approve. If your signer
+  asks when you didn't start a login on this page, deny it.
+- **With 2FA:** enter your password first, then choose "Approve on your
+  signer instead" in place of the authenticator code.
+- **Heartwood:** firmware with login-challenge support (Heartwood PR #210 and
+  later) always asks for the button on a login, even on a pairing set to
+  approve automatically, and shows "LOG IN" with the code. A signer that
+  approves logins automatically makes signer login only as strong as that
+  signer: the dashboard warns you at enrolment if the approval came back too
+  fast for a person.
+- **Dashboard address:** signer login and enrolment work when you reach the
+  dashboard on port 80 or 443. On any other port, log in with your password.
+- **Someone else trying:** each login waits for one approval at a time, and a
+  burst of attempts pauses signer login for a while. Logging in with your
+  password lifts the pause, and Settings → Security lists recent attempts with
+  their addresses.
+
 ## Limits
 
 - **The signer has to be online.** A request to a signer that doesn't answer

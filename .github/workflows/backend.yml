@@ -101,8 +101,9 @@ jobs:
             container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_refuses_an_empty_set \
             container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_needs_the_node_key_and_never_creates_it | tee "$RUNNER_TEMP/archipelago.log"
           grep -q 'test result: ok. 7 passed;' "$RUNNER_TEMP/archipelago.log"
-      # Linked signers (patches 0003-0005), one module
-      # filter at a time. Each count covers the whole module, upstream's tests
+      # Linked signers and signer login (patches 0003-0006), one module
+      # filter at a time (filters are substring matches: signer_login::tests::
+      # also counts api::rpc::signer_login::tests::). Each count covers the whole module, upstream's tests
       # included, so a dropped or renamed test changes it. Re-count after an
       # ARCHY_REF bump.
       - name: Patch tests (linked signers)
@@ -115,12 +116,15 @@ jobs:
             grep -q "test result: ok. $2 passed; 0 failed" "$RUNNER_TEMP/patch.log" \
               || { echo "::error::$1: expected $2 passed"; exit 1; }
           }
-          check remote_signer::tests:: 37
+          check remote_signer::tests:: 38
           check identity_manager::tests:: 32
           check api::rpc::nostr_signing_origin_tests:: 3
-          check api::rpc::middleware::sanitize_tests:: 9
-          check rate_limit::tests:: 9
-          check api::rpc::identity::handlers::tests:: 1
+          check api::rpc::middleware::sanitize_tests:: 10
+          check rate_limit::tests:: 10
+          check api::rpc::identity::handlers::tests:: 2
+          check signer_login::tests:: 36
+          check api::rpc::signer_login::tests:: 3
+          check api::rpc::signer_login_tests:: 17
       - name: Build backend
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy/core

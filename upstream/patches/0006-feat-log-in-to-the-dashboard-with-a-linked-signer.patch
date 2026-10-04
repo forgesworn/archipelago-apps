@@ -1,0 +1,3731 @@
+From da74e3570a9d0ce70d4cf63038e9700d8a5112ee Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 09:25:30 +0200
+Subject: [PATCH] feat: log in to the dashboard with a linked signer
+
+A linked identity can now be enrolled to log in to the dashboard through
+its NIP-46 signer. The password stays and always works; enrolment never
+replaces it, and removing an enrolment never locks anyone out.
+
+auth.signer.enrol.start takes { identity_id, password }. It re-checks
+the password, accepts only an identity linked to a signer, and asks the
+signer to sign a login challenge, returning { attempt_id, code } so the
+dashboard can show the code to check against the device.
+auth.signer.enrol.finish { attempt_id } waits at most 10 s and returns
+{ status: "pending" }, or saves the enrolment once the signer approves
+(re-checking that the identity is still linked to the same key) and
+returns it with approval_ms and quick_approval, set when the signer
+answered in under a second, which suggests one that signs without
+asking. Both are bound to the owner's session. auth.signer.list lists
+enrolments; auth.signer.remove takes { identity_id, password }. One
+signer can be enrolled for now: a second is refused until the first is
+removed. Enrolments are kept in user.json beside the TOTP data, written
+through a synced temporary file that keeps the file's permissions.
+Deleting an identity removes its enrolment first. These methods need a
+session and follow the dashboard origin rule.
+
+A login sends the enrolled signer a kind 22242 event to sign: a 32-byte
+random challenge tag, a relay tag with the dashboard origin the browser
+used and a code tag with four random digits, content "Log in to <node
+name>". The page shows the code so the owner can check their signer
+shows the same before pressing.
+
+Without 2FA, auth.login.signer.available is true once a signer is
+enrolled, and auth.login.signer.start {} returns { attempt_id, code }
+with no password. auth.login.signer.finish { attempt_id } waits at most
+10 s and returns { status: "pending" }, or mints the session, CSRF and
+remember cookies exactly as a password login does.
+
+With 2FA, the signer stands in for the TOTP code, not the password.
+available is false; auth.login with the right password returns
+requires_totp as before, now with signer: true when one is enrolled,
+and leaves its pending session. start then needs that pending session
+and is bound to it, and an approved finish upgrades it as
+auth.login.totp does. The signer login must be started from the browser
+that gave the password. Checking the pending session does not count as a
+TOTP attempt. Without it, start gives the same answer as a node with no
+signer, so nothing before the password says whether 2FA is on beyond
+whether a password-less signer login is offered.
+
+The signed event is checked when it arrives: kind, enrolled key,
+signature, challenge, relay and code (each exactly once), and
+created_at within 60 s of the node's clock. It goes through the linked
+signer session, so an offline, refusing or slow signer gives a clear
+error without hanging. An unauthenticated caller sees only fixed texts
+(offline, denied, no answer in time, refused, failed); the detail,
+which can include the signer's relays or its own words, is logged.
+
+An attempt is single use and lasts two minutes in all; the signer has
+about a minute of that to answer. It belongs to whoever started it:
+without 2FA, start sets an HttpOnly, SameSite=Strict cookie on /rpc/,
+named for the attempt, that finish must present, cleared once the
+attempt is used up or gone; otherwise the session or pending session.
+A finish without it is refused and leaves the attempt alone. While a
+login or enrolment waits on a signer, or is approved but not yet
+finished, another start for that signer is refused rather than
+replacing it, so nobody can keep cancelling the owner's request and the
+device never shows both kinds at once. The refusal tells the owner that
+a prompt on their signer did not come from their page and to deny it.
+A failed attempt frees the slot at once.
+
+Login starts and finishes, and enrolment starts and finishes, are
+refused from any browser origin but the dashboard: the same host as the
+request's Host, on port 80 or 443. So an app page on the node cannot
+start a login, read its code and show it to the owner, and other sites
+cannot start one at all. Requests without Origin (non-browser clients)
+are allowed. A dashboard reached on another port, such as through a
+port-forward to 8443, cannot use signer login or enrolment and falls
+back to the password.
+
+Every login start counts against the password login rate limit (five a
+minute per address), as does every failed finish. On top of that,
+logins have a node-wide budget of three starts in ten minutes, and each
+failed, denied or expired login pauses the next start, for longer each
+time (30 seconds, two minutes, ten minutes). This caps how often anyone
+can make the signer ask. On a node without 2FA, someone who can reach
+the login page can keep signer login paused for as long as they keep
+trying; password login always works, and a successful password or
+signer login clears the pause. auth.signer.status (for the logged-in
+owner, from the dashboard) returns when signer login is paused until
+and the last 20 login starts with their address and outcome (pending, approved,
+denied, expired, offline, refused, failed, refused-busy,
+refused-budget), so the dashboard can say who tripped a pause. The
+record is kept in memory only. A password-less login is also refused at
+finish if 2FA was switched on while the signer was asking. The new
+methods have endpoint limits too.
+
+NIP-46 connect now carries the client metadata { "name": "Archipelago" }
+as its fourth param, with empty strings for an absent secret and for
+requested permissions, as nostr-tools sends them. Before, a bunker://
+link sent only the signer key and secret, so a signer had no name to
+show for the node and showed a bare client key instead.
+---
+ core/archipelago/src/api/rpc/dispatcher.rs    |    4 +
+ .../src/api/rpc/identity/handlers.rs          |   33 +
+ core/archipelago/src/api/rpc/middleware.rs    |   34 +
+ core/archipelago/src/api/rpc/mod.rs           |  771 +++++++-
+ core/archipelago/src/api/rpc/signer_login.rs  |  495 +++++
+ core/archipelago/src/auth.rs                  |  160 ++
+ core/archipelago/src/main.rs                  |    1 +
+ core/archipelago/src/rate_limit.rs            |   36 +
+ core/archipelago/src/remote_signer.rs         |   52 +-
+ core/archipelago/src/session.rs               |   30 +
+ core/archipelago/src/signer_login.rs          | 1739 +++++++++++++++++
+ 11 files changed, 3348 insertions(+), 7 deletions(-)
+ create mode 100644 core/archipelago/src/api/rpc/signer_login.rs
+ create mode 100644 core/archipelago/src/signer_login.rs
+
+diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
+index e7f12a1..527c8af 100644
+--- a/core/archipelago/src/api/rpc/dispatcher.rs
++++ b/core/archipelago/src/api/rpc/dispatcher.rs
+@@ -29,6 +29,10 @@ impl RpcHandler {
+             "auth.createDeviceToken" => self.handle_auth_create_device_token(params).await,
+             "auth.listDeviceTokens" => self.handle_auth_list_device_tokens().await,
+             "auth.revokeDeviceToken" => self.handle_auth_revoke_device_token(params).await,
++            "auth.signer.list" => self.handle_signer_list().await,
++            "auth.signer.remove" => self.handle_signer_remove(params).await,
++            "auth.signer.status" => self.handle_signer_status().await,
++            "auth.login.signer.available" => self.handle_signer_login_available().await,
+ 
+             // Seed management (BIP-39 mnemonic)
+             "seed.generate" => self.handle_seed_generate().await,
+diff --git a/core/archipelago/src/api/rpc/identity/handlers.rs b/core/archipelago/src/api/rpc/identity/handlers.rs
+index 430cabe..9287ebf 100644
+--- a/core/archipelago/src/api/rpc/identity/handlers.rs
++++ b/core/archipelago/src/api/rpc/identity/handlers.rs
+@@ -258,6 +258,11 @@ impl RpcHandler {
+         validate_identity_id(id)?;
+ 
+         let manager = IdentityManager::new(&self.config.data_dir).await?;
++        // Its login enrolment goes first, so a delete that fails part-way
++        // never leaves an enrolment behind. Password login is unaffected.
++        if self.auth_manager.remove_login_signer(id).await? {
++            tracing::info!(identity = %id, "Removed the login enrolment of a deleted identity");
++        }
+         manager.delete(id).await?;
+ 
+         Ok(serde_json::json!({ "ok": true }))
+@@ -1101,6 +1106,34 @@ fn pairing_relays(params: &serde_json::Value) -> Result<Vec<nostr_sdk::RelayUrl>
+ mod tests {
+     use super::*;
+ 
++    #[tokio::test]
++    async fn deleting_an_identity_drops_its_login_enrolment() {
++        let handler = crate::api::rpc::tests_support::test_rpc_handler().await;
++        let (handler, dir) = (handler.0, handler.1);
++        let auth = crate::auth::AuthManager::new(dir.path().to_path_buf());
++        auth.setup_user("password123").await.unwrap();
++        let manager = IdentityManager::new(dir.path()).await.unwrap();
++        let record = manager
++            .create("Signer".to_string(), IdentityPurpose::Personal)
++            .await
++            .unwrap();
++        auth.add_login_signer(crate::auth::LoginSigner {
++            identity_id: record.id.clone(),
++            pubkey: "ab".repeat(32),
++            added_at: "2026-10-03T00:00:00Z".to_string(),
++        })
++        .await
++        .unwrap();
++
++        handler
++            .handle_identity_delete(Some(serde_json::json!({ "id": record.id })))
++            .await
++            .unwrap();
++        assert!(auth.login_signers().await.unwrap().is_empty());
++        assert!(manager.get(&record.id).await.is_err());
++        assert!(auth.verify_password("password123").await.unwrap());
++    }
++
+     #[test]
+     fn pairing_relays_are_one_to_eight_websocket_urls() {
+         let relays = |n: usize| {
+diff --git a/core/archipelago/src/api/rpc/middleware.rs b/core/archipelago/src/api/rpc/middleware.rs
+index 000c34f..ebd1054 100644
+--- a/core/archipelago/src/api/rpc/middleware.rs
++++ b/core/archipelago/src/api/rpc/middleware.rs
+@@ -12,6 +12,11 @@ pub(crate) const UNAUTHENTICATED_METHODS: &[&str] = &[
+     "auth.login",
+     "auth.login.totp",
+     "auth.login.backup",
++    // Signer login: the public "is a signer enrolled" flag, and the login
++    // itself (rate-limited with auth.login, see api/rpc/mod.rs).
++    "auth.login.signer.available",
++    "auth.login.signer.start",
++    "auth.login.signer.finish",
+     "auth.isOnboardingComplete",
+     "auth.isSetup",
+     "auth.setup",
+@@ -291,6 +296,35 @@ mod sanitize_tests {
+         }
+     }
+ 
++    #[test]
++    fn signer_login_errors_reach_the_login_page() {
++        use crate::signer_login::*;
++        for msg in [
++            NOT_ENABLED,
++            ALREADY_WAITING,
++            PAUSED,
++            EXPIRED,
++            GONE,
++            OTHER_BROWSER,
++            PUBLIC_OFFLINE,
++            PUBLIC_DENIED,
++            PUBLIC_TIMEOUT,
++            PUBLIC_REFUSED,
++            PUBLIC_FAILED,
++            ENROL_BUSY_LOGIN,
++            ENROL_BUSY,
++            ENROL_EXPIRED,
++            "Invalid signer login: the code does not match",
++            "Already exists: a signer is already enrolled for login; remove it first",
++            "Invalid identity: only an identity linked to a signer can log in",
++            "Invalid identity: it is no longer linked to this signer",
++            "Session expired. Please log in with your password again.",
++            "Missing Host header",
++        ] {
++            assert_eq!(sanitize_error_message(msg), msg);
++        }
++    }
++
+     #[test]
+     fn tor_unavailable_precondition_passes_through() {
+         let msg = "Tor address not available. Tor may not be running.";
+diff --git a/core/archipelago/src/api/rpc/mod.rs b/core/archipelago/src/api/rpc/mod.rs
+index 6f507f7..21806b4 100644
+--- a/core/archipelago/src/api/rpc/mod.rs
++++ b/core/archipelago/src/api/rpc/mod.rs
+@@ -42,6 +42,7 @@ mod response;
+ mod router;
+ mod security;
+ mod seed_rpc;
++mod signer_login;
+ mod streaming;
+ mod system;
+ pub(crate) mod tor;
+@@ -158,6 +159,8 @@ pub struct RpcHandler {
+     /// by moving from the dashboard to an app port.
+     pub(crate) app_gate: Arc<crate::appgate::AppGate>,
+     endpoint_rate_limiter: EndpointRateLimiter,
++    /// Signer login and enrolment attempts, with the node-wide login budget.
++    signer_logins: Arc<crate::signer_login::LoginAttempts>,
+     response_cache: ResponseCache,
+     mesh_service: Arc<tokio::sync::RwLock<Option<crate::mesh::MeshService>>>,
+     /// LoRa radio firmware-flash job state, sibling to `mesh_service` — one
+@@ -241,6 +244,7 @@ impl RpcHandler {
+             login_rate_limiter,
+             app_gate,
+             endpoint_rate_limiter,
++            signer_logins: Arc::new(crate::signer_login::LoginAttempts::default()),
+             response_cache: ResponseCache::new(5),
+             mesh_service: Arc::new(tokio::sync::RwLock::new(None)),
+             flash_job: crate::mesh::flash::new_job_handle(),
+@@ -368,6 +372,32 @@ impl RpcHandler {
+             ));
+         }
+ 
++        // Login signers decide who can log in, so they are managed from the
++        // dashboard (or an authenticated non-browser client) only.
++        if signer_login::login_signer_method(&rpc_req.method)
++            && !nostr_signing_origin_allowed(&parts.headers, self.config.dev_mode)
++        {
++            return Ok(self.error_response(
++                403,
++                "Managing login signers is only allowed from the dashboard",
++                StatusCode::FORBIDDEN,
++            ));
++        }
++
++        // Requests that put a prompt on the owner's signer, or collect its
++        // answer, come from the dashboard on this host or from a non-browser
++        // client only: never from an app port, which could show the owner
++        // the matching code, nor from another site.
++        if signer_login::signer_prompt_method(&rpc_req.method)
++            && !signer_login::signer_prompt_origin_allowed(&parts.headers, self.config.dev_mode)
++        {
++            return Ok(self.error_response(
++                403,
++                "Signer login is only allowed from the dashboard",
++                StatusCode::FORBIDDEN,
++            ));
++        }
++
+         // Enforce authentication for non-allowlisted methods
+         let is_unauthenticated = UNAUTHENTICATED_METHODS.contains(&rpc_req.method.as_str());
+         let mut new_session_cookies: Option<(String, String)> = None;
+@@ -473,8 +503,12 @@ impl RpcHandler {
+             }
+         }
+ 
+-        // Rate limit login attempts
+-        if rpc_req.method == "auth.login" {
++        // Rate limit login attempts. A signer login start shares the budget:
++        // each one puts a prompt on the owner's signer.
++        if matches!(
++            rpc_req.method.as_str(),
++            "auth.login" | "auth.login.signer.start"
++        ) {
+             let client_ip = extract_client_ip(&parts);
+             if !self.login_rate_limiter.check(client_ip).await {
+                 return Ok(self.rate_limit_response());
+@@ -498,7 +532,10 @@ impl RpcHandler {
+ 
+         // Extract params; clone for post-routing use (login 2FA check needs password)
+         let params = rpc_req.params;
+-        let login_params: Option<serde_json::Value> = if rpc_req.method == "auth.login" {
++        let login_params: Option<serde_json::Value> = if matches!(
++            rpc_req.method.as_str(),
++            "auth.login" | "auth.login.signer.finish"
++        ) {
+             params.clone()
+         } else {
+             None
+@@ -519,7 +556,18 @@ impl RpcHandler {
+ 
+         // Route to handler (track latency for metrics)
+         let rpc_start = std::time::Instant::now();
+-        let result = Self::dispatch(&self, &rpc_req.method, params, &session_token).await;
++        let result = if signer_login::signer_prompt_method(&rpc_req.method) {
++            // The session as it stands after any remember-me restore.
++            let session = new_session_cookies
++                .as_ref()
++                .map(|(token, _)| token.as_str())
++                .or(session_token.as_deref());
++            let client_ip = extract_client_ip(&parts);
++            self.dispatch_signer_login(&rpc_req.method, params, &parts.headers, session, client_ip)
++                .await
++        } else {
++            Self::dispatch(&self, &rpc_req.method, params, &session_token).await
++        };
+ 
+         // Record RPC latency for monitoring
+         let elapsed_ms = rpc_start.elapsed().as_secs_f64() * 1000.0;
+@@ -637,6 +685,8 @@ impl RpcHandler {
+         // the token was minted from an already-authenticated session, and there
+         // is no password with which to decrypt the TOTP secret anyway.
+         if method == "auth.login" && rpc_resp.error.is_none() {
++            // The owner is here: clear a signer login pause others tripped.
++            self.signer_logins.password_login();
+             let password = login_params
+                 .as_ref()
+                 .and_then(|p| p.get("password"))
+@@ -669,8 +719,16 @@ impl RpcHandler {
+                         let csrf_token = derive_csrf_token(&token).await;
+                         self.set_session_cookie(response, &token, secure_suffix);
+                         self.set_csrf_cookie(response, &csrf_token, secure_suffix);
++                        // The password is right, so the page may now learn
++                        // that a signer can stand in for the TOTP code.
++                        let signer = !self
++                            .auth_manager
++                            .login_signers()
++                            .await
++                            .unwrap_or_default()
++                            .is_empty();
+                         let totp_body = serde_json::json!({
+-                            "result": { "requires_totp": true },
++                            "result": { "requires_totp": true, "signer": signer },
+                             "error": null
+                         });
+                         *response.body_mut() =
+@@ -687,6 +745,73 @@ impl RpcHandler {
+             }
+         }
+ 
++        // Signer login. Every start counts against the login rate limit, as
++        // does a finish that fails. A binding token goes into a cookie named
++        // for its attempt rather than the response body.
++        if method == "auth.login.signer.start" {
++            self.login_rate_limiter.record_failure(client_ip).await;
++            let result = rpc_resp.result.as_mut().and_then(|r| r.as_object_mut());
++            if let Some(obj) = result {
++                let binding = obj.remove("binding");
++                let cookie = obj
++                    .get("attempt_id")
++                    .and_then(|v| v.as_str())
++                    .and_then(crate::signer_login::binding_cookie_name);
++                if let (Some(binding), Some(cookie)) =
++                    (binding.as_ref().and_then(|v| v.as_str()), cookie)
++                {
++                    self.set_signer_binding_cookie(response, &cookie, binding, secure_suffix);
++                }
++                let body_bytes = serde_json::to_vec(&rpc_resp).unwrap_or_default();
++                *response.body_mut() = hyper::Body::from(body_bytes);
++            }
++        }
++        if method == "auth.login.signer.finish" {
++            let approved = rpc_resp
++                .result
++                .as_ref()
++                .and_then(|r| r.get("status"))
++                .and_then(|v| v.as_str())
++                == Some("approved");
++            let pending = rpc_resp.error.is_none() && !approved;
++            if rpc_resp.error.is_some() {
++                self.login_rate_limiter.record_failure(client_ip).await;
++            }
++            let cookie = login_params
++                .as_ref()
++                .and_then(|p| p.get("attempt_id"))
++                .and_then(|v| v.as_str())
++                .and_then(crate::signer_login::binding_cookie_name);
++            if let (false, Some(cookie)) = (pending, cookie) {
++                // This attempt is used up or gone either way. Other
++                // attempts' cookies have other names and are left alone.
++                self.set_signer_binding_cookie(response, &cookie, "", secure_suffix);
++            }
++            if approved {
++                let upgraded = rpc_resp
++                    .result
++                    .as_mut()
++                    .and_then(|r| r.as_object_mut())
++                    .and_then(|obj| obj.remove("new_session_token"))
++                    .and_then(|v| v.as_str().map(str::to_string));
++                // A 2FA login: the pending session was upgraded in place of
++                // the TOTP code, and its new token is set here as
++                // `auth.login.totp` sets it. Otherwise a session is minted
++                // as `auth.login` mints one.
++                let token = match upgraded {
++                    Some(token) => token,
++                    None => self.session_store.create().await,
++                };
++                let csrf_token = derive_csrf_token(&token).await;
++                let remember_token = self.session_store.create_remember_token().await;
++                self.set_session_cookie(response, &token, secure_suffix);
++                self.set_csrf_cookie(response, &csrf_token, secure_suffix);
++                self.set_remember_cookie(response, &remember_token, secure_suffix);
++                let body_bytes = serde_json::to_vec(&rpc_resp).unwrap_or_default();
++                *response.body_mut() = hyper::Body::from(body_bytes);
++            }
++        }
++
+         // On successful TOTP verification, set the rotated session cookie
+         if (method == "auth.login.totp" || method == "auth.login.backup")
+             && rpc_resp.error.is_none()
+@@ -783,6 +908,30 @@ impl RpcHandler {
+         );
+     }
+ 
++    /// The cookie `name` binding a signer login attempt to this browser; an
++    /// empty `binding` clears it. Scoped to the RPC path and never sent
++    /// cross-site.
++    fn set_signer_binding_cookie(
++        &self,
++        response: &mut Response<hyper::Body>,
++        name: &str,
++        binding: &str,
++        secure_suffix: &str,
++    ) {
++        let max_age = if binding.is_empty() {
++            0
++        } else {
++            crate::signer_login::ATTEMPT_TTL.as_secs()
++        };
++        response.headers_mut().append(
++            "Set-Cookie",
++            cookie_header(&format!(
++                "{}={}; HttpOnly; SameSite=Strict; Path=/rpc/; Max-Age={}{}",
++                name, binding, max_age, secure_suffix
++            )),
++        );
++    }
++
+     fn set_remember_cookie(
+         &self,
+         response: &mut Response<hyper::Body>,
+@@ -880,3 +1029,615 @@ mod session_probe_contract_tests {
+         assert!(!DISPATCHER.contains("\"system.get-version\" =>"));
+     }
+ }
++
++#[cfg(test)]
++pub(crate) mod tests_support {
++    use super::RpcHandler;
++    use std::sync::Arc;
++
++    /// A handler over a fresh temporary data dir, with no orchestrator.
++    pub(crate) async fn test_rpc_handler() -> (Arc<RpcHandler>, tempfile::TempDir) {
++        let tmp = tempfile::tempdir().expect("tempdir");
++        let config = crate::config::Config {
++            data_dir: tmp.path().to_path_buf(),
++            ..Default::default()
++        };
++        let session_store =
++            crate::session::SessionStore::new_for_tests(tmp.path().join("sessions.json"));
++        let handler = RpcHandler::new(
++            config,
++            Arc::new(crate::state::StateManager::new()),
++            Arc::new(crate::monitoring::MetricsStore::new()),
++            session_store,
++            None,
++            None,
++        )
++        .await
++        .expect("RpcHandler::new");
++        (Arc::new(handler), tmp)
++    }
++}
++
++#[cfg(test)]
++mod signer_login_tests {
++    use super::tests_support::test_rpc_handler;
++    use super::*;
++
++    const LOOPBACK: std::net::IpAddr = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
++
++    fn rpc(handler_result: serde_json::Value) -> RpcResponse {
++        RpcResponse {
++            result: Some(handler_result),
++            error: None,
++        }
++    }
++
++    fn failed(message: &str) -> RpcResponse {
++        RpcResponse {
++            result: None,
++            error: Some(RpcError {
++                code: -1,
++                message: message.to_string(),
++                data: None,
++            }),
++        }
++    }
++
++    async fn apply(
++        handler: &RpcHandler,
++        method: &str,
++        rpc_resp: &mut RpcResponse,
++        login_params: Option<serde_json::Value>,
++    ) -> Response<hyper::Body> {
++        let mut response = json_response(StatusCode::OK, &serde_json::to_vec(&rpc_resp).unwrap());
++        handler
++            .apply_auth_cookies(
++                method,
++                rpc_resp,
++                &mut response,
++                &None,
++                &login_params,
++                &None,
++                LOOPBACK,
++                "",
++            )
++            .await;
++        response
++    }
++
++    fn cookies(response: &Response<hyper::Body>) -> Vec<String> {
++        response
++            .headers()
++            .get_all("set-cookie")
++            .iter()
++            .map(|v| v.to_str().unwrap().to_string())
++            .collect()
++    }
++
++    fn cookie_value(cookies: &[String], name: &str) -> Option<String> {
++        cookies.iter().find_map(|c| {
++            c.strip_prefix(&format!("{name}="))
++                .map(|rest| rest.split(';').next().unwrap_or("").to_string())
++        })
++    }
++
++    async fn body(response: Response<hyper::Body>) -> serde_json::Value {
++        let bytes = hyper::body::to_bytes(response.into_body()).await.unwrap();
++        serde_json::from_slice(&bytes).unwrap()
++    }
++
++    async fn call_with(
++        handler: &Arc<RpcHandler>,
++        method: &str,
++        params: serde_json::Value,
++        headers: &[(&str, &str)],
++    ) -> Response<hyper::Body> {
++        let mut request = Request::builder().method("POST").uri("/rpc/v1");
++        for (name, value) in headers {
++            request = request.header(*name, *value);
++        }
++        let request = request
++            .body(hyper::Body::from(
++                serde_json::json!({ "method": method, "params": params }).to_string(),
++            ))
++            .unwrap();
++        Arc::clone(handler).handle(request).await.unwrap()
++    }
++
++    async fn call(
++        handler: &Arc<RpcHandler>,
++        method: &str,
++        headers: &[(&str, &str)],
++    ) -> Response<hyper::Body> {
++        call_with(handler, method, serde_json::json!({}), headers).await
++    }
++
++    const ATTEMPT: &str = "0123456789abcdef0123456789abcdef";
++    const ATTEMPT_COOKIE: &str = "signer_login_01234567";
++
++    #[tokio::test]
++    async fn start_moves_the_binding_into_a_strict_http_only_cookie() {
++        let (handler, _dir) = test_rpc_handler().await;
++        let mut resp = rpc(serde_json::json!({
++            "attempt_id": ATTEMPT,
++            "code": "0421",
++            "binding": "secret-binding",
++        }));
++        let response = apply(&handler, "auth.login.signer.start", &mut resp, None).await;
++        let set = cookies(&response);
++        let binding = set
++            .iter()
++            .find(|c| c.starts_with(&format!("{ATTEMPT_COOKIE}=")))
++            .expect("binding cookie");
++        assert!(binding.starts_with(&format!("{ATTEMPT_COOKIE}=secret-binding;")));
++        for attribute in ["HttpOnly", "SameSite=Strict", "Path=/rpc/", "Max-Age=120"] {
++            assert!(binding.contains(attribute), "{binding}");
++        }
++        // No session yet, and the token is not in the body.
++        assert!(cookie_value(&set, "session").is_none());
++        let body = body(response).await;
++        assert_eq!(body["result"]["code"], "0421");
++        assert_eq!(body["result"]["attempt_id"], ATTEMPT);
++        assert!(body["result"].get("binding").is_none());
++    }
++
++    #[tokio::test]
++    async fn a_2fa_start_sets_no_binding_cookie() {
++        let (handler, _dir) = test_rpc_handler().await;
++        let mut resp = rpc(serde_json::json!({
++            "attempt_id": ATTEMPT,
++            "code": "0421",
++            "binding": null,
++        }));
++        let response = apply(&handler, "auth.login.signer.start", &mut resp, None).await;
++        assert!(cookies(&response).is_empty());
++    }
++
++    #[tokio::test]
++    async fn an_approved_login_without_2fa_mints_a_session_and_clears_its_binding() {
++        let (handler, _dir) = test_rpc_handler().await;
++        let mut resp = rpc(serde_json::json!({ "status": "approved" }));
++        let response = apply(
++            &handler,
++            "auth.login.signer.finish",
++            &mut resp,
++            Some(serde_json::json!({ "attempt_id": ATTEMPT })),
++        )
++        .await;
++        let set = cookies(&response);
++        let session = cookie_value(&set, "session").expect("session cookie");
++        assert!(handler.session_store.validate(&session).await);
++        assert!(cookie_value(&set, "csrf_token").is_some());
++        assert!(cookie_value(&set, "remember").is_some());
++        let cleared = set
++            .iter()
++            .find(|c| c.starts_with(&format!("{ATTEMPT_COOKIE}=")))
++            .expect("binding cleared");
++        assert!(cleared.starts_with(&format!("{ATTEMPT_COOKIE}=;")));
++        assert!(cleared.contains("Max-Age=0") && cleared.contains("Path=/rpc/"));
++    }
++
++    #[tokio::test]
++    async fn an_approved_2fa_login_sets_the_upgraded_session() {
++        let (handler, _dir) = test_rpc_handler().await;
++        let pending = handler.session_store.create_pending(vec![1, 2, 3]).await;
++        let upgraded = handler
++            .session_store
++            .upgrade_to_full(&pending)
++            .await
++            .unwrap();
++        let mut resp = rpc(serde_json::json!({
++            "status": "approved",
++            "new_session_token": upgraded,
++        }));
++        let response = apply(
++            &handler,
++            "auth.login.signer.finish",
++            &mut resp,
++            Some(serde_json::json!({ "attempt_id": ATTEMPT })),
++        )
++        .await;
++        let set = cookies(&response);
++        assert_eq!(
++            cookie_value(&set, "session").as_deref(),
++            Some(upgraded.as_str())
++        );
++        assert!(cookie_value(&set, "remember").is_some());
++        // The token is not left in the body.
++        let body = body(response).await;
++        assert_eq!(body["result"]["status"], "approved");
++        assert!(body["result"].get("new_session_token").is_none());
++    }
++
++    #[tokio::test]
++    async fn password_login_on_a_2fa_node_offers_the_signer_at_the_totp_step() {
++        let (handler, dir) = test_rpc_handler().await;
++        let auth = crate::auth::AuthManager::new(dir.path().to_path_buf());
++        auth.setup_user("password123").await.unwrap();
++        let setup = crate::totp::setup("password123").unwrap();
++        auth.save_totp(setup.totp_data).await.unwrap();
++        let login = Some(serde_json::json!({ "password": "password123" }));
++
++        let mut resp = rpc(serde_json::Value::Null);
++        let response = apply(&handler, "auth.login", &mut resp, login.clone()).await;
++        let first = body(response).await;
++        assert_eq!(first["result"]["requires_totp"], true);
++        assert_eq!(first["result"]["signer"], false);
++
++        auth.add_login_signer(crate::auth::LoginSigner {
++            identity_id: "signer-identity".to_string(),
++            pubkey: "ab".repeat(32),
++            added_at: "2026-10-03T00:00:00Z".to_string(),
++        })
++        .await
++        .unwrap();
++        let mut resp = rpc(serde_json::Value::Null);
++        let response = apply(&handler, "auth.login", &mut resp, login).await;
++        let set = cookies(&response);
++        let pending = cookie_value(&set, "session").expect("pending session");
++        // Still a pending session: the TOTP code or the signer must follow.
++        assert!(!handler.session_store.validate(&pending).await);
++        assert!(handler.session_store.is_pending(&pending).await);
++        let body = body(response).await;
++        assert_eq!(body["result"]["requires_totp"], true);
++        assert_eq!(body["result"]["signer"], true);
++    }
++
++    #[tokio::test]
++    async fn a_2fa_login_whose_pending_session_was_used_meanwhile_mints_nothing() {
++        use crate::signer_login::{Approval, Purpose};
++        let (handler, _dir) = test_rpc_handler().await;
++        let pending = handler.session_store.create_pending(vec![1, 2, 3]).await;
++        let started = handler
++            .signer_logins
++            .start(Purpose::Login, "pending-used-test", Some(&pending), async {
++                Ok(Approval {
++                    signer: crate::auth::LoginSigner {
++                        identity_id: "id".to_string(),
++                        pubkey: "ab".repeat(32),
++                        added_at: "now".to_string(),
++                    },
++                    approval: std::time::Duration::ZERO,
++                })
++            })
++            .unwrap();
++        // The TOTP code was entered in another tab while the signer asked.
++        handler
++            .session_store
++            .upgrade_to_full(&pending)
++            .await
++            .unwrap();
++        let session_cookie = format!("session={pending}");
++        let response = call_with(
++            &handler,
++            "auth.login.signer.finish",
++            serde_json::json!({ "attempt_id": started.attempt_id }),
++            &[("cookie", session_cookie.as_str())],
++        )
++        .await;
++        let set = cookies(&response);
++        assert!(cookie_value(&set, "session").is_none(), "{set:?}");
++        assert!(cookie_value(&set, "remember").is_none(), "{set:?}");
++        assert_eq!(
++            body(response).await["error"]["message"],
++            "Session expired. Please log in with your password again."
++        );
++    }
++
++    #[tokio::test]
++    async fn a_pending_finish_sets_no_cookies() {
++        let (handler, _dir) = test_rpc_handler().await;
++        let mut resp = rpc(serde_json::json!({ "status": "pending" }));
++        let response = apply(
++            &handler,
++            "auth.login.signer.finish",
++            &mut resp,
++            Some(serde_json::json!({ "attempt_id": ATTEMPT })),
++        )
++        .await;
++        assert!(cookies(&response).is_empty());
++    }
++
++    #[tokio::test]
++    async fn a_failed_finish_clears_only_its_own_binding_and_mints_nothing() {
++        let (handler, _dir) = test_rpc_handler().await;
++        let mut resp = failed(crate::signer_login::PUBLIC_DENIED);
++        let response = apply(
++            &handler,
++            "auth.login.signer.finish",
++            &mut resp,
++            Some(serde_json::json!({ "attempt_id": ATTEMPT })),
++        )
++        .await;
++        let set = cookies(&response);
++        assert_eq!(set.len(), 1, "{set:?}");
++        assert!(set[0].starts_with(&format!("{ATTEMPT_COOKIE}=;")));
++
++        // A malformed attempt id names no cookie, so nothing is set.
++        let mut resp = failed(crate::signer_login::GONE);
++        let response = apply(
++            &handler,
++            "auth.login.signer.finish",
++            &mut resp,
++            Some(serde_json::json!({ "attempt_id": "x; Path=/" })),
++        )
++        .await;
++        assert!(cookies(&response).is_empty());
++    }
++
++    #[tokio::test]
++    async fn signer_login_shares_the_password_login_rate_limit() {
++        let (handler, _dir) = test_rpc_handler().await;
++        // No signer is enrolled, so each start fails, and each counts.
++        for _ in 0..5 {
++            let response = call(
++                &handler,
++                "auth.login.signer.start",
++                &[("host", "node.local")],
++            )
++            .await;
++            assert_eq!(response.status(), StatusCode::OK);
++            let body = body(response).await;
++            assert_eq!(body["error"]["message"], crate::signer_login::NOT_ENABLED);
++        }
++        let response = call(
++            &handler,
++            "auth.login.signer.start",
++            &[("host", "node.local")],
++        )
++        .await;
++        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
++        // Password guesses get no fresh budget either.
++        let response = call(&handler, "auth.login", &[("host", "node.local")]).await;
++        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
++    }
++
++    #[tokio::test]
++    async fn available_is_public_and_false_on_a_2fa_node() {
++        let (handler, dir) = test_rpc_handler().await;
++        let response = call(&handler, "auth.login.signer.available", &[]).await;
++        assert_eq!(body(response).await["result"], false);
++
++        let auth = crate::auth::AuthManager::new(dir.path().to_path_buf());
++        auth.setup_user("password123").await.unwrap();
++        auth.add_login_signer(crate::auth::LoginSigner {
++            identity_id: "signer-identity".to_string(),
++            pubkey: "ab".repeat(32),
++            added_at: "2026-10-03T00:00:00Z".to_string(),
++        })
++        .await
++        .unwrap();
++        let response = call(&handler, "auth.login.signer.available", &[]).await;
++        assert_eq!(body(response).await["result"], true);
++
++        let setup = crate::totp::setup("password123").unwrap();
++        auth.save_totp(setup.totp_data).await.unwrap();
++        let response = call(&handler, "auth.login.signer.available", &[]).await;
++        assert_eq!(body(response).await["result"], false);
++        // And start, without the password's pending session, gives the same
++        // answer as a node with no signer.
++        let response = call(
++            &handler,
++            "auth.login.signer.start",
++            &[("host", "node.local")],
++        )
++        .await;
++        assert_eq!(
++            body(response).await["error"]["message"],
++            crate::signer_login::NOT_ENABLED
++        );
++    }
++
++    #[tokio::test]
++    async fn an_unknown_attempt_is_refused_with_a_fixed_text() {
++        let (handler, _dir) = test_rpc_handler().await;
++        let response = call_with(
++            &handler,
++            "auth.login.signer.finish",
++            serde_json::json!({ "attempt_id": ATTEMPT }),
++            &[],
++        )
++        .await;
++        assert!(cookies(&response)[0].starts_with(&format!("{ATTEMPT_COOKIE}=;")));
++        assert_eq!(
++            body(response).await["error"]["message"],
++            crate::signer_login::GONE
++        );
++    }
++
++    #[tokio::test]
++    async fn signer_prompts_are_refused_from_app_ports_and_other_sites() {
++        let (handler, _dir) = test_rpc_handler().await;
++        for method in [
++            "auth.login.signer.start",
++            "auth.login.signer.finish",
++            "auth.signer.enrol.start",
++            "auth.signer.enrol.finish",
++        ] {
++            for origin in ["https://node.local:8337", "https://evil.example"] {
++                let response = call(
++                    &handler,
++                    method,
++                    &[("origin", origin), ("host", "node.local")],
++                )
++                .await;
++                assert_eq!(
++                    response.status(),
++                    StatusCode::FORBIDDEN,
++                    "{method} {origin}"
++                );
++            }
++        }
++        // The dashboard reaches the method itself.
++        let response = call(
++            &handler,
++            "auth.login.signer.start",
++            &[("origin", "https://node.local"), ("host", "node.local")],
++        )
++        .await;
++        assert_eq!(response.status(), StatusCode::OK);
++        const HANDLER: &str = include_str!("mod.rs");
++        assert!(HANDLER.contains(
++            "if signer_login::signer_prompt_method(&rpc_req.method)\n            && !signer_login::signer_prompt_origin_allowed("
++        ));
++    }
++
++    fn approved_login() -> crate::signer_login::Approval {
++        crate::signer_login::Approval {
++            signer: crate::auth::LoginSigner {
++                identity_id: "id".to_string(),
++                pubkey: "ab".repeat(32),
++                added_at: "now".to_string(),
++            },
++            approval: std::time::Duration::ZERO,
++        }
++    }
++
++    #[tokio::test]
++    async fn a_password_less_login_mints_nothing_if_2fa_was_switched_on_meanwhile() {
++        use crate::signer_login::Purpose;
++        let (handler, dir) = test_rpc_handler().await;
++        let started = handler
++            .signer_logins
++            .start(Purpose::Login, "totp-switch-test", None, async {
++                Ok(approved_login())
++            })
++            .unwrap();
++        // The owner turns 2FA on while the signer is asking.
++        let auth = crate::auth::AuthManager::new(dir.path().to_path_buf());
++        auth.setup_user("password123").await.unwrap();
++        let setup = crate::totp::setup("password123").unwrap();
++        auth.save_totp(setup.totp_data).await.unwrap();
++
++        let name = crate::signer_login::binding_cookie_name(&started.attempt_id).unwrap();
++        let cookie = format!("{name}={}", started.binding.unwrap());
++        let response = call_with(
++            &handler,
++            "auth.login.signer.finish",
++            serde_json::json!({ "attempt_id": started.attempt_id }),
++            &[("cookie", cookie.as_str())],
++        )
++        .await;
++        let set = cookies(&response);
++        assert!(cookie_value(&set, "session").is_none(), "{set:?}");
++        assert!(cookie_value(&set, "remember").is_none(), "{set:?}");
++        assert_eq!(
++            body(response).await["error"]["message"],
++            "Session expired. Please log in with your password again."
++        );
++    }
++
++    #[tokio::test]
++    async fn a_password_less_login_still_works_without_2fa() {
++        use crate::signer_login::Purpose;
++        let (handler, _dir) = test_rpc_handler().await;
++        let started = handler
++            .signer_logins
++            .start(Purpose::Login, "no-totp-test", None, async {
++                Ok(approved_login())
++            })
++            .unwrap();
++        let name = crate::signer_login::binding_cookie_name(&started.attempt_id).unwrap();
++        let cookie = format!("{name}={}", started.binding.unwrap());
++        let response = call_with(
++            &handler,
++            "auth.login.signer.finish",
++            serde_json::json!({ "attempt_id": started.attempt_id }),
++            &[("cookie", cookie.as_str())],
++        )
++        .await;
++        let set = cookies(&response);
++        let session = cookie_value(&set, "session").expect("session cookie");
++        assert!(handler.session_store.validate(&session).await);
++    }
++
++    #[tokio::test]
++    async fn a_password_login_clears_a_signer_login_pause() {
++        use crate::signer_login::Purpose;
++        let (handler, dir) = test_rpc_handler().await;
++        handler
++            .signer_logins
++            .start(Purpose::Login, "pause-test", None, async {
++                Err(anyhow::anyhow!(crate::signer_login::PUBLIC_DENIED))
++            })
++            .unwrap();
++        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
++        assert!(handler.signer_logins.status().paused_until.is_some());
++
++        // A wrong password clears nothing.
++        let mut resp = failed("Password Incorrect");
++        apply(&handler, "auth.login", &mut resp, None).await;
++        assert!(handler.signer_logins.status().paused_until.is_some());
++
++        let auth = crate::auth::AuthManager::new(dir.path().to_path_buf());
++        auth.setup_user("password123").await.unwrap();
++        let mut resp = rpc(serde_json::Value::Null);
++        apply(
++            &handler,
++            "auth.login",
++            &mut resp,
++            Some(serde_json::json!({ "password": "password123" })),
++        )
++        .await;
++        assert!(handler.signer_logins.status().paused_until.is_none());
++    }
++
++    #[tokio::test]
++    async fn signer_status_is_for_the_owner_on_the_dashboard() {
++        use crate::signer_login::Purpose;
++        let (handler, _dir) = test_rpc_handler().await;
++        let response = call(
++            &handler,
++            "auth.signer.status",
++            &[("origin", "https://node.local:8337")],
++        )
++        .await;
++        assert_eq!(response.status(), StatusCode::FORBIDDEN);
++        let response = call(
++            &handler,
++            "auth.signer.status",
++            &[("origin", "https://node.local"), ("host", "node.local")],
++        )
++        .await;
++        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
++        assert!(!UNAUTHENTICATED_METHODS.contains(&"auth.signer.status"));
++
++        handler
++            .signer_logins
++            .start(Purpose::Login, "status-test", None, async {
++                Err(anyhow::anyhow!(crate::signer_login::PUBLIC_OFFLINE))
++            })
++            .unwrap();
++        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
++        let status = handler.handle_signer_status().await.unwrap();
++        assert!(status["paused_until"].as_i64().is_some());
++        assert_eq!(status["recent"][0]["outcome"], "offline");
++    }
++
++    #[tokio::test]
++    async fn managing_login_signers_needs_a_session_and_the_dashboard() {
++        let (handler, _dir) = test_rpc_handler().await;
++        for method in [
++            "auth.signer.enrol.start",
++            "auth.signer.enrol.finish",
++            "auth.signer.list",
++            "auth.signer.remove",
++            "auth.signer.status",
++        ] {
++            let response = call(&handler, method, &[("origin", "https://node.local:8337")]).await;
++            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method}");
++            let response = call(
++                &handler,
++                method,
++                &[("origin", "https://node.local"), ("host", "node.local")],
++            )
++            .await;
++            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method}");
++            assert!(!UNAUTHENTICATED_METHODS.contains(&method));
++        }
++        const HANDLER: &str = include_str!("mod.rs");
++        assert!(HANDLER.contains(
++            "if signer_login::login_signer_method(&rpc_req.method)\n            && !nostr_signing_origin_allowed("
++        ));
++    }
++}
+diff --git a/core/archipelago/src/api/rpc/signer_login.rs b/core/archipelago/src/api/rpc/signer_login.rs
+new file mode 100644
+index 0000000..73688be
+--- /dev/null
++++ b/core/archipelago/src/api/rpc/signer_login.rs
+@@ -0,0 +1,495 @@
++//! RPC methods for logging in with a linked signer. The logic is in
++//! `crate::signer_login`; these wrappers read what it needs from the request
++//! (the node origin for the challenge, the session and binding cookies, and
++//! the client address for the log).
++
++use super::middleware::extract_cookie;
++use super::RpcHandler;
++use crate::identity_manager::IdentityManager;
++use crate::signer_login::{self, Bound, QUICK_APPROVAL};
++use anyhow::Result;
++use std::net::IpAddr;
++use std::sync::Arc;
++
++/// Text for a 2FA login whose pending session expired or was used during
++/// the signer's approval. Starts with "Session" so it reaches the page.
++const PENDING_GONE: &str = "Session expired. Please log in with your password again.";
++
++/// Methods that manage login signers. They follow the dashboard origin rule,
++/// like linking a signer.
++pub(super) fn login_signer_method(method: &str) -> bool {
++    matches!(
++        method,
++        "auth.signer.enrol.start"
++            | "auth.signer.enrol.finish"
++            | "auth.signer.list"
++            | "auth.signer.remove"
++            | "auth.signer.status"
++    )
++}
++
++/// Methods that put a prompt on the signer or collect its answer. They need
++/// the request headers, so `RpcHandler::handle` routes them here, and they
++/// follow [`signer_prompt_origin_allowed`].
++pub(super) fn signer_prompt_method(method: &str) -> bool {
++    matches!(
++        method,
++        "auth.signer.enrol.start"
++            | "auth.signer.enrol.finish"
++            | "auth.login.signer.start"
++            | "auth.login.signer.finish"
++    )
++}
++
++/// The origin rule for [`signer_prompt_method`]s: no `Origin` (a non-browser
++/// client), or an http(s) `Origin` on the same host as the `Host` header and
++/// on port 80 or 443, the dashboard. Loopback origins are allowed in
++/// development. App ports on the node's own host are refused, so an app page
++/// cannot start a login, read its code and show it to the owner; so are
++/// other sites.
++pub(super) fn signer_prompt_origin_allowed(headers: &hyper::HeaderMap, dev_mode: bool) -> bool {
++    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
++    let Some(origin) = header("origin") else {
++        return true;
++    };
++    let Ok(origin) = reqwest::Url::parse(origin) else {
++        return false;
++    };
++    if !matches!(origin.scheme(), "http" | "https") {
++        return false;
++    }
++    let Some(origin_host) = origin.host_str() else {
++        return false;
++    };
++    if dev_mode && matches!(origin_host, "localhost" | "127.0.0.1" | "[::1]") {
++        return true;
++    }
++    let host = header("host")
++        .and_then(|host| reqwest::Url::parse(&format!("http://{host}")).ok())
++        .and_then(|url| url.host_str().map(str::to_ascii_lowercase));
++    host.as_deref() == Some(origin_host.to_ascii_lowercase().as_str())
++        && matches!(origin.port_or_known_default(), Some(80 | 443))
++}
++
++/// The node origin the browser used, for the challenge's `relay` tag: the
++/// `Origin` header when it is an http(s) origin (which
++/// [`signer_prompt_origin_allowed`] has pinned to the dashboard), else the
++/// scheme and `Host`.
++pub(super) fn node_origin(headers: &hyper::HeaderMap) -> Result<String> {
++    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
++    if let Some(Ok(url)) = header("origin").map(reqwest::Url::parse) {
++        if matches!(url.scheme(), "http" | "https") && url.host_str().is_some() {
++            return Ok(url.origin().ascii_serialization());
++        }
++    }
++    let host = header("host").ok_or_else(|| anyhow::anyhow!("Missing Host header"))?;
++    let scheme = match header("x-forwarded-proto") {
++        Some("https") => "https",
++        _ => "http",
++    };
++    let url = reqwest::Url::parse(&format!("{scheme}://{host}"))
++        .ok()
++        .filter(|url| url.host_str().is_some() && url.path() == "/")
++        .ok_or_else(|| anyhow::anyhow!("Invalid Host header"))?;
++    Ok(url.origin().ascii_serialization())
++}
++
++fn identity_id_param(params: &serde_json::Value) -> Result<&str> {
++    let id = params
++        .get("identity_id")
++        .and_then(|v| v.as_str())
++        .ok_or_else(|| anyhow::anyhow!("Missing required parameter: identity_id"))?;
++    super::identity::validate_identity_id(id)?;
++    Ok(id)
++}
++
++fn password_param(params: &serde_json::Value) -> Result<&str> {
++    params
++        .get("password")
++        .and_then(|v| v.as_str())
++        .ok_or_else(|| anyhow::anyhow!("Missing password"))
++}
++
++fn attempt_id_param(params: &serde_json::Value) -> Result<&str> {
++    params
++        .get("attempt_id")
++        .and_then(|v| v.as_str())
++        .ok_or_else(|| anyhow::anyhow!("Missing required parameter: attempt_id"))
++}
++
++impl RpcHandler {
++    /// `session` is the caller's session token (the restored one if the
++    /// session was just restored from remember-me).
++    pub(super) async fn dispatch_signer_login(
++        &self,
++        method: &str,
++        params: Option<serde_json::Value>,
++        headers: &hyper::HeaderMap,
++        session: Option<&str>,
++        client_ip: IpAddr,
++    ) -> Result<serde_json::Value> {
++        let params = params.unwrap_or_default();
++        match method {
++            "auth.signer.enrol.start" => {
++                self.handle_signer_enrol_start(&params, headers, session)
++                    .await
++            }
++            "auth.signer.enrol.finish" => self.handle_signer_enrol_finish(&params, session).await,
++            "auth.login.signer.start" => {
++                self.handle_signer_login_start(headers, session, client_ip)
++                    .await
++            }
++            "auth.login.signer.finish" => {
++                self.handle_signer_login_finish(&params, headers, session, client_ip)
++                    .await
++            }
++            _ => Err(anyhow::anyhow!("Unknown method: {method}")),
++        }
++    }
++
++    /// The name the challenge says it is for: the node's name, else its
++    /// hostname.
++    async fn node_display_name(&self) -> String {
++        let (data, _) = self.state_manager.get_snapshot().await;
++        if let Some(name) = data.server_info.name.filter(|n| !n.trim().is_empty()) {
++            return name.trim().to_string();
++        }
++        tokio::fs::read_to_string("/etc/hostname")
++            .await
++            .map(|s| s.trim().to_string())
++            .ok()
++            .filter(|s| !s.is_empty())
++            .unwrap_or_else(|| "Archipelago".to_string())
++    }
++
++    /// `auth.signer.enrol.start { identity_id, password }` gives
++    /// `{ attempt_id, code }`: the signer is asked to sign a login challenge,
++    /// and the dashboard shows the code to check against the device.
++    async fn handle_signer_enrol_start(
++        &self,
++        params: &serde_json::Value,
++        headers: &hyper::HeaderMap,
++        session: Option<&str>,
++    ) -> Result<serde_json::Value> {
++        let session = session.ok_or_else(|| anyhow::anyhow!("Unauthorized"))?;
++        let identity_id = identity_id_param(params)?;
++        let password = password_param(params)?;
++        let relay = node_origin(headers)?;
++        let node_name = self.node_display_name().await;
++        let manager = Arc::new(IdentityManager::new(&self.config.data_dir).await?);
++        let (attempt_id, code) = signer_login::enrol_start(
++            &self.signer_logins,
++            &self.auth_manager,
++            manager,
++            identity_id,
++            password,
++            session,
++            &relay,
++            &node_name,
++        )
++        .await?;
++        Ok(serde_json::json!({ "attempt_id": attempt_id, "code": code }))
++    }
++
++    /// `auth.signer.enrol.finish { attempt_id }` gives `{ status: "pending" }`
++    /// within 10 s, or `{ status: "enrolled", … }` once saved. `approval_ms`
++    /// is how long the signer took; `quick_approval` means faster than a
++    /// person could press, so it probably signs without asking.
++    async fn handle_signer_enrol_finish(
++        &self,
++        params: &serde_json::Value,
++        session: Option<&str>,
++    ) -> Result<serde_json::Value> {
++        let session = session.ok_or_else(|| anyhow::anyhow!("Unauthorized"))?;
++        let attempt_id = attempt_id_param(params)?;
++        let Some(approval) =
++            signer_login::enrol_finish(&self.signer_logins, attempt_id, session).await?
++        else {
++            return Ok(serde_json::json!({ "status": "pending" }));
++        };
++        Ok(serde_json::json!({
++            "status": "enrolled",
++            "identity_id": approval.signer.identity_id,
++            "pubkey": approval.signer.pubkey,
++            "added_at": approval.signer.added_at,
++            "approval_ms": approval.approval.as_millis() as u64,
++            "quick_approval": approval.approval < QUICK_APPROVAL,
++        }))
++    }
++
++    /// `auth.signer.list`: the enrolled login signers.
++    pub(super) async fn handle_signer_list(&self) -> Result<serde_json::Value> {
++        let manager = IdentityManager::new(&self.config.data_dir).await?;
++        let mut signers = Vec::new();
++        for signer in self.auth_manager.login_signers().await? {
++            let name = manager.get(&signer.identity_id).await.ok().map(|r| r.name);
++            signers.push(serde_json::json!({
++                "identity_id": signer.identity_id,
++                "pubkey": signer.pubkey,
++                "added_at": signer.added_at,
++                "name": name,
++            }));
++        }
++        Ok(serde_json::json!(signers))
++    }
++
++    /// `auth.signer.remove { identity_id, password }`. Password login is
++    /// never affected.
++    pub(super) async fn handle_signer_remove(
++        &self,
++        params: Option<serde_json::Value>,
++    ) -> Result<serde_json::Value> {
++        let params = params.unwrap_or_default();
++        let identity_id = identity_id_param(&params)?;
++        let password = password_param(&params)?;
++        let removed = signer_login::remove(&self.auth_manager, identity_id, password).await?;
++        Ok(serde_json::json!({ "removed": removed }))
++    }
++
++    /// `auth.signer.status`: when signer login is paused until (Unix
++    /// seconds, or null) and the recent login starts, `{ at, ip, outcome }`,
++    /// so the dashboard can say who tripped a pause.
++    pub(super) async fn handle_signer_status(&self) -> Result<serde_json::Value> {
++        Ok(serde_json::to_value(self.signer_logins.status())?)
++    }
++
++    /// `auth.login.signer.available`: whether the login page should offer
++    /// the signer before the password. Public, so it says nothing more; on a
++    /// 2FA node it is false and `auth.login` says `signer: true` at the TOTP
++    /// step instead.
++    pub(super) async fn handle_signer_login_available(&self) -> Result<serde_json::Value> {
++        Ok(serde_json::json!(
++            signer_login::available(&self.auth_manager).await?
++        ))
++    }
++
++    /// `auth.login.signer.start {}` gives `{ attempt_id, code }`. Without
++    /// 2FA, the binding token also returned here is moved into an HttpOnly
++    /// cookie by `apply_auth_cookies`. With 2FA it needs the pending session
++    /// `auth.login` left, and is bound to it.
++    async fn handle_signer_login_start(
++        &self,
++        headers: &hyper::HeaderMap,
++        session: Option<&str>,
++        client_ip: IpAddr,
++    ) -> Result<serde_json::Value> {
++        let relay = node_origin(headers)?;
++        let node_name = self.node_display_name().await;
++        let manager = Arc::new(IdentityManager::new(&self.config.data_dir).await?);
++        // Checked without counting as a TOTP attempt.
++        let pending = match session {
++            Some(token) if self.session_store.is_pending(token).await => Some(token),
++            _ => None,
++        };
++        let started = signer_login::start(
++            &self.signer_logins,
++            &self.auth_manager,
++            manager,
++            &relay,
++            &node_name,
++            pending,
++            Some(client_ip),
++        )
++        .await;
++        let (started, code) = match started {
++            Ok(started) => started,
++            Err(e) => {
++                tracing::info!(client = %client_ip, "[login] signer login start refused: {e}");
++                return Err(e);
++            }
++        };
++        tracing::info!(client = %client_ip, "[login] signer login started");
++        Ok(serde_json::json!({
++            "attempt_id": started.attempt_id,
++            "code": code,
++            "binding": started.binding,
++        }))
++    }
++
++    /// `auth.login.signer.finish { attempt_id }` gives `{ status: "pending" }`
++    /// within 10 s, or `{ status: "approved" }`, which `apply_auth_cookies`
++    /// turns into a session. On a 2FA login the pending session is upgraded
++    /// here and its new token handed over (and stripped) the same way
++    /// `auth.login.totp` does it.
++    async fn handle_signer_login_finish(
++        &self,
++        params: &serde_json::Value,
++        headers: &hyper::HeaderMap,
++        session: Option<&str>,
++        client_ip: IpAddr,
++    ) -> Result<serde_json::Value> {
++        let attempt_id = attempt_id_param(params)?;
++        let cookie = signer_login::binding_cookie_name(attempt_id)
++            .and_then(|name| extract_cookie(headers, &name));
++        let finished =
++            match signer_login::finish(&self.signer_logins, attempt_id, cookie.as_deref(), session)
++                .await
++            {
++                Ok(Some(finished)) => finished,
++                Ok(None) => return Ok(serde_json::json!({ "status": "pending" })),
++                Err(e) => {
++                    tracing::warn!(client = %client_ip, "[login] signer login failed: {e}");
++                    return Err(e);
++                }
++            };
++        if finished.bound == Bound::Session {
++            // The pending session may have expired, or been used by the TOTP
++            // code, while the signer was asking.
++            let pending = match session {
++                Some(token) if self.session_store.is_pending(token).await => token,
++                _ => anyhow::bail!(PENDING_GONE),
++            };
++            let new_token = self
++                .session_store
++                .upgrade_to_full(pending)
++                .await
++                .ok_or_else(|| anyhow::anyhow!(PENDING_GONE))?;
++            tracing::info!(client = %client_ip, "[login] signer login approved (in place of the TOTP code)");
++            return Ok(serde_json::json!({
++                "status": "approved",
++                "new_session_token": new_token,
++            }));
++        }
++        // Started without a password, so only good while the node has no
++        // 2FA: if it was switched on during the press, the password (and
++        // the TOTP code or the signer) is needed after all.
++        if self.auth_manager.is_totp_enabled().await? {
++            tracing::warn!(client = %client_ip, "[login] signer login refused: 2FA was switched on during it");
++            anyhow::bail!(PENDING_GONE);
++        }
++        tracing::info!(client = %client_ip, "[login] signer login approved");
++        Ok(serde_json::json!({ "status": "approved" }))
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use hyper::header::HeaderValue;
++
++    fn headers(pairs: &[(&'static str, &str)]) -> hyper::HeaderMap {
++        let mut headers = hyper::HeaderMap::new();
++        for (name, value) in pairs {
++            headers.insert(*name, HeaderValue::from_str(value).unwrap());
++        }
++        headers
++    }
++
++    #[test]
++    fn the_node_origin_comes_from_origin_then_host() {
++        assert_eq!(
++            node_origin(&headers(&[
++                ("origin", "https://node.local"),
++                ("host", "node.local")
++            ]))
++            .unwrap(),
++            "https://node.local"
++        );
++        // An opaque origin falls back to the Host header.
++        assert_eq!(
++            node_origin(&headers(&[("origin", "null"), ("host", "node.local")])).unwrap(),
++            "http://node.local"
++        );
++        assert_eq!(
++            node_origin(&headers(&[
++                ("host", "node.local"),
++                ("x-forwarded-proto", "https")
++            ]))
++            .unwrap(),
++            "https://node.local"
++        );
++        assert!(node_origin(&headers(&[])).is_err());
++        assert!(node_origin(&headers(&[("host", "node.local/path")])).is_err());
++    }
++
++    #[test]
++    fn signer_prompts_come_only_from_the_dashboard_or_non_browser_clients() {
++        let allowed = |pairs: &[(&'static str, &str)], dev: bool| {
++            signer_prompt_origin_allowed(&headers(pairs), dev)
++        };
++        // No Origin: a non-browser client.
++        assert!(allowed(&[("host", "node.local")], false));
++        assert!(allowed(&[], false));
++        // The dashboard, on 80 or 443, with nginx's port-less Host.
++        assert!(allowed(
++            &[("origin", "https://node.local"), ("host", "node.local")],
++            false
++        ));
++        assert!(allowed(
++            &[("origin", "http://192.0.2.10"), ("host", "192.0.2.10")],
++            false
++        ));
++        assert!(allowed(
++            &[("origin", "https://Node.Local"), ("host", "node.local:443")],
++            false
++        ));
++        // An app port on the same host.
++        assert!(!allowed(
++            &[
++                ("origin", "https://node.local:8337"),
++                ("host", "node.local")
++            ],
++            false
++        ));
++        // Another site, even on 443.
++        assert!(!allowed(
++            &[("origin", "https://evil.example"), ("host", "node.local")],
++            false
++        ));
++        // Opaque or malformed origins, and an Origin with no Host to match.
++        assert!(!allowed(
++            &[("origin", "null"), ("host", "node.local")],
++            false
++        ));
++        assert!(!allowed(&[("origin", "https://node.local")], false));
++        // Development: the loopback dev server.
++        assert!(allowed(
++            &[
++                ("origin", "http://localhost:5173"),
++                ("host", "localhost:5173")
++            ],
++            true
++        ));
++        assert!(!allowed(
++            &[("origin", "http://localhost:5173"), ("host", "node.local")],
++            false
++        ));
++    }
++
++    #[test]
++    fn method_groups() {
++        for method in [
++            "auth.signer.enrol.start",
++            "auth.signer.enrol.finish",
++            "auth.signer.list",
++            "auth.signer.remove",
++            "auth.signer.status",
++        ] {
++            assert!(login_signer_method(method), "{method}");
++        }
++        for method in [
++            "auth.login.signer.available",
++            "auth.login.signer.start",
++            "auth.login.signer.finish",
++            "identity.link-nip46",
++        ] {
++            assert!(!login_signer_method(method), "{method}");
++        }
++        for method in [
++            "auth.signer.enrol.start",
++            "auth.signer.enrol.finish",
++            "auth.login.signer.start",
++            "auth.login.signer.finish",
++        ] {
++            assert!(signer_prompt_method(method), "{method}");
++        }
++        for method in [
++            "auth.login.signer.available",
++            "auth.signer.list",
++            "auth.signer.remove",
++            "auth.login",
++        ] {
++            assert!(!signer_prompt_method(method), "{method}");
++        }
++    }
++}
+diff --git a/core/archipelago/src/auth.rs b/core/archipelago/src/auth.rs
+index 7170f35..72bf566 100644
+--- a/core/archipelago/src/auth.rs
++++ b/core/archipelago/src/auth.rs
+@@ -80,6 +80,19 @@ pub struct User {
+     /// User role for RBAC (defaults to Admin for backward compatibility)
+     #[serde(default)]
+     pub role: UserRole,
++    /// Linked signers that may log in to the dashboard. The password always
++    /// works as well; these never replace it.
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub login_signers: Vec<LoginSigner>,
++}
++
++/// A linked identity enrolled to log in to the dashboard through its signer.
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub struct LoginSigner {
++    pub identity_id: String,
++    /// The identity's Nostr key (hex), which signs the login challenge.
++    pub pubkey: String,
++    pub added_at: String,
+ }
+ 
+ /// Cloneable: it holds only the data dir, and the app gate needs its own
+@@ -144,6 +157,7 @@ impl AuthManager {
+             onboarding_complete,
+             totp: None,
+             role: UserRole::default(),
++            login_signers: Vec::new(),
+         };
+ 
+         let user_file = self.data_dir.join("user.json");
+@@ -264,6 +278,81 @@ impl AuthManager {
+         self.save_totp(totp_data).await
+     }
+ 
++    /// Linked signers enrolled for login, first enrolled first.
++    pub async fn login_signers(&self) -> Result<Vec<LoginSigner>> {
++        Ok(self
++            .get_user()
++            .await?
++            .map(|u| u.login_signers)
++            .unwrap_or_default())
++    }
++
++    /// Enrol a login signer. One for now: a second is refused until the
++    /// first is removed, so no enrolment sits unused.
++    pub async fn add_login_signer(&self, signer: LoginSigner) -> Result<()> {
++        let mut user = self
++            .get_user()
++            .await?
++            .ok_or_else(|| anyhow::anyhow!("User not set up"))?;
++        if user
++            .login_signers
++            .iter()
++            .any(|s| s.identity_id == signer.identity_id)
++        {
++            anyhow::bail!("Already exists: this identity is already enrolled for login");
++        }
++        if !user.login_signers.is_empty() {
++            anyhow::bail!(
++                "Already exists: a signer is already enrolled for login; remove it first"
++            );
++        }
++        user.login_signers.push(signer);
++        self.write_user_atomically(&user).await
++    }
++
++    /// Remove an identity's login enrolment, if it has one. Password login
++    /// is untouched. Returns whether there was one.
++    pub async fn remove_login_signer(&self, identity_id: &str) -> Result<bool> {
++        let Some(mut user) = self.get_user().await? else {
++            return Ok(false);
++        };
++        let before = user.login_signers.len();
++        user.login_signers.retain(|s| s.identity_id != identity_id);
++        if user.login_signers.len() == before {
++            return Ok(false);
++        }
++        self.write_user_atomically(&user).await?;
++        Ok(true)
++    }
++
++    /// Replace user.json through a synced temporary file, so a crash
++    /// mid-write cannot leave it truncated and lock the owner out. The new
++    /// file keeps the old one's permissions (it holds the password hash),
++    /// and is created owner-only when there was none.
++    async fn write_user_atomically(&self, user: &User) -> Result<()> {
++        let path = self.data_dir.join("user.json");
++        let tmp = path.with_extension("json.tmp");
++        let _ = fs::remove_file(&tmp).await;
++        let mut options = fs::OpenOptions::new();
++        options.write(true).create_new(true);
++        #[cfg(unix)]
++        options.mode(0o600);
++        let mut file = options.open(&tmp).await?;
++        tokio::io::AsyncWriteExt::write_all(
++            &mut file,
++            serde_json::to_string_pretty(user)?.as_bytes(),
++        )
++        .await?;
++        if let Ok(existing) = fs::metadata(&path).await {
++            fs::set_permissions(&tmp, existing.permissions()).await?;
++        }
++        file.sync_all().await?;
++        drop(file);
++        fs::rename(&tmp, &path).await?;
++        fs::File::open(&self.data_dir).await?.sync_all().await?;
++        Ok(())
++    }
++
+     pub async fn verify_password(&self, password: &str) -> Result<bool> {
+         if let Some(user) = self.get_user().await? {
+             // Detect hash format and verify accordingly
+@@ -462,6 +551,77 @@ mod tests {
+         assert!(!auth.verify_password("wrong").await.unwrap());
+     }
+ 
++    fn login_signer(identity_id: &str) -> LoginSigner {
++        LoginSigner {
++            identity_id: identity_id.to_string(),
++            pubkey: "ab".repeat(32),
++            added_at: "2026-10-03T00:00:00Z".to_string(),
++        }
++    }
++
++    #[tokio::test]
++    async fn login_signers_are_kept_beside_the_password() {
++        let dir = tempfile::tempdir().unwrap();
++        let auth = AuthManager::new(dir.path().to_path_buf());
++        auth.setup_user("password123").await.unwrap();
++        assert!(auth.login_signers().await.unwrap().is_empty());
++
++        auth.add_login_signer(login_signer("a")).await.unwrap();
++        assert_eq!(auth.login_signers().await.unwrap(), vec![login_signer("a")]);
++        // One login signer for now, and no duplicates.
++        let again = auth.add_login_signer(login_signer("a")).await.unwrap_err();
++        assert!(again.to_string().starts_with("Already exists"), "{again}");
++        let second = auth.add_login_signer(login_signer("b")).await.unwrap_err();
++        assert!(second.to_string().contains("remove it first"), "{second}");
++
++        // Written in full, with no temporary file left behind, and with the
++        // file's permissions kept.
++        assert!(!dir.path().join("user.json.tmp").exists());
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::PermissionsExt;
++            let mode =
++                |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
++            let user_file = dir.path().join("user.json");
++            std::fs::set_permissions(&user_file, std::fs::Permissions::from_mode(0o640)).unwrap();
++            auth.remove_login_signer("nobody").await.unwrap();
++            auth.add_login_signer(login_signer("b")).await.unwrap_err();
++            auth.remove_login_signer("a").await.unwrap();
++            assert_eq!(mode(&user_file), 0o640);
++            auth.add_login_signer(login_signer("a")).await.unwrap();
++            assert_eq!(mode(&user_file), 0o640);
++        }
++        assert!(auth.verify_password("password123").await.unwrap());
++
++        assert!(!auth.remove_login_signer("b").await.unwrap());
++        assert!(auth.remove_login_signer("a").await.unwrap());
++        assert!(auth.login_signers().await.unwrap().is_empty());
++        assert!(auth.verify_password("password123").await.unwrap());
++    }
++
++    #[tokio::test]
++    async fn user_files_without_login_signers_still_parse() {
++        let dir = tempfile::tempdir().unwrap();
++        let auth = AuthManager::new(dir.path().to_path_buf());
++        auth.setup_user("password123").await.unwrap();
++        let written = std::fs::read_to_string(dir.path().join("user.json")).unwrap();
++        assert!(!written.contains("login_signers"));
++        assert!(auth.login_signers().await.unwrap().is_empty());
++    }
++
++    #[tokio::test]
++    async fn other_user_writes_keep_the_login_signers() {
++        let dir = tempfile::tempdir().unwrap();
++        let auth = AuthManager::new(dir.path().to_path_buf());
++        auth.setup_user("password123").await.unwrap();
++        auth.add_login_signer(login_signer("a")).await.unwrap();
++        auth.complete_onboarding().await.unwrap();
++        auth.change_password("password123", "N3w-Password!x", false)
++            .await
++            .unwrap();
++        assert_eq!(auth.login_signers().await.unwrap(), vec![login_signer("a")]);
++    }
++
+     #[tokio::test]
+     async fn test_verify_password_no_user() {
+         let dir = tempfile::tempdir().unwrap();
+diff --git a/core/archipelago/src/main.rs b/core/archipelago/src/main.rs
+index 1f8d602..7791687 100644
+--- a/core/archipelago/src/main.rs
++++ b/core/archipelago/src/main.rs
+@@ -78,6 +78,7 @@ pub mod seed;
+ mod server;
+ mod session;
+ mod settings;
++mod signer_login;
+ mod state;
+ mod storage_crypto;
+ mod streaming;
+diff --git a/core/archipelago/src/rate_limit.rs b/core/archipelago/src/rate_limit.rs
+index 8fc725c..4770e91 100644
+--- a/core/archipelago/src/rate_limit.rs
++++ b/core/archipelago/src/rate_limit.rs
+@@ -112,6 +112,15 @@ impl EndpointRateLimiter {
+         limits.insert("update.apply".to_string(), (10, 60));
+         limits.insert("system.reboot".to_string(), (2, 300));
+         limits.insert("system.shutdown".to_string(), (2, 300));
++        // Login signers. A login start also counts against the login limiter
++        // and a node-wide budget (signer_login.rs); a finish is polled (each
++        // waits up to 10 s, over a 2-minute attempt).
++        limits.insert("auth.login.signer.start".to_string(), (10, 300));
++        limits.insert("auth.login.signer.finish".to_string(), (60, 300));
++        limits.insert("auth.login.signer.available".to_string(), (60, 60));
++        limits.insert("auth.signer.enrol.start".to_string(), (5, 300));
++        limits.insert("auth.signer.enrol.finish".to_string(), (60, 300));
++        limits.insert("auth.signer.remove".to_string(), (5, 300));
+         // Password and TOTP changes
+         limits.insert("auth.changePassword".to_string(), (3, 300));
+         limits.insert("auth.totp.setup".to_string(), (3, 300));
+@@ -375,6 +384,33 @@ mod tests {
+         }
+     }
+ 
++    /// Every signer login and login-signer method has a limit, and a start
++    /// is capped tighter than the finish polls it leads to.
++    #[tokio::test]
++    async fn signer_login_methods_are_registered() {
++        let limiter = EndpointRateLimiter::new();
++        for method in [
++            "auth.login.signer.available",
++            "auth.login.signer.start",
++            "auth.login.signer.finish",
++            "auth.signer.enrol.start",
++            "auth.signer.enrol.finish",
++            "auth.signer.remove",
++        ] {
++            assert!(
++                limiter.limits.contains_key(method),
++                "{method} has no rate limit entry"
++            );
++        }
++        let ip = test_ip();
++        for _ in 0..10 {
++            assert!(limiter.check("auth.login.signer.start", ip).await);
++            limiter.record("auth.login.signer.start", ip).await;
++        }
++        assert!(!limiter.check("auth.login.signer.start", ip).await);
++        assert!(limiter.check("auth.login.signer.finish", ip).await);
++    }
++
+     /// G-B3: `assistant.chat` is rate-limited per authenticated session —
+     /// the soft threshold is reached first (an owner notice should fire at
+     /// the call site), and the hard ceiling refuses the call outright.
+diff --git a/core/archipelago/src/remote_signer.rs b/core/archipelago/src/remote_signer.rs
+index fecc241..c1675c3 100644
+--- a/core/archipelago/src/remote_signer.rs
++++ b/core/archipelago/src/remote_signer.rs
+@@ -248,6 +248,29 @@ pub fn verify_remote_event(
+     Ok(())
+ }
+ 
++/// The name a signer shows for this node as the requester.
++pub const CLIENT_NAME: &str = "Archipelago";
++
++/// A request's NIP-46 params. `connect` also carries the client metadata,
++/// `[remote_signer_pubkey, secret, permissions, metadata]`, with empty
++/// strings for an absent secret and for no requested permissions (as
++/// nostr-tools sends them), so the signer can name the node on its prompts
++/// instead of showing a bare client key.
++fn request_params(request: &NostrConnectRequest) -> Vec<String> {
++    match request {
++        NostrConnectRequest::Connect {
++            remote_signer_public_key,
++            secret,
++        } => vec![
++            remote_signer_public_key.to_hex(),
++            secret.clone().unwrap_or_default(),
++            String::new(),
++            serde_json::json!({ "name": CLIENT_NAME }).to_string(),
++        ],
++        other => other.params(),
++    }
++}
++
+ /// Map a NIP-46 error string to a typed error. Signers word these freely, so
+ /// match on the usual phrases and keep anything else as a bad response.
+ fn classify_signer_error(method: &NostrConnectMethod, error: &str) -> RemoteSignerError {
+@@ -464,7 +487,7 @@ impl NostrConnectSigner {
+         let message = NostrConnectMessage::Request {
+             id: request_id.clone(),
+             method,
+-            params: request.params(),
++            params: request_params(&request),
+         };
+         let event =
+             EventBuilder::nostr_connect(&self.client_keys, self.remote_signer_pubkey, message)
+@@ -1388,7 +1411,7 @@ pub fn nostrconnect_uri(client_pubkey: &PublicKey, relays: &[RelayUrl], secret:
+         }
+         query
+             .append_pair("secret", secret)
+-            .append_pair("name", "Archipelago")
++            .append_pair("name", CLIENT_NAME)
+             .append_pair("perms", PAIRING_PERMS);
+     }
+     url.to_string()
+@@ -2734,6 +2757,31 @@ pub(crate) mod tests {
+         assert_eq!(signer.calls(), 1);
+     }
+ 
++    #[test]
++    fn connect_names_the_node_to_the_signer() {
++        let remote = Keys::generate().public_key();
++        let params = request_params(&NostrConnectRequest::Connect {
++            remote_signer_public_key: remote,
++            secret: Some("one-time".to_string()),
++        });
++        assert_eq!(params[0], remote.to_hex());
++        assert_eq!(params[1], "one-time");
++        assert_eq!(params[2], "");
++        let metadata: serde_json::Value = serde_json::from_str(&params[3]).unwrap();
++        assert_eq!(metadata["name"], "Archipelago");
++
++        let params = request_params(&NostrConnectRequest::Connect {
++            remote_signer_public_key: remote,
++            secret: None,
++        });
++        assert_eq!(params.len(), 4);
++        assert_eq!(params[1], "");
++
++        // Other requests keep the library's params.
++        let ping = NostrConnectRequest::Ping;
++        assert_eq!(request_params(&ping), ping.params());
++    }
++
+     #[test]
+     fn nostrconnect_uri_carries_the_pairing_fields() {
+         let client = Keys::generate().public_key();
+diff --git a/core/archipelago/src/session.rs b/core/archipelago/src/session.rs
+index 13b44e4..62fe3e5 100644
+--- a/core/archipelago/src/session.rs
++++ b/core/archipelago/src/session.rs
+@@ -277,6 +277,18 @@ impl SessionStore {
+     /// Upgrade a pending session to a full session with token rotation.
+     /// Deletes the old pending session and creates a new full session with a fresh token.
+     /// Returns the new plaintext token so the caller can set it as the new cookie.
++    /// Whether `token` is an unexpired pending 2FA session. Unlike
++    /// `get_pending_secret` it does not count as a TOTP attempt, so a
++    /// signer login can poll against it.
++    pub async fn is_pending(&self, token: &str) -> bool {
++        let hash = hash_token(token);
++        let sessions = self.sessions.read().await;
++        sessions.get(&hash).is_some_and(|session| {
++            matches!(session.session_type, SessionType::PendingTotp { .. })
++                && session.created_at.elapsed().unwrap_or_default().as_secs() < PENDING_SESSION_TTL
++        })
++    }
++
+     pub async fn upgrade_to_full(&self, token: &str) -> Option<String> {
+         let old_hash = hash_token(token);
+         let mut sessions = self.sessions.write().await;
+@@ -569,6 +581,24 @@ mod tests {
+         assert!(!store.validate(&token).await);
+     }
+ 
++    #[tokio::test]
++    async fn is_pending_does_not_use_up_totp_attempts() {
++        let store = SessionStore::new_for_tests(
++            std::env::temp_dir().join(format!("archipelago-sessions-test-{}.json", uniq())),
++        );
++        let pending = store.create_pending(vec![1, 2, 3]).await;
++        let full = store.create().await;
++        for _ in 0..(MAX_TOTP_ATTEMPTS as usize * 3) {
++            assert!(store.is_pending(&pending).await);
++        }
++        assert!(store.get_pending_secret(&pending).await.is_some());
++        assert!(!store.is_pending(&full).await);
++        assert!(!store.is_pending("not-a-session").await);
++        let upgraded = store.upgrade_to_full(&pending).await.unwrap();
++        assert!(!store.is_pending(&pending).await);
++        assert!(!store.is_pending(&upgraded).await);
++    }
++
+     #[tokio::test]
+     async fn test_pending_session_upgrade() {
+         let store = SessionStore::new_for_tests(
+diff --git a/core/archipelago/src/signer_login.rs b/core/archipelago/src/signer_login.rs
+new file mode 100644
+index 0000000..725e2b3
+--- /dev/null
++++ b/core/archipelago/src/signer_login.rs
+@@ -0,0 +1,1739 @@
++//! Logging in to the dashboard with a linked signer.
++//!
++//! A linked identity can be enrolled for login (`auth.signer.enrol.start`
++//! and `.finish`). A login then sends its signer a kind 22242 event carrying
++//! a random challenge, the node origin the browser used and a 4-digit code
++//! the page shows, so the owner can tell their own request from someone
++//! else's before pressing. The password always works as well; enrolment
++//! never replaces it.
++//!
++//! Without 2FA the signer's approval alone logs in. With 2FA it stands in
++//! for the TOTP code: the owner gives the password first (`auth.login`
++//! leaves a pending session), and the approval upgrades that session.
++//!
++//! An attempt is single use and belongs to whoever started it: a binding
++//! token (an HttpOnly cookie for a login without 2FA, the session or pending
++//! session token otherwise) that `finish` must present. The signer has
++//! about a minute to answer (the NIP-46 request timeout); [`ATTEMPT_TTL`]
++//! bounds the attempt as a whole, including the wait for `finish`. While an
++//! attempt (login or enrolment) waits on a signer, a second start for that
++//! signer is refused rather than replacing it, so nobody can keep cancelling
++//! the owner's request, and the device never shows both kinds at once.
++//! Logins also have a node-wide budget with backoff after failures. On a
++//! node without 2FA anyone who can reach the login page can trip it, and by
++//! retrying keep signer login paused; the password always works, a password
++//! login clears the pause, and the owner can see who tripped it
++//! ([`LoginAttempts::status`]).
++
++use anyhow::{Context, Result};
++use nostr_sdk::{Event, Kind, PublicKey, Tag, Timestamp, UnsignedEvent};
++use rand::rngs::OsRng;
++use rand::Rng;
++use sha2::{Digest, Sha256};
++use std::collections::{HashMap, VecDeque};
++use std::future::Future;
++use std::net::IpAddr;
++use std::sync::{Arc, Mutex};
++use std::time::Duration;
++use tokio::time::Instant;
++
++use crate::auth::{AuthManager, LoginSigner};
++use crate::identity_manager::IdentityManager;
++use crate::remote_signer::{RemoteSignerError, FINISH_WAIT};
++
++/// NIP-42-style authentication event, as upstream's login research proposes.
++pub const LOGIN_KIND: u16 = 22242;
++/// How long an attempt lasts in all: the signer's answer (which the NIP-46
++/// request timeout limits to about a minute) and then the wait for `finish`.
++pub const ATTEMPT_TTL: Duration = Duration::from_secs(120);
++/// How far a login event's `created_at` may be from the node's clock.
++pub const MAX_CLOCK_SKEW_SECS: u64 = 60;
++/// Prefix of the cookie binding a login attempt to its browser; the cookie
++/// is named per attempt (see [`binding_cookie_name`]).
++pub const BINDING_COOKIE: &str = "signer_login";
++/// An enrolment challenge answered faster than this was probably signed
++/// without anyone pressing a button.
++pub const QUICK_APPROVAL: Duration = Duration::from_secs(1);
++/// Node-wide: at most this many login starts per [`START_WINDOW`].
++pub const START_BUDGET: usize = 3;
++pub const START_WINDOW: Duration = Duration::from_secs(10 * 60);
++/// Pause before the next login start after one, two and three or more
++/// failed, denied or expired logins in a row.
++pub const BACKOFF: [Duration; 3] = [
++    Duration::from_secs(30),
++    Duration::from_secs(2 * 60),
++    Duration::from_secs(10 * 60),
++];
++
++/// How many recent login starts [`LoginAttempts::status`] reports.
++pub const RECENT_STARTS: usize = 20;
++
++// Texts an unauthenticated caller can see. Fixed: nothing from the signer,
++// its relays or the enrolled identity.
++pub(crate) const NOT_ENABLED: &str = "linked signer login is not enabled on this node";
++pub(crate) const ALREADY_WAITING: &str = "linked signer login is busy: another login is waiting for approval. If your signer is asking right now, that request did not come from this page: deny it";
++pub(crate) const PAUSED: &str = "linked signer login is paused after recent attempts; log in with the password or try again in a few minutes";
++pub(crate) const EXPIRED: &str = "linked signer did not approve the login in time";
++pub(crate) const GONE: &str = "Invalid signer login attempt: it is unknown, used or expired";
++pub(crate) const OTHER_BROWSER: &str =
++    "Invalid signer login attempt: it was started in another browser";
++pub(crate) const PUBLIC_OFFLINE: &str = "linked signer is offline";
++pub(crate) const PUBLIC_DENIED: &str = "linked signer denied the login";
++pub(crate) const PUBLIC_TIMEOUT: &str = "linked signer did not answer in time";
++pub(crate) const PUBLIC_REFUSED: &str =
++    "linked signer login was refused: the signed reply did not check out";
++pub(crate) const PUBLIC_FAILED: &str = "linked signer login failed";
++// Texts for the owner enrolling a signer, who is logged in.
++pub(crate) const ENROL_BUSY_LOGIN: &str = "linked signer is busy: a login is waiting for approval on it. If you did not start one, deny it on the signer, then try again";
++pub(crate) const ENROL_BUSY: &str =
++    "linked signer is already waiting to approve an enrolment; approve or deny it on the signer first";
++pub(crate) const ENROL_EXPIRED: &str = "linked signer did not approve the enrolment in time";
++
++/// The cookie name for a login attempt's binding token, or `None` if
++/// `attempt_id` is not an id this module issues (so it is safe in a header).
++pub fn binding_cookie_name(attempt_id: &str) -> Option<String> {
++    let well_formed = attempt_id.len() == 32 && attempt_id.bytes().all(|b| b.is_ascii_hexdigit());
++    well_formed.then(|| format!("{BINDING_COOKIE}_{}", &attempt_id[..8]))
++}
++
++/// Hex of `len` random bytes, drawn through the KEY-05 entropy guard.
++fn random_hex(len: usize) -> Result<String> {
++    let mut bytes = vec![0u8; len];
++    crate::entropy::draw_key_bytes(&mut OsRng, &mut bytes)
++        .map_err(|e| anyhow::anyhow!("refusing a login challenge from degenerate entropy: {e}"))?;
++    Ok(hex::encode(bytes))
++}
++
++/// What one login (or enrolment) asks the signer to sign.
++#[derive(Debug, Clone)]
++pub struct LoginChallenge {
++    /// 32 random bytes, hex.
++    pub challenge: String,
++    /// The node origin the browser used.
++    pub relay: String,
++    /// Four digits the login page shows and the signer should too.
++    pub code: String,
++    pub content: String,
++}
++
++impl LoginChallenge {
++    pub fn new(relay: &str, node_name: &str) -> Result<Self> {
++        // Unguarded: four digits for a person to compare, not key material.
++        let code = format!("{:04}", OsRng.gen_range(0..10_000u16));
++        Ok(Self {
++            challenge: random_hex(32)?,
++            relay: relay.to_string(),
++            code,
++            content: format!("Log in to {node_name}"),
++        })
++    }
++
++    pub fn tags(&self) -> Vec<Tag> {
++        vec![
++            Tag::parse(["challenge", self.challenge.as_str()]).expect("two-element tag"),
++            Tag::parse(["relay", self.relay.as_str()]).expect("two-element tag"),
++            Tag::parse(["code", self.code.as_str()]).expect("two-element tag"),
++        ]
++    }
++
++    /// The event for `pubkey` to sign, timestamped now.
++    pub fn unsigned(&self, pubkey: PublicKey) -> UnsignedEvent {
++        UnsignedEvent::new(
++            pubkey,
++            Timestamp::now(),
++            Kind::from(LOGIN_KIND),
++            self.tags(),
++            self.content.clone(),
++        )
++    }
++}
++
++/// The value of the one tag named `name`; `None` if it is missing or
++/// repeated.
++fn single_tag<'a>(event: &'a Event, name: &str) -> Option<&'a str> {
++    let mut values = event
++        .tags
++        .iter()
++        .map(|t| t.as_slice())
++        .filter(|t| t.first().map(String::as_str) == Some(name));
++    let value = values.next()?.get(1)?;
++    match values.next() {
++        Some(_) => None,
++        None => Some(value.as_str()),
++    }
++}
++
++/// Check a signed login event: kind 22242, signed by `expected` with a valid
++/// signature, carrying this attempt's challenge, relay and code, and dated
++/// within [`MAX_CLOCK_SKEW_SECS`] of `now`.
++pub fn verify_login_event(
++    event: &Event,
++    expected: &PublicKey,
++    challenge: &LoginChallenge,
++    now: Timestamp,
++) -> Result<()> {
++    if event.kind != Kind::from(LOGIN_KIND) {
++        anyhow::bail!("Invalid signer login: the event is not a login event");
++    }
++    if event.pubkey != *expected {
++        anyhow::bail!("Invalid signer login: signed by a key that is not enrolled");
++    }
++    if event.verify().is_err() {
++        anyhow::bail!("Invalid signer login: the signature does not verify");
++    }
++    if single_tag(event, "challenge") != Some(challenge.challenge.as_str()) {
++        anyhow::bail!("Invalid signer login: the challenge does not match");
++    }
++    if single_tag(event, "relay") != Some(challenge.relay.as_str()) {
++        anyhow::bail!("Invalid signer login: the node origin does not match");
++    }
++    if single_tag(event, "code") != Some(challenge.code.as_str()) {
++        anyhow::bail!("Invalid signer login: the code does not match");
++    }
++    let skew = event.created_at.as_secs().abs_diff(now.as_secs());
++    if skew > MAX_CLOCK_SKEW_SECS {
++        anyhow::bail!("Invalid signer login: the event's time is more than a minute off");
++    }
++    Ok(())
++}
++
++/// What an attempt is for. Both kinds share the per-signer slot.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Purpose {
++    Login,
++    Enrol,
++}
++
++/// What the starter must present to `finish`.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Bound {
++    /// A token minted here, kept in an HttpOnly cookie.
++    Cookie,
++    /// The caller's session or pending 2FA session token.
++    Session,
++}
++
++/// An approved attempt: who signed, and how long the signer took.
++#[derive(Debug, Clone)]
++pub struct Approval {
++    pub signer: LoginSigner,
++    pub approval: Duration,
++}
++
++/// Where an attempt has got to.
++#[derive(Debug, Clone)]
++enum AttemptState {
++    Waiting,
++    Approved(Box<Approval>),
++    Failed(String),
++}
++
++fn settled(state: &AttemptState) -> bool {
++    !matches!(state, AttemptState::Waiting)
++}
++
++struct Attempt {
++    purpose: Purpose,
++    signer: String,
++    bound: Bound,
++    binding: [u8; 32],
++    expires: Instant,
++    state: tokio::sync::watch::Receiver<AttemptState>,
++}
++
++/// A started attempt: the id for `finish`, and the binding token to put in
++/// the starter's cookie when it is [`Bound::Cookie`].
++#[derive(Debug)]
++pub struct Started {
++    pub attempt_id: String,
++    pub binding: Option<String>,
++}
++
++/// A finished, approved attempt. `bound` says whether a login was tied to a
++/// pending 2FA session, which the caller then upgrades.
++#[derive(Debug)]
++pub struct Finished {
++    pub approval: Approval,
++    pub bound: Bound,
++}
++
++fn hash_binding(binding: &str) -> [u8; 32] {
++    Sha256::digest(binding.as_bytes()).into()
++}
++
++fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
++    mutex.lock().unwrap_or_else(|e| e.into_inner())
++}
++
++/// The node-wide login start budget: [`START_BUDGET`] per [`START_WINDOW`],
++/// and a growing pause after each failed login in a row. A successful login
++/// clears both.
++struct Budget {
++    limited: bool,
++    starts: VecDeque<Instant>,
++    failures: usize,
++    paused_until: Option<Instant>,
++}
++
++impl Budget {
++    fn new(limited: bool) -> Self {
++        Self {
++            limited,
++            starts: VecDeque::new(),
++            failures: 0,
++            paused_until: None,
++        }
++    }
++
++    fn allows(&mut self, now: Instant) -> bool {
++        if !self.limited {
++            return true;
++        }
++        while self
++            .starts
++            .front()
++            .is_some_and(|at| now.duration_since(*at) >= START_WINDOW)
++        {
++            self.starts.pop_front();
++        }
++        self.paused_until.is_none_or(|until| now >= until) && self.starts.len() < START_BUDGET
++    }
++
++    fn started(&mut self, now: Instant) {
++        self.starts.push_back(now);
++    }
++
++    fn failed(&mut self, now: Instant) {
++        self.failures += 1;
++        let pause = BACKOFF[(self.failures - 1).min(BACKOFF.len() - 1)];
++        self.paused_until = Some(now + pause);
++    }
++
++    fn succeeded(&mut self) {
++        self.starts.clear();
++        self.failures = 0;
++        self.paused_until = None;
++    }
++
++    /// When the next login start will be allowed, if not now.
++    fn paused_until(&self, now: Instant) -> Option<Instant> {
++        if !self.limited {
++            return None;
++        }
++        let backoff = self.paused_until.filter(|until| *until > now);
++        let window = (self.starts.len() >= START_BUDGET)
++            .then(|| self.starts.front().map(|at| *at + START_WINDOW))
++            .flatten()
++            .filter(|until| *until > now);
++        backoff.max(window)
++    }
++}
++
++/// A login start and what became of it, for the owner.
++#[derive(Debug, Clone, serde::Serialize)]
++pub struct RecentStart {
++    /// Unix seconds.
++    pub at: i64,
++    pub ip: Option<IpAddr>,
++    /// `pending`, `approved`, `denied`, `expired`, `offline`, `refused`,
++    /// `failed`, `refused-busy` or `refused-budget`.
++    pub outcome: &'static str,
++    #[serde(skip)]
++    attempt_id: Option<String>,
++}
++
++/// The owner's view of signer login: when it is paused until (Unix
++/// seconds), and the recent starts.
++#[derive(Debug, Clone, serde::Serialize)]
++pub struct SignerLoginStatus {
++    pub paused_until: Option<i64>,
++    pub recent: Vec<RecentStart>,
++}
++
++/// What a failed login's public text says happened.
++fn failure_outcome(message: &str) -> &'static str {
++    match message {
++        PUBLIC_DENIED => "denied",
++        PUBLIC_OFFLINE => "offline",
++        EXPIRED | PUBLIC_TIMEOUT => "expired",
++        PUBLIC_REFUSED => "refused",
++        _ => "failed",
++    }
++}
++
++/// Login and enrolment attempts waiting on a signer or on `finish`.
++/// One per node: `RpcHandler` holds it.
++pub struct LoginAttempts {
++    pending: Mutex<HashMap<String, Attempt>>,
++    budget: Mutex<Budget>,
++    recent: Mutex<VecDeque<RecentStart>>,
++}
++
++impl Default for LoginAttempts {
++    fn default() -> Self {
++        Self::with_budget(true)
++    }
++}
++
++impl LoginAttempts {
++    fn with_budget(limited: bool) -> Self {
++        Self {
++            pending: Mutex::default(),
++            budget: Mutex::new(Budget::new(limited)),
++            recent: Mutex::default(),
++        }
++    }
++
++    /// Attempts with no login budget, for tests of everything else.
++    #[cfg(test)]
++    pub fn unbudgeted() -> Self {
++        Self::with_budget(false)
++    }
++
++    fn record(&self, ip: Option<IpAddr>, outcome: &'static str, attempt_id: Option<String>) {
++        let mut recent = lock(&self.recent);
++        if recent.len() >= RECENT_STARTS {
++            recent.pop_front();
++        }
++        recent.push_back(RecentStart {
++            at: chrono::Utc::now().timestamp(),
++            ip,
++            outcome,
++            attempt_id,
++        });
++    }
++
++    fn settle_record(&self, attempt_id: &str, outcome: &'static str) {
++        let mut recent = lock(&self.recent);
++        if let Some(entry) = recent
++            .iter_mut()
++            .find(|r| r.attempt_id.as_deref() == Some(attempt_id))
++        {
++            entry.outcome = outcome;
++        }
++    }
++
++    /// A password login succeeded: the owner is here, so clear the login
++    /// budget and backoff that others may have tripped.
++    pub fn password_login(&self) {
++        lock(&self.budget).succeeded();
++    }
++
++    /// When signer login is paused until, and the last [`RECENT_STARTS`]
++    /// login starts with their outcomes, newest last.
++    pub fn status(&self) -> SignerLoginStatus {
++        let now = Instant::now();
++        let paused_until = lock(&self.budget).paused_until(now).map(|until| {
++            chrono::Utc::now().timestamp() + until.duration_since(now).as_secs_f64().ceil() as i64
++        });
++        SignerLoginStatus {
++            paused_until,
++            recent: lock(&self.recent).iter().cloned().collect(),
++        }
++    }
++
++    /// [`Self::start_from`] with no client address.
++    pub fn start<F>(
++        self: &Arc<Self>,
++        purpose: Purpose,
++        signer: &str,
++        session: Option<&str>,
++        work: F,
++    ) -> Result<Started>
++    where
++        F: Future<Output = Result<Approval>> + Send + 'static,
++    {
++        self.start_from(purpose, signer, session, None, work)
++    }
++
++    /// Start an attempt for `signer` (its key, hex) that runs `work`, the
++    /// signing and verification, for at most [`ATTEMPT_TTL`]. `session` is
++    /// the token to bind to; with none, a cookie token is minted. Refused
++    /// while another attempt for the signer is unexpired and has not failed,
++    /// and, for a login, when the node-wide budget is spent. A login start
++    /// from `ip` is recorded for [`Self::status`], refused or not.
++    pub fn start_from<F>(
++        self: &Arc<Self>,
++        purpose: Purpose,
++        signer: &str,
++        session: Option<&str>,
++        ip: Option<IpAddr>,
++        work: F,
++    ) -> Result<Started>
++    where
++        F: Future<Output = Result<Approval>> + Send + 'static,
++    {
++        let mut pending = lock(&self.pending);
++        let now = Instant::now();
++        pending.retain(|_, a| a.expires > now);
++        let busy = pending
++            .values()
++            .find(|a| a.signer == signer && !matches!(*a.state.borrow(), AttemptState::Failed(_)))
++            .map(|a| a.purpose);
++        match (purpose, busy) {
++            (_, None) => {}
++            (Purpose::Login, Some(_)) => {
++                self.record(ip, "refused-busy", None);
++                anyhow::bail!(ALREADY_WAITING);
++            }
++            (Purpose::Enrol, Some(Purpose::Login)) => anyhow::bail!(ENROL_BUSY_LOGIN),
++            (Purpose::Enrol, Some(Purpose::Enrol)) => anyhow::bail!(ENROL_BUSY),
++        }
++        if purpose == Purpose::Login {
++            let mut budget = lock(&self.budget);
++            if !budget.allows(now) {
++                drop(budget);
++                self.record(ip, "refused-budget", None);
++                anyhow::bail!(PAUSED);
++            }
++            budget.started(now);
++        }
++        let attempt_id = random_hex(16)?;
++        let (bound, binding, cookie) = match session {
++            Some(token) => (Bound::Session, hash_binding(token), None),
++            None => {
++                let token = random_hex(32)?;
++                (Bound::Cookie, hash_binding(&token), Some(token))
++            }
++        };
++        if purpose == Purpose::Login {
++            self.record(ip, "pending", Some(attempt_id.clone()));
++        }
++        let expires = now + ATTEMPT_TTL;
++        let (state_tx, state_rx) = tokio::sync::watch::channel(AttemptState::Waiting);
++        let attempts = Arc::clone(self);
++        let task_id = attempt_id.clone();
++        tokio::spawn(async move {
++            let state = match tokio::time::timeout_at(expires, work).await {
++                Ok(Ok(approval)) => AttemptState::Approved(Box::new(approval)),
++                Ok(Err(e)) => AttemptState::Failed(e.to_string()),
++                Err(_) => AttemptState::Failed(
++                    match purpose {
++                        Purpose::Login => EXPIRED,
++                        Purpose::Enrol => ENROL_EXPIRED,
++                    }
++                    .to_string(),
++                ),
++            };
++            if purpose == Purpose::Login {
++                match &state {
++                    AttemptState::Approved(_) => attempts.settle_record(&task_id, "approved"),
++                    AttemptState::Failed(message) => {
++                        lock(&attempts.budget).failed(Instant::now());
++                        attempts.settle_record(&task_id, failure_outcome(message));
++                    }
++                    AttemptState::Waiting => {}
++                }
++            }
++            let _ = state_tx.send(state);
++            tokio::time::sleep_until(expires).await;
++            lock(&attempts.pending).remove(&task_id);
++        });
++        pending.insert(
++            attempt_id.clone(),
++            Attempt {
++                purpose,
++                signer: signer.to_string(),
++                bound,
++                binding,
++                expires,
++                state: state_rx,
++            },
++        );
++        Ok(Started {
++            attempt_id,
++            binding: cookie,
++        })
++    }
++
++    /// Wait up to [`FINISH_WAIT`] for the attempt to settle: `Ok(None)`
++    /// while the signer has not answered, the approval once it has, and an
++    /// error if it failed or expired. The attempt must be for `purpose`, and
++    /// the caller must present its binding: `cookie` for one bound to a
++    /// cookie, `session` for one bound to a session. A settled attempt is
++    /// used up by the first `finish` that sees it; a refused `finish` leaves
++    /// it alone.
++    pub async fn finish(
++        &self,
++        attempt_id: &str,
++        purpose: Purpose,
++        cookie: Option<&str>,
++        session: Option<&str>,
++    ) -> Result<Option<Finished>> {
++        let (mut state, expires, bound) = {
++            let mut pending = lock(&self.pending);
++            let attempt = pending
++                .get(attempt_id)
++                .filter(|a| a.purpose == purpose)
++                .ok_or_else(|| anyhow::anyhow!(GONE))?;
++            if attempt.expires <= Instant::now() {
++                pending.remove(attempt_id);
++                anyhow::bail!(GONE);
++            }
++            let presented = match attempt.bound {
++                Bound::Cookie => cookie,
++                Bound::Session => session,
++            };
++            if presented.map(hash_binding) != Some(attempt.binding) {
++                anyhow::bail!(OTHER_BROWSER);
++            }
++            (attempt.state.clone(), attempt.expires, attempt.bound)
++        };
++        let until = expires.min(Instant::now() + FINISH_WAIT);
++        let outcome = match tokio::time::timeout_at(until, state.wait_for(settled)).await {
++            Ok(Ok(outcome)) => outcome.clone(),
++            Err(_) if Instant::now() < expires => return Ok(None),
++            // Expired, or the attempt's task ended without an outcome.
++            _ => {
++                lock(&self.pending).remove(attempt_id);
++                anyhow::bail!(GONE);
++            }
++        };
++        // Single use: only the `finish` that removes the attempt reports it.
++        if lock(&self.pending).remove(attempt_id).is_none() {
++            anyhow::bail!(GONE);
++        }
++        match outcome {
++            AttemptState::Approved(approval) => {
++                if purpose == Purpose::Login {
++                    lock(&self.budget).succeeded();
++                }
++                Ok(Some(Finished {
++                    approval: *approval,
++                    bound,
++                }))
++            }
++            AttemptState::Failed(message) => Err(anyhow::anyhow!(message)),
++            AttemptState::Waiting => Err(anyhow::anyhow!(GONE)),
++        }
++    }
++
++    #[cfg(test)]
++    pub fn len(&self) -> usize {
++        lock(&self.pending).len()
++    }
++}
++
++/// The fixed text an unauthenticated caller sees for a failed login. The
++/// detail (relays, the signer's own words) is logged for the owner instead.
++fn public_login_error(error: &anyhow::Error) -> &'static str {
++    match error.downcast_ref::<RemoteSignerError>() {
++        Some(RemoteSignerError::Offline(_)) => PUBLIC_OFFLINE,
++        Some(RemoteSignerError::Denied | RemoteSignerError::Unauthorised) => PUBLIC_DENIED,
++        Some(RemoteSignerError::Timeout) => PUBLIC_TIMEOUT,
++        Some(RemoteSignerError::BadResponse(_)) => PUBLIC_REFUSED,
++        Some(_) | None => PUBLIC_FAILED,
++    }
++}
++
++/// Whether the login page should offer the signer before the password:
++/// a signer is enrolled and the node has no 2FA. On a 2FA node the signer is
++/// offered at the TOTP step instead, after the password.
++pub async fn available(auth: &AuthManager) -> Result<bool> {
++    Ok(!auth.login_signers().await?.is_empty() && !auth.is_totp_enabled().await?)
++}
++
++/// Start a login through the enrolled signer (the first enrolled; there is
++/// one for now). On a 2FA node `pending_session` must be the caller's valid
++/// pending 2FA session, which the login is bound to; otherwise it is
++/// ignored and the login is bound to a fresh cookie. Returns the attempt and
++/// the code for the page. The caller may be unauthenticated, so every
++/// refusal is a fixed text that names nothing.
++pub async fn start(
++    attempts: &Arc<LoginAttempts>,
++    auth: &AuthManager,
++    manager: Arc<IdentityManager>,
++    relay: &str,
++    node_name: &str,
++    pending_session: Option<&str>,
++    ip: Option<IpAddr>,
++) -> Result<(Started, String)> {
++    let Some(enrolled) = auth.login_signers().await?.into_iter().next() else {
++        anyhow::bail!(NOT_ENABLED);
++    };
++    let session = if auth.is_totp_enabled().await? {
++        // The same answer as no enrolment: before the password, nobody
++        // learns whether 2FA is on.
++        Some(pending_session.ok_or_else(|| anyhow::anyhow!(NOT_ENABLED))?)
++    } else {
++        None
++    };
++    // The identity must still be linked to the enrolled key.
++    let still_linked = manager
++        .linked_signer(&enrolled.identity_id)
++        .await
++        .ok()
++        .flatten()
++        .is_some_and(|linked| linked.user_pubkey == enrolled.pubkey);
++    if !still_linked {
++        tracing::warn!(
++            identity = %enrolled.identity_id,
++            "[login] signer login refused: the enrolled identity is no longer linked"
++        );
++        anyhow::bail!(NOT_ENABLED);
++    }
++    let pubkey = PublicKey::from_hex(&enrolled.pubkey).context("Invalid enrolled signer key")?;
++    let challenge = LoginChallenge::new(relay, node_name)?;
++    let code = challenge.code.clone();
++    let signer_key = enrolled.pubkey.clone();
++    let started = attempts.start_from(Purpose::Login, &signer_key, session, ip, async move {
++        let asked = Instant::now();
++        let event = match manager
++            .sign_linked_event(&enrolled.identity_id, challenge.unsigned(pubkey))
++            .await
++        {
++            Ok(event) => event,
++            Err(e) => {
++                tracing::warn!("[login] signer login failed: {e:#}");
++                anyhow::bail!(public_login_error(&e));
++            }
++        };
++        let approval = asked.elapsed();
++        // Checked when the reply arrives, not when the browser next polls.
++        if let Err(e) = verify_login_event(&event, &pubkey, &challenge, Timestamp::now()) {
++            tracing::warn!("[login] signer login reply refused: {e:#}");
++            anyhow::bail!(PUBLIC_REFUSED);
++        }
++        Ok(Approval {
++            signer: enrolled,
++            approval,
++        })
++    })?;
++    Ok((started, code))
++}
++
++/// Poll a login. `cookie` is the attempt's binding cookie, `session` the
++/// caller's session cookie (a pending 2FA session for a 2FA login).
++pub async fn finish(
++    attempts: &LoginAttempts,
++    attempt_id: &str,
++    cookie: Option<&str>,
++    session: Option<&str>,
++) -> Result<Option<Finished>> {
++    attempts
++        .finish(attempt_id, Purpose::Login, cookie, session)
++        .await
++}
++
++/// Start enrolling a linked identity for login: check the password again,
++/// then have its signer sign a login challenge, bound to the owner's
++/// session. Returns the attempt id and the code for the dashboard to show.
++/// The enrolment is saved when the signer approves.
++#[allow(clippy::too_many_arguments)]
++pub async fn enrol_start(
++    attempts: &Arc<LoginAttempts>,
++    auth: &AuthManager,
++    manager: Arc<IdentityManager>,
++    identity_id: &str,
++    password: &str,
++    session: &str,
++    relay: &str,
++    node_name: &str,
++) -> Result<(String, String)> {
++    if !auth.verify_password(password).await? {
++        anyhow::bail!("Password Incorrect");
++    }
++    let enrolled = auth.login_signers().await?;
++    if enrolled.iter().any(|s| s.identity_id == identity_id) {
++        anyhow::bail!("Already exists: this identity is already enrolled for login");
++    }
++    if !enrolled.is_empty() {
++        anyhow::bail!("Already exists: a signer is already enrolled for login; remove it first");
++    }
++    let linked = manager.linked_signer(identity_id).await?.ok_or_else(|| {
++        anyhow::anyhow!("Invalid identity: only an identity linked to a signer can log in")
++    })?;
++    let pubkey =
++        PublicKey::from_hex(&linked.user_pubkey).context("Invalid linked signer user key")?;
++    let challenge = LoginChallenge::new(relay, node_name)?;
++    let code = challenge.code.clone();
++    let auth = auth.clone();
++    let identity = identity_id.to_string();
++    let user_pubkey = linked.user_pubkey;
++    let slot = user_pubkey.clone();
++    let started = attempts.start(Purpose::Enrol, &slot, Some(session), async move {
++        let asked = Instant::now();
++        let event = manager
++            .sign_linked_event(&identity, challenge.unsigned(pubkey))
++            .await?;
++        let approval = asked.elapsed();
++        verify_login_event(&event, &pubkey, &challenge, Timestamp::now())?;
++        // The identity may have been re-linked or deleted during the press.
++        let still_linked = manager
++            .linked_signer(&identity)
++            .await
++            .ok()
++            .flatten()
++            .is_some_and(|linked| linked.user_pubkey == user_pubkey);
++        if !still_linked {
++            anyhow::bail!("Invalid identity: it is no longer linked to this signer");
++        }
++        let signer = LoginSigner {
++            identity_id: identity.clone(),
++            pubkey: user_pubkey,
++            added_at: chrono::Utc::now().to_rfc3339(),
++        };
++        auth.add_login_signer(signer.clone()).await?;
++        tracing::info!(identity = %identity, "Enrolled a linked signer for login");
++        Ok(Approval { signer, approval })
++    })?;
++    Ok((started.attempt_id, code))
++}
++
++/// Poll an enrolment started from `session`: the saved enrolment once the
++/// signer approves.
++pub async fn enrol_finish(
++    attempts: &LoginAttempts,
++    attempt_id: &str,
++    session: &str,
++) -> Result<Option<Approval>> {
++    Ok(attempts
++        .finish(attempt_id, Purpose::Enrol, None, Some(session))
++        .await?
++        .map(|finished| finished.approval))
++}
++
++/// Remove an identity's login enrolment after re-checking the password. The
++/// password itself always keeps working.
++pub async fn remove(auth: &AuthManager, identity_id: &str, password: &str) -> Result<bool> {
++    if !auth.verify_password(password).await? {
++        anyhow::bail!("Password Incorrect");
++    }
++    let removed = auth.remove_login_signer(identity_id).await?;
++    if removed {
++        tracing::info!(identity = %identity_id, "Removed a login signer");
++    }
++    Ok(removed)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::identity_manager::{IdentityPurpose, IdentityRecord};
++    use crate::remote_signer::tests::{FakeMode, FakeSigner, FakeSource};
++    use crate::remote_signer::RemoteRequests;
++    use nostr_sdk::Keys;
++
++    const RELAY: &str = "https://node.local";
++    const PASSWORD: &str = "password123";
++
++    fn challenge() -> LoginChallenge {
++        LoginChallenge::new(RELAY, "my node").unwrap()
++    }
++
++    fn signed(keys: &Keys, kind: u16, tags: Vec<Tag>, created_at: Timestamp) -> Event {
++        UnsignedEvent::new(
++            keys.public_key(),
++            created_at,
++            Kind::from(kind),
++            tags,
++            "Log in to my node",
++        )
++        .sign_with_keys(keys)
++        .unwrap()
++    }
++
++    fn rejection(event: &Event, keys: &Keys, ch: &LoginChallenge) -> String {
++        verify_login_event(event, &keys.public_key(), ch, Timestamp::now())
++            .unwrap_err()
++            .to_string()
++    }
++
++    #[test]
++    fn challenges_are_fresh_and_shaped_as_specified() {
++        let a = challenge();
++        let b = challenge();
++        assert_eq!(a.challenge.len(), 64);
++        assert!(a.challenge.chars().all(|c| c.is_ascii_hexdigit()));
++        assert_ne!(a.challenge, b.challenge);
++        assert_eq!(a.code.len(), 4);
++        assert!(a.code.chars().all(|c| c.is_ascii_digit()));
++        assert_eq!(a.content, "Log in to my node");
++        let keys = Keys::generate();
++        let unsigned = a.unsigned(keys.public_key());
++        assert_eq!(unsigned.kind, Kind::from(22242));
++        let tags: Vec<Vec<String>> = unsigned
++            .tags
++            .iter()
++            .map(|t| t.as_slice().to_vec())
++            .collect();
++        assert_eq!(
++            tags,
++            vec![
++                vec!["challenge".to_string(), a.challenge.clone()],
++                vec!["relay".to_string(), RELAY.to_string()],
++                vec!["code".to_string(), a.code.clone()],
++            ]
++        );
++    }
++
++    #[test]
++    fn a_correct_login_event_verifies() {
++        let keys = Keys::generate();
++        let ch = challenge();
++        let event = ch
++            .unsigned(keys.public_key())
++            .sign_with_keys(&keys)
++            .unwrap();
++        verify_login_event(&event, &keys.public_key(), &ch, Timestamp::now()).unwrap();
++    }
++
++    #[test]
++    fn every_kind_of_wrong_login_event_is_refused() {
++        let keys = Keys::generate();
++        let ch = challenge();
++        let now = Timestamp::now();
++
++        let wrong_kind = signed(&keys, 1, ch.tags(), now);
++        assert!(rejection(&wrong_kind, &keys, &ch).contains("not a login event"));
++
++        let other = Keys::generate();
++        let wrong_key = ch
++            .unsigned(other.public_key())
++            .sign_with_keys(&other)
++            .unwrap();
++        assert!(rejection(&wrong_key, &keys, &ch).contains("not enrolled"));
++
++        let mut other_challenge = ch.clone();
++        other_challenge.challenge = "00".repeat(32);
++        let wrong_challenge = signed(&keys, LOGIN_KIND, other_challenge.tags(), now);
++        assert!(rejection(&wrong_challenge, &keys, &ch).contains("challenge"));
++
++        let mut other_code = ch.clone();
++        other_code.code = if ch.code == "0000" { "0001" } else { "0000" }.to_string();
++        let wrong_code = signed(&keys, LOGIN_KIND, other_code.tags(), now);
++        assert!(rejection(&wrong_code, &keys, &ch).contains("code"));
++
++        let mut other_relay = ch.clone();
++        other_relay.relay = "https://elsewhere.example".to_string();
++        let wrong_relay = signed(&keys, LOGIN_KIND, other_relay.tags(), now);
++        assert!(rejection(&wrong_relay, &keys, &ch).contains("origin"));
++
++        let mut doubled = ch.tags();
++        doubled.push(Tag::parse(["code", "9999"]).unwrap());
++        let repeated_code = signed(&keys, LOGIN_KIND, doubled, now);
++        assert!(rejection(&repeated_code, &keys, &ch).contains("code"));
++
++        let stale = signed(&keys, LOGIN_KIND, ch.tags(), now - 61);
++        assert!(rejection(&stale, &keys, &ch).contains("time"));
++        let future = signed(&keys, LOGIN_KIND, ch.tags(), now + 61);
++        assert!(rejection(&future, &keys, &ch).contains("time"));
++        let edge = signed(&keys, LOGIN_KIND, ch.tags(), now - 60);
++        verify_login_event(&edge, &keys.public_key(), &ch, now).unwrap();
++
++        // A real signature by the right key, but over another event.
++        let mut bad_sig = ch
++            .unsigned(keys.public_key())
++            .sign_with_keys(&keys)
++            .unwrap();
++        bad_sig.sig = wrong_kind.sig;
++        assert!(rejection(&bad_sig, &keys, &ch).contains("signature"));
++    }
++
++    #[test]
++    fn binding_cookies_are_named_per_attempt_and_only_for_our_ids() {
++        let id = "0123456789abcdef0123456789abcdef";
++        assert_eq!(
++            binding_cookie_name(id).as_deref(),
++            Some("signer_login_01234567")
++        );
++        for bad in [
++            "",
++            "short",
++            "0123456789abcdef0123456789abcdeg",
++            "a; Path=/x\r\n",
++        ] {
++            assert!(binding_cookie_name(bad).is_none(), "{bad:?}");
++        }
++    }
++
++    // ── Attempt lifecycle ───────────────────────────────────────────────
++
++    fn approval() -> Approval {
++        Approval {
++            signer: LoginSigner {
++                identity_id: "id".to_string(),
++                pubkey: "ab".repeat(32),
++                added_at: "now".to_string(),
++            },
++            approval: Duration::ZERO,
++        }
++    }
++
++    async fn approve() -> Result<Approval> {
++        Ok(approval())
++    }
++
++    async fn never() -> Result<Approval> {
++        std::future::pending().await
++    }
++
++    fn attempts() -> Arc<LoginAttempts> {
++        Arc::new(LoginAttempts::unbudgeted())
++    }
++
++    async fn finish_cookie(
++        attempts: &LoginAttempts,
++        started: &Started,
++    ) -> Result<Option<Finished>> {
++        attempts
++            .finish(
++                &started.attempt_id,
++                Purpose::Login,
++                started.binding.as_deref(),
++                None,
++            )
++            .await
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn an_approved_attempt_logs_in_once() {
++        let attempts = attempts();
++        let started = attempts
++            .start(Purpose::Login, "signer", None, approve())
++            .unwrap();
++        assert_eq!(started.attempt_id.len(), 32);
++        assert_eq!(started.binding.as_ref().unwrap().len(), 64);
++        let finished = finish_cookie(&attempts, &started).await.unwrap().unwrap();
++        assert_eq!(finished.bound, Bound::Cookie);
++        // Single use.
++        let again = finish_cookie(&attempts, &started).await.unwrap_err();
++        assert_eq!(again.to_string(), GONE);
++        assert_eq!(attempts.len(), 0);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn finish_waits_ten_seconds_then_reports_pending() {
++        let attempts = attempts();
++        let started = attempts
++            .start(Purpose::Login, "signer", None, never())
++            .unwrap();
++        let asked = Instant::now();
++        assert!(finish_cookie(&attempts, &started).await.unwrap().is_none());
++        assert_eq!(asked.elapsed(), FINISH_WAIT);
++        // Still there for the next poll.
++        assert_eq!(attempts.len(), 1);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn an_attempt_expires_after_two_minutes() {
++        let attempts = attempts();
++        let started = attempts
++            .start(Purpose::Login, "signer", None, never())
++            .unwrap();
++        let mut polls = 0;
++        let error = loop {
++            match finish_cookie(&attempts, &started).await {
++                Ok(None) => polls += 1,
++                Ok(Some(_)) => panic!("approved without a signer"),
++                Err(e) => break e,
++            }
++        };
++        // The poll that reaches the deadline reports the expiry (or, if its
++        // own timer fires first, that the attempt is gone).
++        assert!(
++            [EXPIRED, GONE].contains(&error.to_string().as_str()),
++            "{error}"
++        );
++        assert_eq!(polls, 11);
++        let gone = finish_cookie(&attempts, &started).await.unwrap_err();
++        assert_eq!(gone.to_string(), GONE);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn an_expired_attempt_frees_the_signer_and_is_removed() {
++        let attempts = attempts();
++        let first = attempts
++            .start(Purpose::Login, "signer", None, never())
++            .unwrap();
++        tokio::time::sleep(ATTEMPT_TTL + Duration::from_secs(1)).await;
++        assert_eq!(attempts.len(), 0);
++        let gone = finish_cookie(&attempts, &first).await.unwrap_err();
++        assert_eq!(gone.to_string(), GONE);
++        attempts
++            .start(Purpose::Login, "signer", None, approve())
++            .unwrap();
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_second_start_is_refused_while_one_is_pending() {
++        let attempts = attempts();
++        let first = attempts
++            .start(Purpose::Login, "signer", None, never())
++            .unwrap();
++        let refused = attempts
++            .start(Purpose::Login, "signer", None, approve())
++            .unwrap_err();
++        assert_eq!(refused.to_string(), ALREADY_WAITING);
++        // The refusal tells the owner to deny, not to wait and approve.
++        assert!(ALREADY_WAITING.contains("deny it"));
++        // The first attempt is untouched.
++        assert!(finish_cookie(&attempts, &first).await.unwrap().is_none());
++        // An approved but unfinished attempt still holds the slot.
++        let other = attempts
++            .start(Purpose::Login, "other signer", None, approve())
++            .unwrap();
++        tokio::time::sleep(Duration::from_millis(1)).await;
++        assert!(attempts
++            .start(Purpose::Login, "other signer", None, approve())
++            .is_err());
++        assert!(finish_cookie(&attempts, &other).await.unwrap().is_some());
++        attempts
++            .start(Purpose::Login, "other signer", None, approve())
++            .unwrap();
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn logins_and_enrolments_share_the_slot() {
++        let attempts = attempts();
++        attempts
++            .start(Purpose::Login, "signer", None, never())
++            .unwrap();
++        let refused = attempts
++            .start(Purpose::Enrol, "signer", Some("session"), approve())
++            .unwrap_err();
++        assert_eq!(refused.to_string(), ENROL_BUSY_LOGIN);
++
++        let attempts = self::attempts();
++        attempts
++            .start(Purpose::Enrol, "signer", Some("session"), never())
++            .unwrap();
++        let refused = attempts
++            .start(Purpose::Login, "signer", None, approve())
++            .unwrap_err();
++        assert_eq!(refused.to_string(), ALREADY_WAITING);
++        let refused = attempts
++            .start(Purpose::Enrol, "signer", Some("session"), approve())
++            .unwrap_err();
++        assert_eq!(refused.to_string(), ENROL_BUSY);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_login_finish_cannot_take_an_enrolment() {
++        let attempts = attempts();
++        let started = attempts
++            .start(Purpose::Enrol, "signer", Some("session"), approve())
++            .unwrap();
++        assert!(started.binding.is_none());
++        let refused = attempts
++            .finish(&started.attempt_id, Purpose::Login, None, Some("session"))
++            .await
++            .unwrap_err();
++        assert_eq!(refused.to_string(), GONE);
++        // Still there for the enrolment's own finish.
++        let finished = attempts
++            .finish(&started.attempt_id, Purpose::Enrol, None, Some("session"))
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(finished.bound, Bound::Session);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_failed_attempt_frees_the_slot_and_reports_once() {
++        let attempts = attempts();
++        let first = attempts
++            .start(Purpose::Login, "signer", None, async {
++                Err(anyhow::anyhow!(PUBLIC_DENIED))
++            })
++            .unwrap();
++        tokio::time::sleep(Duration::from_millis(1)).await;
++        let second = attempts
++            .start(Purpose::Login, "signer", None, approve())
++            .unwrap();
++        let denied = finish_cookie(&attempts, &first).await.unwrap_err();
++        assert_eq!(denied.to_string(), PUBLIC_DENIED);
++        assert!(finish_cookie(&attempts, &first).await.is_err());
++        assert!(finish_cookie(&attempts, &second).await.unwrap().is_some());
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn finish_needs_the_starters_binding() {
++        let attempts = attempts();
++        let started = attempts
++            .start(Purpose::Login, "signer", None, approve())
++            .unwrap();
++        for binding in [None, Some("00".repeat(32))] {
++            let refused = attempts
++                .finish(
++                    &started.attempt_id,
++                    Purpose::Login,
++                    binding.as_deref(),
++                    // A session token is no substitute for the cookie.
++                    started.binding.as_deref(),
++                )
++                .await
++                .unwrap_err();
++            assert_eq!(refused.to_string(), OTHER_BROWSER);
++        }
++        // A refused finish does not use the attempt up.
++        assert!(finish_cookie(&attempts, &started).await.unwrap().is_some());
++
++        // An attempt bound to a session needs that session, not a cookie.
++        let started = attempts
++            .start(Purpose::Login, "signer", Some("pending"), approve())
++            .unwrap();
++        assert!(started.binding.is_none());
++        for (cookie, session) in [(Some("pending"), None), (None, Some("other"))] {
++            let refused = attempts
++                .finish(&started.attempt_id, Purpose::Login, cookie, session)
++                .await
++                .unwrap_err();
++            assert_eq!(refused.to_string(), OTHER_BROWSER);
++        }
++        let finished = attempts
++            .finish(&started.attempt_id, Purpose::Login, None, Some("pending"))
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(finished.bound, Bound::Session);
++    }
++
++    // ── Node-wide budget ────────────────────────────────────────────────
++
++    async fn deny() -> Result<Approval> {
++        Err(anyhow::anyhow!(PUBLIC_DENIED))
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn login_starts_have_a_node_wide_budget() {
++        let attempts = Arc::new(LoginAttempts::default());
++        // Different signers, so the one-pending rule is not what refuses.
++        for i in 0..START_BUDGET {
++            attempts
++                .start(Purpose::Login, &format!("signer {i}"), None, never())
++                .unwrap();
++        }
++        let refused = attempts
++            .start(Purpose::Login, "another", None, never())
++            .unwrap_err();
++        assert_eq!(refused.to_string(), PAUSED);
++        // Enrolments, which need the owner's session, are not budgeted.
++        attempts
++            .start(Purpose::Enrol, "enrolling", Some("session"), never())
++            .unwrap();
++        tokio::time::sleep(START_WINDOW).await;
++        // The window has passed, but the three unanswered logins expired at
++        // two minutes, and each counts as a failure: still backing off.
++        assert_eq!(
++            attempts
++                .start(Purpose::Login, "another", None, never())
++                .unwrap_err()
++                .to_string(),
++            PAUSED
++        );
++        tokio::time::sleep(ATTEMPT_TTL).await;
++        attempts
++            .start(Purpose::Login, "another", None, never())
++            .unwrap();
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn failed_logins_back_off_and_a_success_resets() {
++        let attempts = Arc::new(LoginAttempts::default());
++        let started = attempts
++            .start(Purpose::Login, "signer", None, deny())
++            .unwrap();
++        tokio::time::sleep(Duration::from_millis(1)).await;
++        assert_eq!(
++            attempts
++                .start(Purpose::Login, "signer", None, deny())
++                .unwrap_err()
++                .to_string(),
++            PAUSED
++        );
++        assert!(finish_cookie(&attempts, &started).await.is_err());
++        tokio::time::sleep(BACKOFF[0]).await;
++        // The second failure in a row pauses for longer.
++        attempts
++            .start(Purpose::Login, "signer", None, deny())
++            .unwrap();
++        tokio::time::sleep(BACKOFF[0] + Duration::from_millis(1)).await;
++        assert!(attempts
++            .start(Purpose::Login, "signer", None, approve())
++            .is_err());
++        tokio::time::sleep(BACKOFF[1]).await;
++        // A success clears the backoff and the window.
++        let ok = attempts
++            .start(Purpose::Login, "signer", None, approve())
++            .unwrap();
++        assert!(finish_cookie(&attempts, &ok).await.unwrap().is_some());
++        for i in 0..START_BUDGET {
++            attempts
++                .start(Purpose::Login, &format!("fresh {i}"), None, never())
++                .unwrap();
++        }
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn a_password_login_clears_the_pause() {
++        let attempts = Arc::new(LoginAttempts::default());
++        attempts
++            .start(Purpose::Login, "signer", None, deny())
++            .unwrap();
++        tokio::time::sleep(Duration::from_millis(1)).await;
++        assert!(attempts.status().paused_until.is_some());
++        assert!(attempts
++            .start(Purpose::Login, "signer", None, approve())
++            .is_err());
++        attempts.password_login();
++        assert!(attempts.status().paused_until.is_none());
++        attempts
++            .start(Purpose::Login, "signer", None, approve())
++            .unwrap();
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn the_owner_can_see_who_started_logins_and_what_became_of_them() {
++        let attempts = Arc::new(LoginAttempts::default());
++        let lan: IpAddr = "192.0.2.7".parse().unwrap();
++        let approved = attempts
++            .start_from(Purpose::Login, "a", None, Some(lan), approve())
++            .unwrap();
++        attempts
++            .start_from(Purpose::Login, "b", None, Some(lan), deny())
++            .unwrap();
++        attempts
++            .start_from(Purpose::Login, "c", None, Some(lan), never())
++            .unwrap();
++        tokio::time::sleep(Duration::from_millis(1)).await;
++        // Busy, then out of budget (and backing off after the denial).
++        assert!(attempts
++            .start_from(Purpose::Login, "c", None, Some(lan), never())
++            .is_err());
++        assert!(attempts
++            .start_from(Purpose::Login, "d", None, Some(lan), never())
++            .is_err());
++        // Enrolments are not login starts.
++        attempts
++            .start(Purpose::Enrol, "e", Some("session"), never())
++            .unwrap();
++        let status = attempts.status();
++        let outcomes: Vec<&str> = status.recent.iter().map(|r| r.outcome).collect();
++        assert_eq!(
++            outcomes,
++            [
++                "approved",
++                "denied",
++                "pending",
++                "refused-busy",
++                "refused-budget"
++            ]
++        );
++        assert!(status.recent.iter().all(|r| r.ip == Some(lan)));
++        assert!(status.paused_until.is_some());
++        // The unanswered one expires.
++        tokio::time::sleep(ATTEMPT_TTL).await;
++        assert_eq!(attempts.status().recent[2].outcome, "expired");
++        // The approved one was never finished in time, so it is gone and
++        // cleared nothing; a password login clears the pause.
++        assert!(finish_cookie(&attempts, &approved).await.is_err());
++        assert!(attempts.status().paused_until.is_some());
++        attempts.password_login();
++        assert!(attempts.status().paused_until.is_none());
++        // Serialised for the dashboard, without the attempt ids.
++        let json = serde_json::to_value(attempts.status()).unwrap();
++        assert_eq!(json["recent"][0]["ip"], "192.0.2.7");
++        assert!(json["recent"][0].get("attempt_id").is_none());
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn the_record_is_bounded() {
++        let attempts = attempts();
++        for i in 0..(RECENT_STARTS + 5) {
++            attempts
++                .start(Purpose::Login, &format!("s{i}"), None, approve())
++                .unwrap();
++        }
++        assert_eq!(attempts.status().recent.len(), RECENT_STARTS);
++    }
++
++    // ── Through a linked identity ───────────────────────────────────────
++
++    struct Node {
++        _dir: tempfile::TempDir,
++        auth: AuthManager,
++        manager: Arc<IdentityManager>,
++        signer: Arc<FakeSigner>,
++        record: IdentityRecord,
++    }
++
++    /// A node with a password and one identity linked to `signer`.
++    async fn node_with(signer: FakeSigner) -> Node {
++        let dir = tempfile::tempdir().unwrap();
++        let auth = AuthManager::new(dir.path().to_path_buf());
++        auth.setup_user(PASSWORD).await.unwrap();
++        let signer = Arc::new(signer);
++        let manager = IdentityManager::with_remote_signers(
++            dir.path(),
++            Arc::new(FakeSource(signer.clone())),
++            Arc::new(RemoteRequests::default()),
++        )
++        .await
++        .unwrap();
++        let uri = crate::remote_signer::parse_bunker_uri(&format!(
++            "bunker://{}?relay=wss://relay.example.com",
++            Keys::generate().public_key().to_hex()
++        ))
++        .unwrap();
++        // A gated signer lets the linking proof through.
++        signer.release();
++        let record = manager
++            .create_linked(
++                "Signer".to_string(),
++                IdentityPurpose::Personal,
++                &uri,
++                &Keys::generate(),
++                signer.as_ref(),
++                None,
++            )
++            .await
++            .unwrap();
++        signer.calls.store(0, std::sync::atomic::Ordering::SeqCst);
++        Node {
++            _dir: dir,
++            auth,
++            manager: Arc::new(manager),
++            signer,
++            record,
++        }
++    }
++
++    async fn node() -> Node {
++        node_with(FakeSigner::new(Keys::generate(), FakeMode::Honest)).await
++    }
++
++    async fn enrol_through(
++        node: &Node,
++        attempts: &Arc<LoginAttempts>,
++        password: &str,
++    ) -> Result<Approval> {
++        let (attempt_id, code) = enrol_start(
++            attempts,
++            &node.auth,
++            node.manager.clone(),
++            &node.record.id,
++            password,
++            "owner-session",
++            RELAY,
++            "my node",
++        )
++        .await?;
++        assert_eq!(code.len(), 4);
++        loop {
++            if let Some(approval) = enrol_finish(attempts, &attempt_id, "owner-session").await? {
++                return Ok(approval);
++            }
++        }
++    }
++
++    async fn enrolled() -> Node {
++        let node = node().await;
++        enrol_through(&node, &attempts(), PASSWORD).await.unwrap();
++        node.signer
++            .calls
++            .store(0, std::sync::atomic::Ordering::SeqCst);
++        node
++    }
++
++    async fn login_through(node: &Node, pending: Option<&str>) -> Result<Option<Finished>> {
++        let attempts = attempts();
++        let (started, code) = start(
++            &attempts,
++            &node.auth,
++            node.manager.clone(),
++            RELAY,
++            "my node",
++            pending,
++            None,
++        )
++        .await?;
++        assert_eq!(code.len(), 4);
++        finish(
++            &attempts,
++            &started.attempt_id,
++            started.binding.as_deref(),
++            pending,
++        )
++        .await
++    }
++
++    #[tokio::test]
++    async fn enrolment_runs_a_live_challenge_and_is_saved() {
++        let node = node().await;
++        assert!(!available(&node.auth).await.unwrap());
++        let approval = enrol_through(&node, &attempts(), PASSWORD).await.unwrap();
++        assert_eq!(node.signer.calls(), 1);
++        assert_eq!(approval.signer.identity_id, node.record.id);
++        assert_eq!(
++            approval.signer.pubkey,
++            node.signer.keys.public_key().to_hex()
++        );
++        // The fake answers at once: just what the warning is for.
++        assert!(approval.approval < QUICK_APPROVAL);
++        assert_eq!(
++            node.auth.login_signers().await.unwrap(),
++            vec![approval.signer]
++        );
++        assert!(available(&node.auth).await.unwrap());
++    }
++
++    #[tokio::test]
++    async fn an_enrolment_is_saved_only_when_the_signer_approves() {
++        let node = node_with(FakeSigner::gated(Keys::generate(), FakeMode::Honest)).await;
++        let attempts = attempts();
++        let (attempt_id, _) = enrol_start(
++            &attempts,
++            &node.auth,
++            node.manager.clone(),
++            &node.record.id,
++            PASSWORD,
++            "owner-session",
++            RELAY,
++            "my node",
++        )
++        .await
++        .unwrap();
++        tokio::time::sleep(Duration::from_millis(50)).await;
++        assert!(node.auth.login_signers().await.unwrap().is_empty());
++        // Another session cannot finish it.
++        let refused = enrol_finish(&attempts, &attempt_id, "someone-else")
++            .await
++            .unwrap_err();
++        assert_eq!(refused.to_string(), OTHER_BROWSER);
++        node.signer.release();
++        let approval = loop {
++            if let Some(a) = enrol_finish(&attempts, &attempt_id, "owner-session")
++                .await
++                .unwrap()
++            {
++                break a;
++            }
++        };
++        assert_eq!(
++            node.auth.login_signers().await.unwrap(),
++            vec![approval.signer]
++        );
++    }
++
++    #[tokio::test]
++    async fn enrolment_needs_the_password() {
++        let node = node().await;
++        let error = enrol_through(&node, &attempts(), "wrong")
++            .await
++            .unwrap_err();
++        assert_eq!(error.to_string(), "Password Incorrect");
++        assert_eq!(node.signer.calls(), 0);
++        assert!(!available(&node.auth).await.unwrap());
++    }
++
++    #[tokio::test]
++    async fn enrolment_needs_a_signer_that_answers() {
++        for (mode, expected) in [
++            (FakeMode::Offline, "linked signer is offline"),
++            (FakeMode::Deny, "linked signer denied the request"),
++            (FakeMode::Tamper, "linked signer sent a bad response"),
++        ] {
++            let node = node().await;
++            node.signer.set_mode(mode);
++            let error = enrol_through(&node, &attempts(), PASSWORD)
++                .await
++                .unwrap_err();
++            assert!(error.to_string().starts_with(expected), "{mode:?}: {error}");
++            assert!(!available(&node.auth).await.unwrap(), "{mode:?}");
++        }
++    }
++
++    #[tokio::test]
++    async fn only_linked_identities_can_be_enrolled() {
++        let node = node().await;
++        let local = node
++            .manager
++            .create("Local".to_string(), IdentityPurpose::Personal)
++            .await
++            .unwrap();
++        for identity_id in [local.id.as_str(), "missing"] {
++            let error = enrol_start(
++                &attempts(),
++                &node.auth,
++                node.manager.clone(),
++                identity_id,
++                PASSWORD,
++                "owner-session",
++                RELAY,
++                "my node",
++            )
++            .await
++            .unwrap_err();
++            if identity_id == local.id {
++                assert!(
++                    error.to_string().contains("only an identity linked"),
++                    "{error}"
++                );
++            }
++        }
++        assert!(!available(&node.auth).await.unwrap());
++    }
++
++    #[tokio::test]
++    async fn a_second_enrolment_is_refused() {
++        let node = enrolled().await;
++        let error = enrol_through(&node, &attempts(), PASSWORD)
++            .await
++            .unwrap_err();
++        assert!(error.to_string().starts_with("Already exists"), "{error}");
++        assert_eq!(node.signer.calls(), 0);
++    }
++
++    #[tokio::test]
++    async fn removing_needs_the_password_and_never_locks_out() {
++        let node = enrolled().await;
++        let error = remove(&node.auth, &node.record.id, "wrong")
++            .await
++            .unwrap_err();
++        assert_eq!(error.to_string(), "Password Incorrect");
++        assert!(available(&node.auth).await.unwrap());
++
++        assert!(remove(&node.auth, &node.record.id, PASSWORD).await.unwrap());
++        assert!(!available(&node.auth).await.unwrap());
++        assert!(node.auth.verify_password(PASSWORD).await.unwrap());
++        assert!(!remove(&node.auth, &node.record.id, PASSWORD).await.unwrap());
++    }
++
++    #[tokio::test]
++    async fn a_login_is_signed_by_the_enrolled_signer() {
++        let node = enrolled().await;
++        let finished = login_through(&node, None).await.unwrap().unwrap();
++        assert_eq!(finished.bound, Bound::Cookie);
++        assert_eq!(finished.approval.signer.identity_id, node.record.id);
++        assert_eq!(node.signer.calls(), 1);
++    }
++
++    #[tokio::test]
++    async fn a_refused_or_unreachable_signer_fails_the_login_with_a_fixed_text() {
++        for (mode, expected) in [
++            (FakeMode::Deny, PUBLIC_DENIED),
++            (FakeMode::Offline, PUBLIC_OFFLINE),
++            (FakeMode::WrongKey, PUBLIC_REFUSED),
++            (FakeMode::Unsupported, PUBLIC_FAILED),
++        ] {
++            let node = enrolled().await;
++            node.signer.set_mode(mode);
++            let error = login_through(&node, None).await.unwrap_err();
++            assert_eq!(error.to_string(), expected, "{mode:?}");
++        }
++    }
++
++    #[test]
++    fn login_failures_never_carry_relays_or_signer_text() {
++        let offline: anyhow::Error =
++            RemoteSignerError::Offline("wss://private.example".to_string()).into();
++        assert_eq!(public_login_error(&offline), PUBLIC_OFFLINE);
++        let bad: anyhow::Error =
++            RemoteSignerError::BadResponse("sign_event failed: secret detail".to_string()).into();
++        assert_eq!(public_login_error(&bad), PUBLIC_REFUSED);
++        assert_eq!(
++            public_login_error(&anyhow::anyhow!("anything else")),
++            PUBLIC_FAILED
++        );
++    }
++
++    #[tokio::test]
++    async fn start_needs_an_enrolment() {
++        let node = node().await;
++        let error = login_through(&node, None).await.unwrap_err();
++        assert_eq!(error.to_string(), NOT_ENABLED);
++        assert_eq!(node.signer.calls(), 0);
++    }
++
++    #[tokio::test]
++    async fn start_refuses_an_enrolment_whose_identity_is_gone() {
++        let node = enrolled().await;
++        node.manager.delete(&node.record.id).await.unwrap();
++        let error = login_through(&node, None).await.unwrap_err();
++        // The same text as no enrolment: nothing about the identity.
++        assert_eq!(error.to_string(), NOT_ENABLED);
++        assert_eq!(node.signer.calls(), 0);
++    }
++
++    async fn enable_totp(auth: &AuthManager) {
++        let setup = crate::totp::setup(PASSWORD).unwrap();
++        auth.save_totp(setup.totp_data).await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn on_a_2fa_node_the_signer_stands_in_for_the_totp_code() {
++        let node = enrolled().await;
++        enable_totp(&node.auth).await;
++        // Not offered before the password.
++        assert!(!available(&node.auth).await.unwrap());
++        // Without a pending session (no password given), refused with the
++        // same text as no enrolment, and the signer is not asked.
++        let error = login_through(&node, None).await.unwrap_err();
++        assert_eq!(error.to_string(), NOT_ENABLED);
++        assert_eq!(node.signer.calls(), 0);
++        // After the password, bound to the pending session.
++        let finished = login_through(&node, Some("pending-session"))
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(finished.bound, Bound::Session);
++        assert_eq!(node.signer.calls(), 1);
++    }
++
++    #[tokio::test]
++    async fn without_2fa_a_pending_session_is_not_needed_or_used() {
++        let node = enrolled().await;
++        let finished = login_through(&node, Some("stale-pending"))
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(finished.bound, Bound::Cookie);
++    }
++
++    #[tokio::test]
++    async fn start_leaks_no_identity_or_signer_name() {
++        let node = enrolled().await;
++        let attempts = attempts();
++        let (started, code) = start(
++            &attempts,
++            &node.auth,
++            node.manager.clone(),
++            RELAY,
++            "my node",
++            None,
++            None,
++        )
++        .await
++        .unwrap();
++        let visible = format!(
++            "{} {} {}",
++            started.attempt_id,
++            started.binding.unwrap_or_default(),
++            code
++        );
++        for secret in [
++            node.record.id.as_str(),
++            node.record.name.as_str(),
++            &node.signer.keys.public_key().to_hex(),
++        ] {
++            assert!(!visible.contains(secret), "{secret}");
++        }
++        for message in [
++            NOT_ENABLED,
++            ALREADY_WAITING,
++            PAUSED,
++            EXPIRED,
++            GONE,
++            OTHER_BROWSER,
++            PUBLIC_OFFLINE,
++            PUBLIC_DENIED,
++            PUBLIC_TIMEOUT,
++            PUBLIC_REFUSED,
++            PUBLIC_FAILED,
++        ] {
++            assert!(!message.contains(&node.record.name));
++            assert!(!message.contains("wss://"));
++        }
++    }
++}
+-- 
+2.53.0
+
