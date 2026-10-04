@@ -232,6 +232,24 @@ auth as `lan-port-auth` on the app's main interface address, from the same
 classification `build_port_map` uses, and the dashboard falls back to it only
 when the catalogue has no answer for the app.
 
+## A factory reset leaves apps unable to start until `archy-net` is recreated (archy `6d5f3ff`)
+
+`handle_system_factory_reset` (`core/archipelago/src/api/rpc/system/handlers.rs`,
+~line 897) removes every container and then runs `podman system prune -af`,
+which also deletes networks no container is using, `archy-net` among them. It
+wipes the data directory but not the Quadlet units in
+`~archipelago/.config/containers/systemd/`, which keep `Network=archy-net` (on
+our node: `filebrowser`, `wildbloom`, `wildbloom-node`).
+
+The orchestrator only creates the network in `install_fresh` and
+`render_file_placeholders` (`ensure_container_network`,
+`core/archipelago/src/container/prod_orchestrator.rs`, ~line 3326). `start`,
+`restart` and the reconcile pass don't, so after a reset any app started from a
+surviving unit fails until someone runs `podman network create archy-net` as
+the `archipelago` user. Either keeping `archy-net` through the prune (prune
+images and volumes only), removing the Quadlet units along with the containers,
+or calling `ensure_container_network` before starting a unit would avoid it.
+
 ## A round-trip test that fails about 2 runs in 256 (archy `6d5f3ff`)
 
 `seal_open_round_trips` (`core/archipelago/src/storage_crypto.rs`, lines
