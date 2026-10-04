@@ -83,7 +83,10 @@ have=$(sha256sum "$bundle/frontend.tar.gz" | awk '{print $1}')
 tmp=$(mktemp -d); tar -xzf "$bundle/frontend.tar.gz" -C "$tmp"
 src=$tmp
 if [ "$(ls -1 "$tmp" | wc -l)" = 1 ] && [ -d "$tmp/$(ls -1 "$tmp")" ]; then src="$tmp/$(ls -1 "$tmp")"; fi
-rsync -a --delete "$src/" /opt/archipelago/web-ui/
+# --checksum: our frontend tarballs are repacked with one fixed mtime, so rsync's
+# size+mtime quick check would keep an old index.html of the same size while
+# --delete removes the assets it points to (a blank dashboard).
+rsync -a --checksum --delete "$src/" /opt/archipelago/web-ui/
 rm -rf "$tmp"
 test -f /opt/archipelago/web-ui/index.html
 test -f /opt/archipelago/web-ui/nostr-provider.js
