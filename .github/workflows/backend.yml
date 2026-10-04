@@ -116,7 +116,7 @@ jobs:
             grep -q "test result: ok. $2 passed; 0 failed" "$RUNNER_TEMP/patch.log" \
               || { echo "::error::$1: expected $2 passed"; exit 1; }
           }
-          check remote_signer::tests:: 38
+          check remote_signer::tests:: 39
           check identity_manager::tests:: 32
           check api::rpc::nostr_signing_origin_tests:: 3
           check api::rpc::middleware::sanitize_tests:: 10

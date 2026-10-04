@@ -1,0 +1,114 @@
+From 4b83cd0b9441c45c2e3bc0408919c0145995e9ea Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 17:27:32 +0200
+Subject: [PATCH] fix: catch a signer's pairing reply sent before the node
+ subscribed
+
+A nostrconnect pairing subscribed with limit 0, so it only saw events
+published after the subscription was live. The link is on screen as soon
+as the pairing starts, while the node is still connecting to the relays,
+and a signer that answers in that moment was missed for good: its
+re-sends are the same event, which relays do not deliver again.
+
+Subscribe from shortly before the pairing started instead, so a reply
+already stored on the relay arrives too. The secret is new for every
+pairing, so no earlier event can match it.
+---
+ core/archipelago/src/remote_signer.rs | 52 +++++++++++++++++++++------
+ 1 file changed, 42 insertions(+), 10 deletions(-)
+
+diff --git a/core/archipelago/src/remote_signer.rs b/core/archipelago/src/remote_signer.rs
+index 10569f5..919bb55 100644
+--- a/core/archipelago/src/remote_signer.rs
++++ b/core/archipelago/src/remote_signer.rs
+@@ -1441,6 +1441,18 @@ pub fn pairing_response(client_keys: &Keys, event: &Event, secret: &str) -> Opti
+     }
+ }
+ 
++/// What a pairing listens for: NIP-46 messages to the pairing's client key
++/// since shortly before it started. Stored ones count too, because a signer
++/// can answer before the subscription is live, and its re-sends of the same
++/// event are not delivered again. The secret is new for every pairing, so
++/// nothing older than the pairing can match it.
++fn pairing_filter(client_pubkey: PublicKey, started: Timestamp) -> Filter {
++    Filter::new()
++        .kind(Kind::NostrConnect)
++        .pubkey(client_pubkey)
++        .since(started - LAG_LOOKBACK)
++}
++
+ /// The relay side of `nostrconnect://` pairing. A seam so tests can swap
+ /// the network for a fake.
+ #[async_trait]
+@@ -1483,6 +1495,9 @@ impl PairingTransport for NostrConnectPairing {
+         relays: &[RelayUrl],
+         secret: &str,
+     ) -> Result<PublicKey, RemoteSignerError> {
++        // Taken before connecting: the link is already on screen, and a
++        // signer can answer before the subscription below is live.
++        let started = Timestamp::now();
+         let offline = || {
+             let list: Vec<String> = relays.iter().map(|r| r.to_string()).collect();
+             RemoteSignerError::Offline(list.join(", "))
+@@ -1504,15 +1519,9 @@ impl PairingTransport for NostrConnectPairing {
+         {
+             return Err(offline());
+         }
+-        let filter = Filter::new()
+-            .kind(Kind::NostrConnect)
+-            .pubkey(client_keys.public_key());
+-        let started = Timestamp::now();
++        let filter = pairing_filter(client_keys.public_key(), started);
+         let mut notifications = client.client().notifications();
+-        let subscribed = client
+-            .client()
+-            .subscribe(filter.clone().limit(0), None)
+-            .await;
++        let subscribed = client.client().subscribe(filter.clone(), None).await;
+         if !subscribed.is_ok_and(|out| !out.success.is_empty()) {
+             return Err(offline());
+         }
+@@ -1526,8 +1535,11 @@ impl PairingTransport for NostrConnectPairing {
+                 Ok(_) => {}
+                 // Notifications were dropped: look on the relays instead.
+                 Err(RecvError::Lagged(_)) => {
+-                    let since = filter.clone().since(started - LAG_LOOKBACK);
+-                    if let Ok(events) = client.client().fetch_events(since, CONNECT_TIMEOUT).await {
++                    if let Ok(events) = client
++                        .client()
++                        .fetch_events(filter.clone(), CONNECT_TIMEOUT)
++                        .await
++                    {
+                         if let Some(pubkey) = events
+                             .iter()
+                             .find_map(|e| pairing_response(client_keys, e, secret))
+@@ -2785,6 +2797,26 @@ pub(crate) mod tests {
+         assert_eq!(request_params(&ping), ping.params());
+     }
+ 
++    #[test]
++    fn pairing_filter_includes_replies_stored_before_the_subscription() {
++        let client = Keys::generate().public_key();
++        let started = Timestamp::from(1_800_000_000);
++        let filter = pairing_filter(client, started);
++        assert_eq!(filter.since, Some(started - LAG_LOOKBACK));
++        assert_eq!(
++            filter.limit, None,
++            "limit 0 would drop a reply sent before we subscribed"
++        );
++        assert!(filter.match_event(
++            &nostr_sdk::EventBuilder::new(Kind::NostrConnect, "x")
++                .tag(Tag::public_key(client))
++                .custom_created_at(started)
++                .sign_with_keys(&Keys::generate())
++                .unwrap(),
++            nostr_sdk::filter::MatchEventOptions::default()
++        ));
++    }
++
+     #[test]
+     fn nostrconnect_uri_carries_the_pairing_fields() {
+         let client = Keys::generate().public_key();
+-- 
+2.53.0
+
