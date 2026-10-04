@@ -227,6 +227,11 @@ Taking the port's auth from the installed manifest, for example by having the
 backend report it alongside the runtime URL, would give sideloaded and
 not-yet-catalogued apps the same https frame as catalogued ones.
 
+Patches 0008 and 0009 do this. The backend reports the launch port's declared
+auth as `lan-port-auth` on the app's main interface address, from the same
+classification `build_port_map` uses, and the dashboard falls back to it only
+when the catalogue has no answer for the app.
+
 ## A round-trip test that fails about 2 runs in 256 (archy `6d5f3ff`)
 
 `seal_open_round_trips` (`core/archipelago/src/storage_crypto.rs`, lines

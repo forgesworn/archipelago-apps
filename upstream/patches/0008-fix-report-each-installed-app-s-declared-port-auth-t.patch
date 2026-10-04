@@ -1,0 +1,165 @@
+From 738c5245d1e9831df809e714f20c25174cf3322b Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 13:20:10 +0200
+Subject: [PATCH 8/9] fix: report each installed app's declared port auth to
+ the dashboard
+
+The dashboard picks https or http for an app frame from the signed
+catalogue alone. A sideloaded app with an auth: gated port is fronted by
+the app gate, which serves TLS there, but the catalogue does not list it,
+so the frame kept the backend's http:// URL and an HTTPS dashboard
+blocked it as mixed content.
+
+Add lan-port-auth to the main interface address: the auth the installed
+manifest declares for the launch port, taken from the same classification
+build_port_map uses. It is omitted when the manifest says nothing.
+---
+ core/archipelago/src/appgate/identity.rs      | 39 +++++++++++++++++++
+ .../src/container/docker_packages.rs          | 18 +++++++++
+ core/archipelago/src/data_model.rs            | 10 +++++
+ core/archipelago/src/server.rs                |  1 +
+ 4 files changed, 68 insertions(+)
+
+diff --git a/core/archipelago/src/appgate/identity.rs b/core/archipelago/src/appgate/identity.rs
+index 269ef7a..36a0d6e 100644
+--- a/core/archipelago/src/appgate/identity.rs
++++ b/core/archipelago/src/appgate/identity.rs
+@@ -72,6 +72,8 @@ pub struct PortMap {
+     gated: HashMap<u16, GatedPort>,
+     exempt: Vec<ExemptPort>,
+     local: std::collections::HashSet<u16>,
++    /// The `auth` each manifest states in so many words, by app and host port.
++    declared_auth: HashMap<(String, u16), PortAuth>,
+ }
+ 
+ impl PortMap {
+@@ -80,6 +82,19 @@ impl PortMap {
+         self.gated.get(&port)
+     }
+ 
++    /// The `auth` the manifest of `app_id` declares for `port`, as the
++    /// manifest spells it. None when the app is unknown or the manifest is
++    /// silent: the default policy is not a declaration.
++    pub fn declared_auth(&self, app_id: &str, port: u16) -> Option<&'static str> {
++        Some(match self.declared_auth.get(&(app_id.to_string(), port))? {
++            PortAuth::Session => "session",
++            PortAuth::None => "none",
++            PortAuth::Local => "local",
++            PortAuth::Gated => "gated",
++            PortAuth::Open => "open",
++        })
++    }
++
+     pub fn gated_ports(&self) -> impl Iterator<Item = &GatedPort> {
+         self.gated.values()
+     }
+@@ -227,6 +242,10 @@ fn classify_manifest(manifest: &AppManifest, map: &mut PortMap) {
+     };
+ 
+     for port in &manifest.app.ports {
++        if port.auth_is_declared() {
++            map.declared_auth
++                .insert((app_id.clone(), port.host), port.auth_policy());
++        }
+         let protocol = if port.protocol.is_empty() {
+             "tcp"
+         } else {
+@@ -359,6 +378,26 @@ mod tests {
+         }
+     }
+ 
++    fn classified(yaml: &str) -> PortMap {
++        let mut map = PortMap::default();
++        classify_manifest(&manifest(yaml), &mut map);
++        map
++    }
++
++    /// An installed manifest the catalogue does not list still reports the
++    /// auth it declares, so the dashboard can frame a gated port over https.
++    #[test]
++    fn declared_auth_reports_installed_manifests() {
++        let map = classified(&format!(
++            "{BASE}  ports:\n    - host: 8090\n      container: 7777\n      protocol: tcp\n      bind: 127.0.0.1\n      auth: gated\n    - host: 8091\n      container: 7778\n      protocol: tcp\n      auth: local\n    - host: 8092\n      container: 7779\n      protocol: tcp\n"
++        ));
++        assert_eq!(map.declared_auth("testapp", 8090), Some("gated"));
++        assert_eq!(map.declared_auth("testapp", 8091), Some("local"));
++        // Silence is the default policy, not a declaration.
++        assert_eq!(map.declared_auth("testapp", 8092), None);
++        assert_eq!(map.declared_auth("otherapp", 8090), None);
++    }
++
+     fn manifest(yaml: &str) -> AppManifest {
+         AppManifest::parse(yaml).expect("test manifest must parse")
+     }
+diff --git a/core/archipelago/src/container/docker_packages.rs b/core/archipelago/src/container/docker_packages.rs
+index 0d318c0..af3212b 100644
+--- a/core/archipelago/src/container/docker_packages.rs
++++ b/core/archipelago/src/container/docker_packages.rs
+@@ -283,6 +283,7 @@ impl DockerPackageScanner {
+                             InterfaceAddress {
+                                 tor_address: tor,
+                                 lan_address,
++                                lan_port_auth: None,
+                             },
+                         );
+                         addresses
+@@ -332,6 +333,23 @@ impl DockerPackageScanner {
+         }
+         // HTTP on loopback can precede the LAN/Tor listener after install.
+         let port_map = crate::appgate::identity::build_port_map();
++        // Report each launch port's declared auth, so the dashboard can choose
++        // https for a gate-fronted app the signed catalogue does not list.
++        for (id, pkg) in packages.iter_mut() {
++            let Some(main) = pkg
++                .installed
++                .as_mut()
++                .and_then(|i| i.interface_addresses.get_mut("main"))
++            else {
++                continue;
++            };
++            main.lan_port_auth = main
++                .lan_address
++                .as_deref()
++                .and_then(launch_url_port)
++                .and_then(|port| port_map.declared_auth(id, port))
++                .map(str::to_string);
++        }
+         let gated: Vec<_> = packages
+             .iter()
+             .filter_map(|(id, pkg)| {
+diff --git a/core/archipelago/src/data_model.rs b/core/archipelago/src/data_model.rs
+index 77540dd..418ecb9 100644
+--- a/core/archipelago/src/data_model.rs
++++ b/core/archipelago/src/data_model.rs
+@@ -258,6 +258,16 @@ pub struct InterfaceAddress {
+     pub tor_address: String,
+     #[serde(rename = "lan-address")]
+     pub lan_address: Option<String>,
++    /// The `auth` the app's installed manifest declares for the port in
++    /// `lan-address` (`gated`, `open`, `none`, `local`, `session`); absent
++    /// when the manifest says nothing. Lets the dashboard pick https for a
++    /// gate-fronted port of an app the signed catalogue does not list.
++    #[serde(
++        rename = "lan-port-auth",
++        default,
++        skip_serializing_if = "Option::is_none"
++    )]
++    pub lan_port_auth: Option<String>,
+ }
+ 
+ #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+diff --git a/core/archipelago/src/server.rs b/core/archipelago/src/server.rs
+index 66d27b5..507a075 100644
+--- a/core/archipelago/src/server.rs
++++ b/core/archipelago/src/server.rs
+@@ -2175,6 +2175,7 @@ fn ensure_main_lan_address(pkg: &mut crate::data_model::PackageDataEntry, port:
+         .or_insert_with(|| crate::data_model::InterfaceAddress {
+             tor_address: String::new(),
+             lan_address: None,
++            lan_port_auth: None,
+         });
+     if main.lan_address.is_none() {
+         main.lan_address = Some(format!("http://localhost:{port}"));
+-- 
+2.53.0
+

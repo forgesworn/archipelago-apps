@@ -1,0 +1,337 @@
+From 30a6c384f4b020280c01ba5a4ba292bbdfab413f Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 13:22:44 +0200
+Subject: [PATCH 9/9] fix: frame a sideloaded gated app over https on an https
+ dashboard
+
+portAuth read the port's auth from the signed catalogue only, so an app
+the catalogue does not list was never treated as gate-fronted and kept
+the daemon's http:// runtime URL, which an HTTPS dashboard blocks as
+mixed content.
+
+Fall back to the daemon-reported lan-port-auth when the catalogue has no
+answer. The catalogue stays authoritative where it has one, and ports
+that are not gated or open are unchanged.
+---
+ neode-ui/src/stores/appLauncher.ts            | 12 +++-
+ neode-ui/src/types/api.ts                     |  3 +
+ neode-ui/src/views/AppSession.vue             |  5 +-
+ .../appSession/__tests__/appOrigin.test.ts    | 56 ++++++++++++++++++-
+ .../src/views/appSession/appSessionConfig.ts  | 14 +++--
+ neode-ui/src/views/apps/appsConfig.ts         |  4 +-
+ .../__tests__/curatedApps.portAuth.test.ts    | 34 ++++++++++-
+ neode-ui/src/views/discover/curatedApps.ts    | 30 +++++++++-
+ 8 files changed, 141 insertions(+), 17 deletions(-)
+
+diff --git a/neode-ui/src/stores/appLauncher.ts b/neode-ui/src/stores/appLauncher.ts
+index 643a807..2f0748f 100644
+--- a/neode-ui/src/stores/appLauncher.ts
++++ b/neode-ui/src/stores/appLauncher.ts
+@@ -6,6 +6,7 @@ import { requestExternalOpen } from '@/api/remote-relay'
+ import { openInAppOrNewTab, isCompanionApp, type InAppLaunchMeta } from '@/utils/openExternal'
+ import { directAppUrl, HOST_FRAME_APPS, HTTPS_APP_IDS, resolveAppUrl } from '@/views/appSession/appSessionConfig'
+ import { appPortIsGateFronted } from '@/views/appSession/appSessionConfig'
++import { reportedPortAuth } from '@/views/discover/curatedApps'
+ import { useAppStore } from '@/stores/app'
+ import { resolveAppIcon, isAppReadyForLaunch } from '@/views/apps/appsConfig'
+ import { useToast } from '@/composables/useToast'
+@@ -254,8 +255,9 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
+     // integrations stay in the dashboard frame so their parent bridge remains
+     // connected (for example GitWorkshop's consent-gated NIP-07 provider).
+     if (!IS_DEMO && isCompanionApp() && !HOST_FRAME_APPS.has(appId)) {
+-      const runtimeUrl = useAppStore().data?.['package-data']?.[appId]?.installed?.['interface-addresses']?.main?.['lan-address'] || undefined
+-      const launchUrl = directAppUrl(appId) || resolveAppUrl(appId, opts.path, runtimeUrl)
++      const main = useAppStore().data?.['package-data']?.[appId]?.installed?.['interface-addresses']?.main
++      const runtimeUrl = main?.['lan-address'] || undefined
++      const launchUrl = directAppUrl(appId) || resolveAppUrl(appId, opts.path, runtimeUrl, main?.['lan-port-auth'])
+       if (launchUrl) {
+         openInAppOrNewTab(launchUrl, launchMeta(appId))
+         return
+@@ -419,7 +421,11 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
+       const sameHost = u.hostname === window.location.hostname
+       const alwaysHttps = !!resolvedId && HTTPS_APP_IDS.has(resolvedId)
+       const httpsPage = window.location.protocol === 'https:'
+-      const gateFronted = !!resolvedId && appPortIsGateFronted(resolvedId, u.port)
++      const gateFronted = !!resolvedId && appPortIsGateFronted(
++        resolvedId,
++        u.port,
++        reportedPortAuth(useAppStore().data?.['package-data']?.[resolvedId]?.installed?.['interface-addresses']?.main, u.port),
++      )
+       if (u.protocol === 'http:' && sameHost && (alwaysHttps || (httpsPage && gateFronted))) {
+         // Pure prefix swap — never re-serialize the URL (URL.href would add
+         // a trailing slash and change the string the caller handed over).
+diff --git a/neode-ui/src/types/api.ts b/neode-ui/src/types/api.ts
+index ca1f7f3..c49ce62 100644
+--- a/neode-ui/src/types/api.ts
++++ b/neode-ui/src/types/api.ts
+@@ -154,6 +154,9 @@ export interface CurrentDependencyInfo {
+ export interface InterfaceAddress {
+   'tor-address': string
+   'lan-address': string | null
++  /** The `auth` the installed manifest declares for the `lan-address` port.
++   *  Absent when the manifest is silent or the daemon predates the field. */
++  'lan-port-auth'?: string | null
+ }
+ 
+ export interface AppCredential {
+diff --git a/neode-ui/src/views/AppSession.vue b/neode-ui/src/views/AppSession.vue
+index 318c483..632f000 100644
+--- a/neode-ui/src/views/AppSession.vue
++++ b/neode-ui/src/views/AppSession.vue
+@@ -265,9 +265,10 @@ const screensaverSuppressedApps = new Set([
+ ])
+ 
+ const appUrl = computed(() => {
+-  const runtimeUrl = store.data?.['package-data']?.[appId.value]?.installed?.['interface-addresses']?.main?.['lan-address'] || undefined
++  const main = store.data?.['package-data']?.[appId.value]?.installed?.['interface-addresses']?.main
++  const runtimeUrl = main?.['lan-address'] || undefined
+   const deepPath = props.pathProp ?? (route.query.path as string | undefined)
+-  return resolveAppUrl(appId.value, deepPath, runtimeUrl)
++  return resolveAppUrl(appId.value, deepPath, runtimeUrl, main?.['lan-port-auth'])
+ })
+ 
+ function closeRouteSession() {
+diff --git a/neode-ui/src/views/appSession/__tests__/appOrigin.test.ts b/neode-ui/src/views/appSession/__tests__/appOrigin.test.ts
+index 7086aae..c748f2c 100644
+--- a/neode-ui/src/views/appSession/__tests__/appOrigin.test.ts
++++ b/neode-ui/src/views/appSession/__tests__/appOrigin.test.ts
+@@ -1,5 +1,6 @@
+ import { afterEach, describe, expect, it, vi } from 'vitest'
+-import { appOrigin, matchPageScheme } from '../appSessionConfig'
++import { appOrigin, appPortIsGateFronted, matchPageScheme, resolveAppUrl } from '../appSessionConfig'
++import { __setSignedCatalogForTests } from '../../discover/curatedApps'
+ 
+ // An HTTPS dashboard cannot embed an HTTP app frame — browsers block it as
+ // mixed content — so the app origin has to follow the page's scheme. Plain-HTTP
+@@ -13,7 +14,10 @@ function setLocation(protocol: string, hostname: string) {
+   })
+ }
+ 
+-afterEach(() => vi.unstubAllGlobals())
++afterEach(() => {
++  vi.unstubAllGlobals()
++  __setSignedCatalogForTests(null)
++})
+ 
+ describe('appOrigin', () => {
+   it('stays on http for an http dashboard', () => {
+@@ -53,3 +57,51 @@ describe('matchPageScheme', () => {
+     expect(matchPageScheme('https://node:8080/app')).toBe('https://node:8080/app')
+   })
+ })
++
++// A sideloaded app is not in the signed catalogue, so the daemon reports the
++// auth its installed manifest declares for the launch port (`lan-port-auth`).
++describe('daemon-reported port auth', () => {
++  const RUNTIME = 'http://localhost:8095'
++
++  it('treats a reported gated or open port as gate-fronted', () => {
++    expect(appPortIsGateFronted('sideloaded', 8095, 'gated')).toBe(true)
++    expect(appPortIsGateFronted('sideloaded', 8095, 'open')).toBe(true)
++  })
++
++  it('does not treat other or missing reports as gate-fronted', () => {
++    expect(appPortIsGateFronted('sideloaded', 8095)).toBe(false)
++    expect(appPortIsGateFronted('sideloaded', 8095, null)).toBe(false)
++    expect(appPortIsGateFronted('sideloaded', 8095, 'none')).toBe(false)
++    expect(appPortIsGateFronted('sideloaded', 8095, 'local')).toBe(false)
++    expect(appPortIsGateFronted('sideloaded', 8095, 'session')).toBe(false)
++  })
++
++  it('frames a sideloaded gated app over https on an https dashboard', () => {
++    setLocation('https:', 'test-node.local')
++    expect(resolveAppUrl('sideloaded', undefined, RUNTIME, 'gated')).toBe('https://test-node.local:8095')
++  })
++
++  it('leaves the frame on http on an http dashboard', () => {
++    setLocation('http:', 'test-node.local')
++    expect(resolveAppUrl('sideloaded', undefined, RUNTIME, 'gated')).toBe('http://test-node.local:8095')
++  })
++
++  it('leaves an app without a gated report on http over an https dashboard', () => {
++    setLocation('https:', 'test-node.local')
++    expect(resolveAppUrl('sideloaded', undefined, RUNTIME)).toBe('http://test-node.local:8095')
++    expect(resolveAppUrl('sideloaded', undefined, RUNTIME, 'none')).toBe('http://test-node.local:8095')
++  })
++
++  it('lets the signed catalogue win over the report', () => {
++    __setSignedCatalogForTests({
++      apps: {
++        listed: {
++          version: '1.0.0',
++          manifest: { app: { id: 'listed', ports: [{ host: 8095, container: 80, auth: 'none' }] } },
++        },
++      },
++    })
++    setLocation('https:', 'test-node.local')
++    expect(resolveAppUrl('listed', undefined, RUNTIME, 'gated')).toBe('http://test-node.local:8095')
++  })
++})
+diff --git a/neode-ui/src/views/appSession/appSessionConfig.ts b/neode-ui/src/views/appSession/appSessionConfig.ts
+index 675996c..c351ce0 100644
+--- a/neode-ui/src/views/appSession/appSessionConfig.ts
++++ b/neode-ui/src/views/appSession/appSessionConfig.ts
+@@ -83,8 +83,8 @@ const PRE_CATALOG_GATED_PORTS: Record<string, number> = {
+   'archipelago-source': 8337,
+ }
+ 
+-export function appPortIsGateFronted(appId: string, port: number | string): boolean {
+-  return portIsGateFronted(appId, port) || PRE_CATALOG_GATED_PORTS[appId] === Number(port)
++export function appPortIsGateFronted(appId: string, port: number | string, reportedAuth?: string | null): boolean {
++  return portIsGateFronted(appId, port, reportedAuth) || PRE_CATALOG_GATED_PORTS[appId] === Number(port)
+ }
+ 
+ /** External HTTPS apps -- always loaded directly */
+@@ -120,7 +120,13 @@ export const HOST_FRAME_APPS = new Set([
+ export const IFRAME_BLOCKED_APPS = new Set<string>([])
+ 
+ /** Resolve app URL using direct port mapping (source of truth) */
+-export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?: string): string {
++export function resolveAppUrl(
++  id: string,
++  routeQueryPath?: string,
++  runtimeUrl?: string,
++  /** The daemon's `lan-port-auth` for `runtimeUrl`'s port. */
++  runtimeAuth?: string | null,
++): string {
+   // Demo: route to the app's mock UI or real external site (mempool.space,
+   // indee.tx1138.com). Carry through a deep-link path (e.g. /tx/<hash> for
+   // mempool). Non-demoable apps fall through to a generic notice page.
+@@ -174,7 +180,7 @@ export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?:
+     // would fail to connect over https at all.
+     try {
+       const port = new URL(base).port
+-      if (appPortIsGateFronted(id, port)) base = matchPageScheme(base)
++      if (appPortIsGateFronted(id, port, runtimeAuth)) base = matchPageScheme(base)
+     } catch { /* keep as-is */ }
+     if (routeQueryPath) base += routeQueryPath
+     return base
+diff --git a/neode-ui/src/views/apps/appsConfig.ts b/neode-ui/src/views/apps/appsConfig.ts
+index bcafeaa..0422941 100644
+--- a/neode-ui/src/views/apps/appsConfig.ts
++++ b/neode-ui/src/views/apps/appsConfig.ts
+@@ -5,7 +5,7 @@ import { computed } from 'vue'
+ import { PackageState, type PackageDataEntry } from '@/types/api'
+ import { matchPageScheme, resolveAppUrl } from '../appSession/appSessionConfig'
+ import { GENERATED_APP_TITLES } from '../appSession/generatedAppSessionConfig'
+-import { portIsGateFronted } from '../discover/curatedApps'
++import { portIsGateFronted, reportedPortAuth } from '../discover/curatedApps'
+ import { isAutoTabApp } from '@/utils/autoTabApps'
+ import {
+   SERVICE_NAMES as SHARED_SERVICE_NAMES,
+@@ -332,7 +332,7 @@ export function resolveRuntimeLaunchUrl(pkg: PackageDataEntry): string {
+   // a container-published plain-HTTP port would fail over https outright.
+   try {
+     const port = new URL(local).port
+-    if (!portIsGateFronted(pkg.manifest.id, port)) return local
++    if (!portIsGateFronted(pkg.manifest.id, port, reportedPortAuth(pkg.installed?.['interface-addresses']?.main, port))) return local
+   } catch { /* keep as-is */ }
+   return matchPageScheme(local)
+ }
+diff --git a/neode-ui/src/views/discover/__tests__/curatedApps.portAuth.test.ts b/neode-ui/src/views/discover/__tests__/curatedApps.portAuth.test.ts
+index be2abea..196c978 100644
+--- a/neode-ui/src/views/discover/__tests__/curatedApps.portAuth.test.ts
++++ b/neode-ui/src/views/discover/__tests__/curatedApps.portAuth.test.ts
+@@ -1,5 +1,5 @@
+ import { afterEach, describe, expect, it } from 'vitest'
+-import { __setSignedCatalogForTests, signedCatalogToApps, portAuth, portIsGateFronted, type SignedAppCatalog } from '../curatedApps'
++import { __setSignedCatalogForTests, signedCatalogToApps, portAuth, portIsGateFronted, reportedPortAuth, type SignedAppCatalog } from '../curatedApps'
+ 
+ /** Catalog fragments mirroring the live signed catalog's port declarations
+  *  (releases/app-catalog.json, 2026-09-01). */
+@@ -86,3 +86,35 @@ describe('standalone headless services', () => {
+     expect(apps.map(app => app.id)).toEqual(['angor-indexer', 'angor-relay'])
+   })
+ })
++
++describe('portAuth with a daemon-reported auth', () => {
++  it('fills the gap for an app the catalog does not list', () => {
++    __setSignedCatalogForTests(FULL)
++    expect(portAuth('sideloaded', 8095)).toBeNull()
++    expect(portAuth('sideloaded', 8095, 'gated')).toBe('gated')
++    expect(portIsGateFronted('sideloaded', 8095, 'gated')).toBe(true)
++    expect(portIsGateFronted('sideloaded', 8095, 'none')).toBe(false)
++  })
++
++  it('never overrides what the catalog says', () => {
++    __setSignedCatalogForTests(FULL)
++    expect(portAuth('bitcoin-knots', 8332, 'gated')).toBe('none')
++    expect(portAuth('lnd-ui', 18083, 'none')).toBe('gated')
++  })
++})
++
++describe('reportedPortAuth', () => {
++  const addr = { 'lan-address': 'http://localhost:8095', 'lan-port-auth': 'gated' }
++
++  it('reports the auth only for the launch port', () => {
++    expect(reportedPortAuth(addr, 8095)).toBe('gated')
++    expect(reportedPortAuth(addr, '8095')).toBe('gated')
++    expect(reportedPortAuth(addr, 9999)).toBeNull()
++  })
++
++  it('is null when nothing is reported', () => {
++    expect(reportedPortAuth(undefined, 8095)).toBeNull()
++    expect(reportedPortAuth({ 'lan-address': 'http://localhost:8095' }, 8095)).toBeNull()
++    expect(reportedPortAuth({ 'lan-address': null, 'lan-port-auth': 'gated' }, 8095)).toBeNull()
++  })
++})
+diff --git a/neode-ui/src/views/discover/curatedApps.ts b/neode-ui/src/views/discover/curatedApps.ts
+index 88ba088..b35f3a6 100644
+--- a/neode-ui/src/views/discover/curatedApps.ts
++++ b/neode-ui/src/views/discover/curatedApps.ts
+@@ -134,13 +134,22 @@ const CATALOG_APP_ID_ALIASES: Record<string, string> = {
+  *  TLS on it; `none`/`local` = container-published plain HTTP; null = app
+  *  unknown to the signed catalog (legacy curated installs).
+  *
++ *  `reportedAuth` is the auth the daemon reports from the app's installed
++ *  manifest (`lan-port-auth`). It only fills the gap for an app the catalog
++ *  does not answer for, such as a sideloaded one; the catalog stays
++ *  authoritative wherever it has an answer.
++ *
+  *  Resolution order: the app's own manifest, then its alias (the manifest
+  *  that actually owns the UI port), then — only for ports no known id
+  *  declares — a port-wide scan of the catalog. The scan must be UNANIMOUS:
+  *  a host port that any app publishes as plain HTTP (`none`) must never be
+  *  answered `gated`, or an https frame URL would point at a port that never
+  *  serves TLS. */
+-export function portAuth(appId: string, hostPort: number | string): string | null {
++export function portAuth(appId: string, hostPort: number | string, reportedAuth?: string | null): string | null {
++  return catalogPortAuth(appId, hostPort) ?? reportedAuth ?? null
++}
++
++function catalogPortAuth(appId: string, hostPort: number | string): string | null {
+   const apps = signedCatalogCache?.apps
+   if (!apps) return null
+   const alias: string | undefined = CATALOG_APP_ID_ALIASES[appId]
+@@ -166,11 +175,26 @@ export function portAuth(appId: string, hostPort: number | string): string | nul
+ /** Whether an app's host port is fronted by the node's app gate (and so
+  *  serves TLS alongside HTTP on the same port). Unknown apps are NOT —
+  *  assuming TLS for a container-published port breaks it outright. */
+-export function portIsGateFronted(appId: string, hostPort: number | string): boolean {
+-  const auth = portAuth(appId, hostPort)
++export function portIsGateFronted(appId: string, hostPort: number | string, reportedAuth?: string | null): boolean {
++  const auth = portAuth(appId, hostPort, reportedAuth)
+   return auth === 'gated' || auth === 'open'
+ }
+ 
++/** The auth the daemon reports for an installed app's launch port, when
++ *  `port` is that port. */
++export function reportedPortAuth(
++  address: { 'lan-address': string | null, 'lan-port-auth'?: string | null } | undefined,
++  port: number | string,
++): string | null {
++  const auth = address?.['lan-port-auth']
++  if (!auth || !address['lan-address']) return null
++  try {
++    return new URL(address['lan-address']).port === String(port) ? auth : null
++  } catch {
++    return null
++  }
++}
++
+ export function __setSignedCatalogForTests(catalog: SignedAppCatalog | null) {
+   signedCatalogCache = catalog
+ }
+-- 
+2.53.0
+

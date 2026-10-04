@@ -125,6 +125,7 @@ jobs:
           check signer_login::tests:: 36
           check api::rpc::signer_login::tests:: 3
           check api::rpc::signer_login_tests:: 17
+          check appgate::identity::tests:: 11
       - name: Build backend
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy/core
