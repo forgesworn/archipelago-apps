@@ -1,0 +1,1829 @@
+From 719b8729a343767b5653b7b334b1abe2dd145703 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 15:35:39 +0200
+Subject: [PATCH] feat: serve a public hostname's own certificate on app ports
+
+An operator who points a domain at a node can now set public_host,
+public_cert and public_key in /etc/archipelago/config.toml (or the
+ARCHIPELAGO_PUBLIC_HOST/_CERT/_KEY environment variables). The app gate
+then picks the certificate by SNI: a ClientHello for exactly the public
+hostname gets that pair, and everything else (no SNI, IP addresses,
+.local, onions, other names) keeps the node-CA leaf. Both pairs reload on
+mtime, following symlinks, and both must pass the key/certificate pairing
+check. The public certificate must also cover the hostname or it is not
+served.
+
+Renewal cannot swap two files at once, so while the public pair is
+briefly missing or mismatched the last good public pair keeps serving the
+public hostname; the node leaf is used for it only if no good public pair
+has ever loaded. A public pair that keeps failing is retried at most
+every 5 s rather than on every connection, and TLS handshakes on app
+ports now time out after 10 s. With every setting unset, nothing served
+changes.
+
+Manifests gain a {{PUBLIC_HOST}} placeholder for derived_env, generated
+files and generated certificates. It resolves to the public hostname, or
+to the same value as {{HOST_IP}} when none is set, so manifests can use
+it unconditionally. The manifest spec and developer guide list it.
+---
+ core/archipelago/Cargo.toml                   |   3 +
+ core/archipelago/src/api/rpc/mod.rs           |  15 +-
+ core/archipelago/src/appgate/listener.rs      |  79 +-
+ core/archipelago/src/appgate/mod.rs           |  10 +
+ .../src/appgate/testdata/README.md            |  12 +
+ .../src/appgate/testdata/public-renewed.crt   |  12 +
+ .../src/appgate/testdata/public-renewed.key   |   5 +
+ .../src/appgate/testdata/public.crt           |  12 +
+ .../src/appgate/testdata/public.key           |   5 +
+ core/archipelago/src/appgate/tls.rs           | 815 ++++++++++++++++--
+ core/archipelago/src/config.rs                | 260 ++++++
+ .../src/container/prod_orchestrator.rs        |  60 +-
+ core/container/src/manifest.rs                |  43 +-
+ docs/app-developer-guide.md                   |   3 +-
+ docs/app-manifest-spec.md                     |   2 +-
+ 15 files changed, 1260 insertions(+), 76 deletions(-)
+ create mode 100644 core/archipelago/src/appgate/testdata/public-renewed.crt
+ create mode 100644 core/archipelago/src/appgate/testdata/public-renewed.key
+ create mode 100644 core/archipelago/src/appgate/testdata/public.crt
+ create mode 100644 core/archipelago/src/appgate/testdata/public.key
+
+diff --git a/core/archipelago/Cargo.toml b/core/archipelago/Cargo.toml
+index ad569f3..4437a38 100644
+--- a/core/archipelago/Cargo.toml
++++ b/core/archipelago/Cargo.toml
+@@ -152,3 +152,6 @@ cashu = { version = "0.17.5", default-features = false, features = ["wallet"] }
+ [dev-dependencies]
+ tokio-test = "0.4"
+ tempfile = "3.10"
++# The app-gate TLS tests capture the presented certificate with a custom
++# verifier. Asked for here rather than relying on reqwest happening to enable it.
++tokio-rustls = { version = "0.24", features = ["dangerous_configuration"] }
+diff --git a/core/archipelago/src/api/rpc/mod.rs b/core/archipelago/src/api/rpc/mod.rs
+index 21806b4..48e6a63 100644
+--- a/core/archipelago/src/api/rpc/mod.rs
++++ b/core/archipelago/src/api/rpc/mod.rs
+@@ -225,12 +225,15 @@ impl RpcHandler {
+             });
+         }
+ 
+-        let app_gate = Arc::new(crate::appgate::AppGate::new(
+-            session_store.clone(),
+-            auth_manager.clone(),
+-            login_rate_limiter.clone(),
+-            config.data_dir.clone(),
+-        ));
++        let app_gate = Arc::new(
++            crate::appgate::AppGate::new(
++                session_store.clone(),
++                auth_manager.clone(),
++                login_rate_limiter.clone(),
++                config.data_dir.clone(),
++            )
++            .with_public_site(crate::appgate::tls::PublicSite::from_config(&config)),
++        );
+ 
+         Ok(Self {
+             config,
+diff --git a/core/archipelago/src/appgate/listener.rs b/core/archipelago/src/appgate/listener.rs
+index 6689e63..a375cb9 100644
+--- a/core/archipelago/src/appgate/listener.rs
++++ b/core/archipelago/src/appgate/listener.rs
+@@ -377,6 +377,37 @@ fn spawn_accept_loop(
+ /// against, one step earlier in the handshake.
+ const FIRST_BYTE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+ 
++/// How long a client that has started a TLS handshake has to finish it. The
++/// first-byte timeout above only covers the first byte: without this a caller
++/// could send a fragment of a ClientHello and hold the task open for good.
++const TLS_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
++
++/// Complete a TLS handshake within `limit`, or give up. `None` covers both a
++/// failed and a timed-out handshake; neither is operator-actionable.
++async fn accept_tls<IO>(
++    acceptor: tokio_rustls::TlsAcceptor,
++    stream: IO,
++    peer: SocketAddr,
++    limit: std::time::Duration,
++) -> Option<tokio_rustls::server::TlsStream<IO>>
++where
++    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
++{
++    match tokio::time::timeout(limit, acceptor.accept(stream)).await {
++        Ok(Ok(tls_stream)) => Some(tls_stream),
++        Ok(Err(e)) => {
++            // Routine: a browser probing a cert it does not trust, or a
++            // scanner. Not operator-actionable, so debug.
++            debug!(%peer, error = %e, "app gate TLS handshake failed");
++            None
++        }
++        Err(_) => {
++            debug!(%peer, "app gate TLS handshake timed out");
++            None
++        }
++    }
++}
++
+ /// Serve one connection, as TLS or plain HTTP depending on what the client
+ /// actually sent.
+ ///
+@@ -405,14 +436,13 @@ async fn serve_connection(
+ 
+     if is_tls {
+         match gate.tls.acceptor().await {
+-            Some(acceptor) => match acceptor.accept(stream).await {
+-                Ok(tls_stream) => serve_http(tls_stream, peer, gate, app).await,
+-                Err(e) => {
+-                    // Routine: a browser probing a cert it does not trust, or a
+-                    // scanner. Not operator-actionable, so debug.
+-                    debug!(%peer, error = %e, "app gate TLS handshake failed");
++            Some(acceptor) => {
++                if let Some(tls_stream) =
++                    accept_tls(acceptor, stream, peer, TLS_HANDSHAKE_TIMEOUT).await
++                {
++                    serve_http(tls_stream, peer, gate, app).await;
+                 }
+-            },
++            }
+             None => {
+                 // The client speaks TLS and this node has no certificate.
+                 // Replying in plain HTTP would be unreadable garbage to it, so
+@@ -477,6 +507,41 @@ mod tests {
+         assert!(app_is_listening(port).await);
+     }
+ 
++    #[tokio::test]
++    async fn a_stalled_tls_handshake_is_abandoned() {
++        // A client that sends the first byte of a ClientHello and then nothing
++        // must not hold the connection beyond the handshake limit.
++        use tokio::io::AsyncWriteExt;
++        let dir = tempfile::tempdir().unwrap();
++        let cert = dir.path().join("c.crt");
++        let key = dir.path().join("c.key");
++        tokio::fs::write(&cert, include_bytes!("testdata/leaf.crt"))
++            .await
++            .unwrap();
++        tokio::fs::write(&key, include_bytes!("testdata/leaf.key"))
++            .await
++            .unwrap();
++        let acceptor = super::super::tls::GateTls::with_paths(&cert, &key)
++            .acceptor()
++            .await
++            .unwrap();
++
++        let (mut client, server) = tokio::io::duplex(1024);
++        client.write_all(&[0x16]).await.unwrap();
++        let peer: SocketAddr = "127.0.0.1:1".parse().unwrap();
++        let limit = std::time::Duration::from_millis(100);
++        let started = std::time::Instant::now();
++        let accepted = tokio::time::timeout(
++            std::time::Duration::from_secs(5),
++            accept_tls(acceptor, server, peer, limit),
++        )
++        .await
++        .expect("handshake was not abandoned");
++        assert!(accepted.is_none());
++        assert!(started.elapsed() >= limit);
++        drop(client);
++    }
++
+     #[test]
+     fn a_status_with_unprotected_ports_is_not_fully_enforced() {
+         let mut status = GateStatus::default();
+diff --git a/core/archipelago/src/appgate/mod.rs b/core/archipelago/src/appgate/mod.rs
+index 76ba226..e529517 100644
+--- a/core/archipelago/src/appgate/mod.rs
++++ b/core/archipelago/src/appgate/mod.rs
+@@ -93,6 +93,16 @@ impl AppGate {
+         }
+     }
+ 
++    /// Also present the operator's publicly trusted pair on app ports to
++    /// clients that ask for its hostname. `None` leaves TLS exactly as `new`
++    /// built it.
++    pub fn with_public_site(mut self, site: Option<tls::PublicSite>) -> Self {
++        if site.is_some() {
++            self.tls = Arc::new(tls::GateTls::new().with_public_site(site));
++        }
++        self
++    }
++
+     /// Re-read the manifests. Called on catalog refresh so a newly installed
+     /// app is gated without a daemon restart.
+     pub async fn refresh(&self) {
+diff --git a/core/archipelago/src/appgate/testdata/README.md b/core/archipelago/src/appgate/testdata/README.md
+index 95ecd24..178702b 100644
+--- a/core/archipelago/src/appgate/testdata/README.md
++++ b/core/archipelago/src/appgate/testdata/README.md
+@@ -8,3 +8,15 @@ mismatched cert/key pair is rejected rather than silently served.
+ 
+ Regenerate with the command in this directory's git history if they ever
+ expire — `-days 36500` means that should not happen.
++
++`public.crt`/`public.key` are a separate ECDSA P-256 pair for the DNS name
++`public.example.org` only, standing in for an operator's publicly trusted
++certificate in the SNI-selection tests:
++
++    openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
++      -sha256 -days 36500 -keyout public.key -out public.crt \
++      -subj "/CN=public.example.org/O=Archipelago Test Fixture" \
++      -addext "subjectAltName=DNS:public.example.org"
++
++`public-renewed.crt`/`.key` are a second pair for the same name, made with the
++same command, standing in for a renewal.
+diff --git a/core/archipelago/src/appgate/testdata/public-renewed.crt b/core/archipelago/src/appgate/testdata/public-renewed.crt
+new file mode 100644
+index 0000000..4e542ad
+--- /dev/null
++++ b/core/archipelago/src/appgate/testdata/public-renewed.crt
+@@ -0,0 +1,12 @@
++-----BEGIN CERTIFICATE-----
++MIIB1TCCAXugAwIBAgIUD0YDoqyBXG6b9KNsgrz3IpA2svkwCgYIKoZIzj0EAwIw
++QDEbMBkGA1UEAwwScHVibGljLmV4YW1wbGUub3JnMSEwHwYDVQQKDBhBcmNoaXBl
++bGFnbyBUZXN0IEZpeHR1cmUwIBcNMjYxMDA0MTM1MzQ2WhgPMjEyNjA5MTAxMzUz
++NDZaMEAxGzAZBgNVBAMMEnB1YmxpYy5leGFtcGxlLm9yZzEhMB8GA1UECgwYQXJj
++aGlwZWxhZ28gVGVzdCBGaXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE
++/lRoYSC0zZlR5nRMhSlAv/GeZesWohtvIQaPL1d3qT3Kd9hwKkTHeEYmMUX/JaE2
++R0Lw1L4I+tJ3xcxKCTf28aNRME8wHQYDVR0OBBYEFCiB5qOcB1hFA7v6M3busyWJ
++RDv4MA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0RBBYwFIIScHVibGljLmV4YW1wbGUu
++b3JnMAoGCCqGSM49BAMCA0gAMEUCIQDt7E+0HSXokIQZcb3Ekbn1e/v2qO56G01m
++KQZ1y+gJtgIgQytDV17XpTIXYWuGoEyO3oJNTPGSdqfHss+ScJOdkuY=
++-----END CERTIFICATE-----
+diff --git a/core/archipelago/src/appgate/testdata/public-renewed.key b/core/archipelago/src/appgate/testdata/public-renewed.key
+new file mode 100644
+index 0000000..a5f4b71
+--- /dev/null
++++ b/core/archipelago/src/appgate/testdata/public-renewed.key
+@@ -0,0 +1,5 @@
++-----BEGIN PRIVATE KEY-----
++MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg8v62+zz4N2J3uEsj
++8awVjVCOkiJZ4A2hYHrdULzID6GhRANCAAT+VGhhILTNmVHmdEyFKUC/8Z5l6xai
++G28hBo8vV3epPcp32HAqRMd4RiYxRf8loTZHQvDUvgj60nfFzEoJN/bx
++-----END PRIVATE KEY-----
+diff --git a/core/archipelago/src/appgate/testdata/public.crt b/core/archipelago/src/appgate/testdata/public.crt
+new file mode 100644
+index 0000000..790c923
+--- /dev/null
++++ b/core/archipelago/src/appgate/testdata/public.crt
+@@ -0,0 +1,12 @@
++-----BEGIN CERTIFICATE-----
++MIIB1TCCAXugAwIBAgIUJxtwQM6Usbx9lVE7wsYKkgQtRAMwCgYIKoZIzj0EAwIw
++QDEbMBkGA1UEAwwScHVibGljLmV4YW1wbGUub3JnMSEwHwYDVQQKDBhBcmNoaXBl
++bGFnbyBUZXN0IEZpeHR1cmUwIBcNMjYxMDA0MTI0ODU1WhgPMjEyNjA5MTAxMjQ4
++NTVaMEAxGzAZBgNVBAMMEnB1YmxpYy5leGFtcGxlLm9yZzEhMB8GA1UECgwYQXJj
++aGlwZWxhZ28gVGVzdCBGaXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE
++ruEyM3W05kwKctanzk+sEb5KPelKOkkPoKnJulnHPFK4BBjm3r8NRPkFe3okFOjI
++V9z7I8ARSb8MmeRjWh3vqaNRME8wHQYDVR0OBBYEFDPRoG5ANItIb9PAq4fC4UV0
++T+Q1MA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0RBBYwFIIScHVibGljLmV4YW1wbGUu
++b3JnMAoGCCqGSM49BAMCA0gAMEUCIQCAIVma6uSCqrpYc0AF8OKGHxHgu7AhoSnM
++gMX18z4TWwIgIWLQIHy36pFquD5xM/MZFXCkBmKJRb5PsqtN3l66ZDc=
++-----END CERTIFICATE-----
+diff --git a/core/archipelago/src/appgate/testdata/public.key b/core/archipelago/src/appgate/testdata/public.key
+new file mode 100644
+index 0000000..0b8eeea
+--- /dev/null
++++ b/core/archipelago/src/appgate/testdata/public.key
+@@ -0,0 +1,5 @@
++-----BEGIN PRIVATE KEY-----
++MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgu5fCYXMYRowSnA3O
++Imwn+JVxH3yo5hMnVvK0nQVLVZChRANCAASu4TIzdbTmTApy1qfOT6wRvko96Uo6
++SQ+gqcm6Wcc8UrgEGObevw1E+QV7eiQU6MhX3PsjwBFJvwyZ5GNaHe+p
++-----END PRIVATE KEY-----
+diff --git a/core/archipelago/src/appgate/tls.rs b/core/archipelago/src/appgate/tls.rs
+index c0131f7..c28ed5c 100644
+--- a/core/archipelago/src/appgate/tls.rs
++++ b/core/archipelago/src/appgate/tls.rs
+@@ -32,13 +32,54 @@
+ //! What IS logged at warn is a certificate that exists but cannot be parsed:
+ //! that is a misconfiguration the operator can act on, and silently falling
+ //! back to plain HTTP would hide it.
++//!
++//! # A public hostname gets its own certificate
++//!
++//! A node an operator has put on the internet under a domain (`public_host`
++//! in `/etc/archipelago/config.toml`) can carry a publicly trusted pair for
++//! that name — typically certbot's. Browsers on the internet do not trust the
++//! node CA, so for that one name the gate presents the public pair instead,
++//! chosen by the ClientHello's SNI (case-insensitive). Everything else — no
++//! SNI, an IP address (which TLS never sends as SNI), `.local`, an onion, any
++//! other name — gets the node-CA leaf exactly as before, so LAN, mesh and Tor
++//! access are untouched and the public pair is never offered for a name it
++//! was not configured for. It is also refused outright unless the certificate
++//! actually covers `public_host`.
++//!
++//! Both pairs are reloaded on mtime. `metadata` follows symlinks, so a pair
++//! that renewal swaps by repointing links is seen as changed the moment the
++//! links move.
++//!
++//! The files must be readable by the daemon's user (`archipelago`). certbot's
++//! own `/etc/letsencrypt/live/<host>/` is not: its directories are root-only.
++//! Have a certbot deploy hook copy the pair to, for example,
++//! `/etc/archipelago/ssl/public/{fullchain,privkey}.pem`, owned
++//! `root:archipelago` with mode `0640`, writing each to a temporary file and
++//! `mv`-ing it into place so the gate never reads half a PEM.
++//!
++//! The two pairs fail independently. Renewal cannot swap two files at once,
++//! so a reload can briefly find the public pair missing or mismatched; the
++//! last good public pair then keeps serving `public_host`, with a warning,
++//! until a sound pair appears. Only a node that has never loaded a good
++//! public pair serves the node leaf for `public_host`. A public pair that
++//! keeps failing to load is retried at most every `PUBLIC_RETRY`, not on every
++//! connection, because these ports face the internet and a handshake must not
++//! buy an unauthenticated caller four file reads and two signature checks.
++//!
++//! A node with a public pair but no node leaf answers TLS for `public_host`
++//! and refuses the handshake for any other name, which a browser reports as a
++//! connection failure — the same outcome as a TLS connection to a node with no
++//! certificate at all today. Plain HTTP is decided by the first byte, before
++//! any of this, so it is unaffected either way.
+ 
+ use std::io;
+ use std::path::{Path, PathBuf};
+-use std::sync::Arc;
+-use std::time::SystemTime;
++use std::sync::{Arc, Mutex};
++use std::time::{Duration, Instant, SystemTime};
+ 
+ use tokio::sync::RwLock;
++use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
++use tokio_rustls::rustls::sign::{self, CertifiedKey, SigningKey};
+ use tokio_rustls::rustls::{Certificate, PrivateKey, ServerConfig};
+ use tokio_rustls::TlsAcceptor;
+ use tracing::{debug, warn};
+@@ -54,21 +95,78 @@ const DEFAULT_KEY: &str = "/etc/archipelago/ssl/archipelago.key";
+ /// are unambiguous from a single byte.
+ pub const TLS_HANDSHAKE_FIRST_BYTE: u8 = 0x16;
+ 
++/// How long a public pair that failed to load is left before it is read again
++/// (unless its files change first, which triggers a reload straight away).
++const PUBLIC_RETRY: Duration = Duration::from_secs(5);
++
+ /// Does this look like the start of a TLS connection rather than plain HTTP?
+ pub fn looks_like_tls(first: u8) -> bool {
+     first == TLS_HANDSHAKE_FIRST_BYTE
+ }
+ 
++/// The operator's public hostname and the certificate pair that covers it.
++/// See the module docs.
++#[derive(Clone, Debug)]
++pub struct PublicSite {
++    /// Lowercase DNS hostname, already validated by `Config::load`.
++    pub host: String,
++    pub cert: PathBuf,
++    pub key: PathBuf,
++}
++
++impl PublicSite {
++    /// The public site the operator configured, if it is complete. A hostname
++    /// without both PEM paths cannot be served, so say so once at startup and
++    /// carry on with the node leaf for every name.
++    pub fn from_config(config: &crate::config::Config) -> Option<Self> {
++        let host = config.public_host.clone()?;
++        match (&config.public_cert, &config.public_key) {
++            (Some(cert), Some(key)) => Some(Self {
++                host,
++                cert: cert.clone(),
++                key: key.clone(),
++            }),
++            _ => {
++                warn!(
++                    public_host = %host,
++                    "public_host is set but public_cert and public_key are not both set — \
++                     app ports serve the node certificate for every name"
++                );
++                None
++            }
++        }
++    }
++}
++
+ /// Lazily-built, mtime-invalidated TLS config for the gate.
+ pub struct GateTls {
+     cert_path: PathBuf,
+     key_path: PathBuf,
++    public: Option<PublicSite>,
+     cached: RwLock<Option<Cached>>,
++    /// The stamps the last warning was logged for, so a broken pair that is
++    /// re-tried is reported once per change rather than once per attempt.
++    warned: Mutex<Option<Stamps>>,
++    /// The most recent public pair that loaded and passed every check. Kept
++    /// for `public_host` while a renewal is half-way through swapping files.
++    last_good_public: Mutex<Option<Arc<CertifiedKey>>>,
++    public_retry: Duration,
++    #[cfg(test)]
++    public_loads: std::sync::atomic::AtomicUsize,
+ }
+ 
+ struct Cached {
+-    acceptor: TlsAcceptor,
+-    stamp: Stamp,
++    acceptor: Option<TlsAcceptor>,
++    stamps: Stamps,
++    /// Set when the public pair failed to load: rebuild after this even if no
++    /// stamp has moved, in case the failure was a read mid-write.
++    retry_at: Option<Instant>,
++}
++
++impl Cached {
++    fn is_current(&self, stamps: Stamps, now: Instant) -> bool {
++        self.stamps == stamps && self.retry_at.is_none_or(|at| now < at)
++    }
+ }
+ 
+ /// Modification times of both halves. Compared as a pair because reissuing
+@@ -80,6 +178,21 @@ struct Stamp {
+     key: SystemTime,
+ }
+ 
++/// The node pair's and the public pair's stamps; `None` where a file cannot
++/// be stat'ed (or, for the public pair, is not configured).
++#[derive(Clone, Copy, PartialEq, Eq, Debug)]
++struct Stamps {
++    node: Option<Stamp>,
++    public: Option<Stamp>,
++}
++
++/// What a rebuild produced, and which present pairs failed to load.
++struct Built {
++    resolver: Option<Arc<SniResolver>>,
++    node_failed: bool,
++    public_failed: bool,
++}
++
+ impl GateTls {
+     pub fn new() -> Self {
+         Self::with_paths(DEFAULT_CERT, DEFAULT_KEY)
+@@ -89,20 +202,32 @@ impl GateTls {
+         Self {
+             cert_path: cert.into(),
+             key_path: key.into(),
++            public: None,
+             cached: RwLock::new(None),
++            warned: Mutex::new(None),
++            last_good_public: Mutex::new(None),
++            public_retry: PUBLIC_RETRY,
++            #[cfg(test)]
++            public_loads: std::sync::atomic::AtomicUsize::new(0),
+         }
+     }
+ 
++    /// Also serve `site`'s pair to clients that ask for `site.host`.
++    pub fn with_public_site(mut self, site: Option<PublicSite>) -> Self {
++        self.public = site;
++        self
++    }
++
+     /// The current acceptor, rebuilding it if the files changed underneath.
+     ///
+     /// `None` means this node has no usable certificate and app ports stay
+     /// plain HTTP. Callers must treat that as ordinary, not as a failure.
+     pub async fn acceptor(&self) -> Option<TlsAcceptor> {
+-        let stamp = self.stamp().await?;
++        let stamps = self.stamps().await;
+ 
+         if let Some(c) = self.cached.read().await.as_ref() {
+-            if c.stamp == stamp {
+-                return Some(c.acceptor.clone());
++            if c.is_current(stamps, Instant::now()) {
++                return c.acceptor.clone();
+             }
+         }
+ 
+@@ -110,44 +235,160 @@ impl GateTls {
+         // during a reissue do not each parse the same files.
+         let mut guard = self.cached.write().await;
+         if let Some(c) = guard.as_ref() {
+-            if c.stamp == stamp {
+-                return Some(c.acceptor.clone());
++            if c.is_current(stamps, Instant::now()) {
++                return c.acceptor.clone();
+             }
+         }
+ 
+-        match load_config(&self.cert_path, &self.key_path).await {
+-            Ok(config) => {
+-                let acceptor = TlsAcceptor::from(Arc::new(config));
+-                debug!(
+-                    cert = %self.cert_path.display(),
+-                    "app gate loaded its TLS certificate"
+-                );
+-                *guard = Some(Cached {
+-                    acceptor: acceptor.clone(),
+-                    stamp,
+-                });
+-                Some(acceptor)
+-            }
+-            Err(e) => {
+-                // A present-but-broken certificate is an operator-actionable
+-                // misconfiguration; do not let it pass quietly as "no TLS".
+-                warn!(
+-                    cert = %self.cert_path.display(),
+-                    error = %e,
+-                    "app gate could not load its TLS certificate — app ports stay plain HTTP"
+-                );
+-                // Cache the failure against this stamp so a broken file is not
+-                // re-parsed on every single connection.
+-                *guard = None;
++        let built = self.build(stamps).await;
++        let acceptor = built.resolver.map(|resolver| {
++            let config = ServerConfig::builder()
++                .with_safe_defaults()
++                .with_no_client_auth()
++                .with_cert_resolver(resolver);
++            TlsAcceptor::from(Arc::new(config))
++        });
++        // A broken node pair is retried on the next connection, as it always
++        // has been. A broken public pair is retried after `public_retry`.
++        *guard = if built.node_failed {
++            None
++        } else {
++            Some(Cached {
++                acceptor: acceptor.clone(),
++                stamps,
++                retry_at: built
++                    .public_failed
++                    .then(|| Instant::now() + self.public_retry),
++            })
++        };
++        acceptor
++    }
++
++    async fn build(&self, stamps: Stamps) -> Built {
++        let report = self.first_report_for(stamps);
++        let mut node_failed = false;
++        let mut public_failed = false;
++
++        let node = match stamps.node {
++            None => {
++                if report {
++                    debug!(
++                        cert = %self.cert_path.display(),
++                        "app gate has no node TLS certificate"
++                    );
++                }
+                 None
+             }
++            Some(_) => match load_pair(&self.cert_path, &self.key_path, None).await {
++                Ok(key) => {
++                    debug!(
++                        cert = %self.cert_path.display(),
++                        "app gate loaded its TLS certificate"
++                    );
++                    Some(Arc::new(key))
++                }
++                Err(e) => {
++                    // A present-but-broken certificate is an operator-actionable
++                    // misconfiguration; do not let it pass quietly as "no TLS".
++                    if report {
++                        warn!(
++                            cert = %self.cert_path.display(),
++                            error = %e,
++                            "app gate could not load its TLS certificate — app ports stay plain HTTP"
++                        );
++                    }
++                    node_failed = true;
++                    None
++                }
++            },
++        };
++
++        let public = match &self.public {
++            None => None,
++            Some(site) => {
++                let loaded = match stamps.public {
++                    None => Err(None),
++                    Some(_) => {
++                        #[cfg(test)]
++                        self.public_loads
++                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                        load_pair(&site.cert, &site.key, Some(&site.host))
++                            .await
++                            .map_err(Some)
++                    }
++                };
++                let mut last_good = self
++                    .last_good_public
++                    .lock()
++                    .unwrap_or_else(|e| e.into_inner());
++                match loaded {
++                    Ok(key) => {
++                        debug!(
++                            public_host = %site.host,
++                            cert = %site.cert.display(),
++                            "app gate loaded the public TLS certificate"
++                        );
++                        let key = Arc::new(key);
++                        *last_good = Some(key.clone());
++                        Some((site.host.clone(), key))
++                    }
++                    Err(e) => {
++                        public_failed = e.is_some();
++                        if report {
++                            let fallback = if last_good.is_some() {
++                                "still serving the last good public certificate"
++                            } else {
++                                "app ports serve the node certificate for every name"
++                            };
++                            match e {
++                                None => warn!(
++                                    public_host = %site.host,
++                                    cert = %site.cert.display(),
++                                    key = %site.key.display(),
++                                    "public certificate or key not found (missing, or in a \
++                                     directory the daemon's user cannot search) — {fallback}"
++                                ),
++                                Some(e) => warn!(
++                                    public_host = %site.host,
++                                    cert = %site.cert.display(),
++                                    error = %e,
++                                    "app gate could not read or load the public TLS \
++                                     certificate — {fallback}"
++                                ),
++                            }
++                        }
++                        last_good.clone().map(|key| (site.host.clone(), key))
++                    }
++                }
++            }
++        };
++
++        let resolver =
++            (node.is_some() || public.is_some()).then(|| Arc::new(SniResolver { node, public }));
++        Built {
++            resolver,
++            node_failed,
++            public_failed,
+         }
+     }
+ 
+-    async fn stamp(&self) -> Option<Stamp> {
+-        let cert = mtime(&self.cert_path).await?;
+-        let key = mtime(&self.key_path).await?;
+-        Some(Stamp { cert, key })
++    /// True the first time a rebuild happens for these stamps.
++    fn first_report_for(&self, stamps: Stamps) -> bool {
++        let mut warned = self.warned.lock().unwrap_or_else(|e| e.into_inner());
++        if *warned == Some(stamps) {
++            return false;
++        }
++        *warned = Some(stamps);
++        true
++    }
++
++    async fn stamps(&self) -> Stamps {
++        let node = stamp(&self.cert_path, &self.key_path).await;
++        let public = match &self.public {
++            Some(site) => stamp(&site.cert, &site.key).await,
++            None => None,
++        };
++        Stamps { node, public }
+     }
+ }
+ 
+@@ -157,18 +398,65 @@ impl Default for GateTls {
+     }
+ }
+ 
++/// Picks the certificate for a handshake: the public pair for exactly
++/// `public_host`, the node leaf for anything else. `None` aborts the
++/// handshake, which is right when the only pair loaded is the public one and
++/// the client asked for some other name.
++struct SniResolver {
++    node: Option<Arc<CertifiedKey>>,
++    public: Option<(String, Arc<CertifiedKey>)>,
++}
++
++impl SniResolver {
++    fn pick(&self, sni: Option<&str>) -> Option<Arc<CertifiedKey>> {
++        if let (Some(name), Some((host, key))) = (sni, &self.public) {
++            if name
++                .strip_suffix('.')
++                .unwrap_or(name)
++                .eq_ignore_ascii_case(host)
++            {
++                return Some(key.clone());
++            }
++        }
++        self.node.clone()
++    }
++}
++
++impl ResolvesServerCert for SniResolver {
++    fn resolve(&self, client_hello: ClientHello) -> Option<Arc<CertifiedKey>> {
++        self.pick(client_hello.server_name())
++    }
++}
++
++async fn stamp(cert: &Path, key: &Path) -> Option<Stamp> {
++    Some(Stamp {
++        cert: mtime(cert).await?,
++        key: mtime(key).await?,
++    })
++}
++
++/// Follows symlinks (`metadata`, not `symlink_metadata`), so a repointed
++/// certbot link reports its new target's time.
+ async fn mtime(path: &Path) -> Option<SystemTime> {
+     tokio::fs::metadata(path).await.ok()?.modified().ok()
+ }
+ 
+-async fn load_config(cert_path: &Path, key_path: &Path) -> io::Result<ServerConfig> {
++async fn load_pair(
++    cert_path: &Path,
++    key_path: &Path,
++    must_cover: Option<&str>,
++) -> io::Result<CertifiedKey> {
+     let cert_pem = tokio::fs::read(cert_path).await?;
+     let key_pem = tokio::fs::read(key_path).await?;
+-    build_config(&cert_pem, &key_pem)
++    let key = load_certified_key(&cert_pem, &key_pem)?;
++    if let Some(host) = must_cover {
++        ensure_cert_covers(&key.cert[0], host)?;
++    }
++    Ok(key)
+ }
+ 
+ /// Split out from the filesystem so it can be tested against bytes directly.
+-pub(crate) fn build_config(cert_pem: &[u8], key_pem: &[u8]) -> io::Result<ServerConfig> {
++pub(crate) fn load_certified_key(cert_pem: &[u8], key_pem: &[u8]) -> io::Result<CertifiedKey> {
+     let certs: Vec<Certificate> = rustls_pemfile::certs(&mut &cert_pem[..])?
+         .into_iter()
+         .map(Certificate)
+@@ -181,29 +469,41 @@ pub(crate) fn build_config(cert_pem: &[u8], key_pem: &[u8]) -> io::Result<Server
+     }
+ 
+     let key = read_key(key_pem)?;
++    let signing_key = sign::any_supported_type(&key)
++        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "unsupported private key type"))?;
+ 
+     // rustls does NOT check that the key matches the certificate — verified by
+     // test, not assumed: `with_single_cert` accepts a pair from two different
+     // keys and only fails later, mid-handshake, in someone's browser. That is
+     // precisely the silently-broken-security-control shape this module exists
+     // to avoid, so prove the pairing here and refuse to serve otherwise.
+-    ensure_key_matches_cert(&certs[0], &key)?;
++    ensure_key_matches_cert(&certs[0], signing_key.as_ref())?;
++
++    Ok(CertifiedKey::new(certs, signing_key))
++}
+ 
+-    ServerConfig::builder()
+-        .with_safe_defaults()
+-        .with_no_client_auth()
+-        .with_single_cert(certs, key)
+-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
++/// Refuse a public certificate that does not name the public host: serving it
++/// would only ever produce a browser name-mismatch error, and checking here
++/// turns that into a warning the operator sees on the node.
++fn ensure_cert_covers(cert: &Certificate, host: &str) -> io::Result<()> {
++    let end_entity = webpki::EndEntityCert::try_from(cert.0.as_slice())
++        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("bad certificate: {e}")))?;
++    let name = webpki::DnsNameRef::try_from_ascii_str(host).map_err(|_| {
++        io::Error::new(io::ErrorKind::InvalidInput, "public_host is not a DNS name")
++    })?;
++    end_entity
++        .verify_is_valid_for_subject_name(webpki::SubjectNameRef::DnsName(name))
++        .map_err(|_| {
++            io::Error::new(
++                io::ErrorKind::InvalidData,
++                format!("certificate does not cover {host}"),
++            )
++        })
+ }
+ 
+ /// Sign a fixed message with the private key and verify it with the public key
+ /// inside the certificate. They pair iff the verification succeeds.
+-fn ensure_key_matches_cert(cert: &Certificate, key: &PrivateKey) -> io::Result<()> {
+-    use tokio_rustls::rustls::sign;
+-
+-    let signing_key = sign::any_supported_type(key)
+-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "unsupported private key type"))?;
+-
++fn ensure_key_matches_cert(cert: &Certificate, signing_key: &dyn SigningKey) -> io::Result<()> {
+     // Any scheme the key supports will do — this proves possession, it is not
+     // negotiating anything. Offer the full set and let rustls pick.
+     const ALL_SCHEMES: &[tokio_rustls::rustls::SignatureScheme] = {
+@@ -318,22 +618,22 @@ mod tests {
+ 
+     #[test]
+     fn builds_a_config_from_the_nodes_own_cert_and_key() {
+-        assert!(build_config(CERT, KEY).is_ok());
++        assert!(load_certified_key(CERT, KEY).is_ok());
+     }
+ 
+     #[test]
+     fn a_cert_without_its_matching_key_is_rejected_not_ignored() {
+         // Key from a different pair: rustls must refuse rather than serve a
+         // certificate it cannot prove ownership of.
+-        let other = build_config(CERT, OTHER_KEY);
++        let other = load_certified_key(CERT, OTHER_KEY);
+         assert!(other.is_err(), "mismatched cert/key pair was accepted");
+     }
+     const OTHER_KEY: &[u8] = include_bytes!("testdata/other.key");
+ 
+     #[test]
+     fn empty_pem_is_an_error_rather_than_an_empty_chain() {
+-        assert!(build_config(b"", KEY).is_err());
+-        assert!(build_config(CERT, b"").is_err());
++        assert!(load_certified_key(b"", KEY).is_err());
++        assert!(load_certified_key(CERT, b"").is_err());
+     }
+ 
+     #[tokio::test]
+@@ -370,7 +670,7 @@ mod tests {
+ 
+         let tls = GateTls::with_paths(&cert, &key);
+         assert!(tls.acceptor().await.is_some());
+-        let first = *tls.cached.read().await.as_ref().map(|c| &c.stamp).unwrap();
++        let first = tls.cached.read().await.as_ref().unwrap().stamps;
+ 
+         // Reissue with a distinctly later mtime, the way the CA script does
+         // when the node gains an address. Set explicitly rather than relying on
+@@ -387,7 +687,406 @@ mod tests {
+             .unwrap();
+ 
+         assert!(tls.acceptor().await.is_some());
+-        let second = *tls.cached.read().await.as_ref().map(|c| &c.stamp).unwrap();
++        let second = tls.cached.read().await.as_ref().unwrap().stamps;
+         assert_ne!(first, second, "reissued certificate was not reloaded");
+     }
++
++    // A pair for `public.example.org` from a different key (ECDSA P-256, as
++    // certbot issues by default), standing in for a Let's Encrypt certificate.
++    const PUBLIC_CERT: &[u8] = include_bytes!("testdata/public.crt");
++    const PUBLIC_KEY: &[u8] = include_bytes!("testdata/public.key");
++    const PUBLIC_HOST: &str = "public.example.org";
++
++    fn chain_of(key: &Option<Arc<CertifiedKey>>) -> Option<Vec<u8>> {
++        key.as_ref().map(|k| k.cert[0].0.clone())
++    }
++
++    fn der(pem: &[u8]) -> Vec<u8> {
++        rustls_pemfile::certs(&mut &pem[..]).unwrap().remove(0)
++    }
++
++    /// The resolver a `GateTls` builds from its current files.
++    async fn resolver(tls: &GateTls) -> Arc<SniResolver> {
++        tls.build(tls.stamps().await)
++            .await
++            .resolver
++            .expect("no certificate was loaded")
++    }
++
++    struct Fixture {
++        _dir: tempfile::TempDir,
++        node_cert: PathBuf,
++        node_key: PathBuf,
++        public_cert: PathBuf,
++        public_key: PathBuf,
++    }
++
++    async fn fixture() -> Fixture {
++        let dir = tempfile::tempdir().unwrap();
++        let f = Fixture {
++            node_cert: dir.path().join("archipelago.crt"),
++            node_key: dir.path().join("archipelago.key"),
++            public_cert: dir.path().join("fullchain.pem"),
++            public_key: dir.path().join("privkey.pem"),
++            _dir: dir,
++        };
++        tokio::fs::write(&f.node_cert, CERT).await.unwrap();
++        tokio::fs::write(&f.node_key, KEY).await.unwrap();
++        tokio::fs::write(&f.public_cert, PUBLIC_CERT).await.unwrap();
++        tokio::fs::write(&f.public_key, PUBLIC_KEY).await.unwrap();
++        f
++    }
++
++    fn site(f: &Fixture) -> PublicSite {
++        PublicSite {
++            host: PUBLIC_HOST.into(),
++            cert: f.public_cert.clone(),
++            key: f.public_key.clone(),
++        }
++    }
++
++    #[tokio::test]
++    async fn the_public_host_gets_the_public_pair_and_every_other_name_the_node_leaf() {
++        let f = fixture().await;
++        let tls = GateTls::with_paths(&f.node_cert, &f.node_key).with_public_site(Some(site(&f)));
++        let r = resolver(&tls).await;
++
++        assert_eq!(chain_of(&r.pick(Some(PUBLIC_HOST))), Some(der(PUBLIC_CERT)));
++        for other in [
++            None,
++            Some("node.local"),
++            Some("abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion"),
++            Some("other.example.org"),
++            Some("sub.public.example.org"),
++            Some("example.org"),
++            Some("public.example.org.evil.test"),
++        ] {
++            assert_eq!(chain_of(&r.pick(other)), Some(der(CERT)), "{other:?}");
++        }
++    }
++
++    #[tokio::test]
++    async fn the_public_host_match_ignores_case() {
++        let f = fixture().await;
++        let tls = GateTls::with_paths(&f.node_cert, &f.node_key).with_public_site(Some(site(&f)));
++        let r = resolver(&tls).await;
++        for name in [
++            "PUBLIC.EXAMPLE.ORG",
++            "Public.Example.Org",
++            "public.example.org.",
++        ] {
++            assert_eq!(
++                chain_of(&r.pick(Some(name))),
++                Some(der(PUBLIC_CERT)),
++                "{name}"
++            );
++        }
++    }
++
++    #[tokio::test]
++    async fn the_handshake_presents_the_certificate_the_sni_asks_for() {
++        // End to end through rustls, not just the resolver: a real ClientHello
++        // carrying SNI must come back with the public certificate, and one for
++        // any other name with the node leaf.
++        use tokio_rustls::rustls::client::{ServerCertVerified, ServerCertVerifier};
++        use tokio_rustls::rustls::{ClientConfig, ServerName};
++
++        struct Capture(Mutex<Option<Vec<u8>>>);
++        impl ServerCertVerifier for Capture {
++            fn verify_server_cert(
++                &self,
++                end_entity: &Certificate,
++                _: &[Certificate],
++                _: &ServerName,
++                _: &mut dyn Iterator<Item = &[u8]>,
++                _: &[u8],
++                _: SystemTime,
++            ) -> Result<ServerCertVerified, tokio_rustls::rustls::Error> {
++                *self.0.lock().unwrap() = Some(end_entity.0.clone());
++                Ok(ServerCertVerified::assertion())
++            }
++        }
++
++        async fn presented(acceptor: TlsAcceptor, sni: &str) -> Vec<u8> {
++            let capture = Arc::new(Capture(Mutex::new(None)));
++            let config = ClientConfig::builder()
++                .with_safe_defaults()
++                .with_custom_certificate_verifier(capture.clone())
++                .with_no_client_auth();
++            let (client, server) = tokio::io::duplex(64 * 1024);
++            let server = tokio::spawn(async move { acceptor.accept(server).await.map(|_| ()) });
++            // Held until the server side has finished its half of the
++            // handshake, or the server sees the pipe close under it.
++            let _client = tokio_rustls::TlsConnector::from(Arc::new(config))
++                .connect(ServerName::try_from(sni).unwrap(), client)
++                .await
++                .unwrap();
++            server.await.unwrap().unwrap();
++            let der = capture.0.lock().unwrap().take().unwrap();
++            der
++        }
++
++        let f = fixture().await;
++        let tls = GateTls::with_paths(&f.node_cert, &f.node_key).with_public_site(Some(site(&f)));
++        let acceptor = tls.acceptor().await.unwrap();
++        assert_eq!(
++            presented(acceptor.clone(), PUBLIC_HOST).await,
++            der(PUBLIC_CERT)
++        );
++        assert_eq!(presented(acceptor.clone(), "node.local").await, der(CERT));
++        assert_eq!(presented(acceptor, "localhost").await, der(CERT));
++    }
++
++    #[tokio::test]
++    async fn a_public_site_whose_files_are_missing_leaves_the_node_leaf_for_every_name() {
++        let f = fixture().await;
++        let tls =
++            GateTls::with_paths(&f.node_cert, &f.node_key).with_public_site(Some(PublicSite {
++                host: PUBLIC_HOST.into(),
++                cert: "/nonexistent/fullchain.pem".into(),
++                key: "/nonexistent/privkey.pem".into(),
++            }));
++        let r = resolver(&tls).await;
++        assert!(r.public.is_none());
++        assert_eq!(chain_of(&r.pick(Some(PUBLIC_HOST))), Some(der(CERT)));
++        assert_eq!(chain_of(&r.pick(None)), Some(der(CERT)));
++        // Settled, not retried per connection: nothing changes until a file
++        // appears.
++        assert!(tls.acceptor().await.is_some());
++        assert!(tls.cached.read().await.is_some());
++    }
++
++    #[tokio::test]
++    async fn a_public_key_that_does_not_match_its_certificate_is_never_served() {
++        let f = fixture().await;
++        tokio::fs::write(&f.public_key, OTHER_KEY).await.unwrap();
++        let tls = GateTls::with_paths(&f.node_cert, &f.node_key).with_public_site(Some(site(&f)));
++        let r = resolver(&tls).await;
++        assert!(r.public.is_none());
++        assert_eq!(chain_of(&r.pick(Some(PUBLIC_HOST))), Some(der(CERT)));
++        // A broken pair is retried later rather than remembered for good, in
++        // case it was read mid-write.
++        assert!(tls.acceptor().await.is_some());
++        assert!(tls.cached.read().await.as_ref().unwrap().retry_at.is_some());
++    }
++
++    #[tokio::test]
++    async fn a_public_certificate_for_another_name_is_never_served() {
++        // The pair is sound, but it does not cover the configured hostname.
++        let f = fixture().await;
++        let tls =
++            GateTls::with_paths(&f.node_cert, &f.node_key).with_public_site(Some(PublicSite {
++                host: "elsewhere.example.org".into(),
++                ..site(&f)
++            }));
++        let r = resolver(&tls).await;
++        assert!(r.public.is_none());
++        assert_eq!(
++            chain_of(&r.pick(Some("elsewhere.example.org"))),
++            Some(der(CERT))
++        );
++        assert_eq!(chain_of(&r.pick(Some(PUBLIC_HOST))), Some(der(CERT)));
++    }
++
++    #[tokio::test]
++    async fn without_a_node_leaf_only_the_public_host_gets_a_certificate() {
++        let f = fixture().await;
++        let tls = GateTls::with_paths(
++            "/nonexistent/archipelago.crt",
++            "/nonexistent/archipelago.key",
++        )
++        .with_public_site(Some(site(&f)));
++        let r = resolver(&tls).await;
++        assert_eq!(chain_of(&r.pick(Some(PUBLIC_HOST))), Some(der(PUBLIC_CERT)));
++        // Anything else aborts the handshake rather than borrowing the public
++        // pair for a name it does not cover.
++        assert!(r.pick(None).is_none());
++        assert!(r.pick(Some("node.local")).is_none());
++    }
++
++    #[tokio::test]
++    async fn neither_pair_present_means_no_acceptor() {
++        let tls = GateTls::with_paths(
++            "/nonexistent/archipelago.crt",
++            "/nonexistent/archipelago.key",
++        )
++        .with_public_site(Some(PublicSite {
++            host: PUBLIC_HOST.into(),
++            cert: "/nonexistent/fullchain.pem".into(),
++            key: "/nonexistent/privkey.pem".into(),
++        }));
++        assert!(tls.acceptor().await.is_none());
++    }
++
++    #[cfg(unix)]
++    #[tokio::test]
++    async fn a_renewed_public_certificate_is_picked_up_through_its_symlink() {
++        // certbot renews by writing new files under archive/ and repointing the
++        // live/ symlinks at them. The gate must follow the links to see that.
++        let f = fixture().await;
++        let dir = f.public_cert.parent().unwrap().to_path_buf();
++        let archive = dir.join("archive");
++        let live = dir.join("live");
++        std::fs::create_dir_all(&archive).unwrap();
++        std::fs::create_dir_all(&live).unwrap();
++        std::fs::write(archive.join("fullchain1.pem"), PUBLIC_CERT).unwrap();
++        std::fs::write(archive.join("privkey1.pem"), PUBLIC_KEY).unwrap();
++        let live_cert = live.join("fullchain.pem");
++        let live_key = live.join("privkey.pem");
++        std::os::unix::fs::symlink(archive.join("fullchain1.pem"), &live_cert).unwrap();
++        std::os::unix::fs::symlink(archive.join("privkey1.pem"), &live_key).unwrap();
++
++        let tls =
++            GateTls::with_paths(&f.node_cert, &f.node_key).with_public_site(Some(PublicSite {
++                host: PUBLIC_HOST.into(),
++                cert: live_cert.clone(),
++                key: live_key.clone(),
++            }));
++        assert!(tls.acceptor().await.is_some());
++        let first = tls.cached.read().await.as_ref().unwrap().stamps;
++        assert!(first.public.is_some(), "public pair was not loaded");
++
++        // Renewal: new archive files with distinctly later mtimes, links
++        // repointed. The links' own mtimes are irrelevant; the targets' are not.
++        let later = SystemTime::now() + std::time::Duration::from_secs(5);
++        for (name, body) in [
++            ("fullchain2.pem", PUBLIC_CERT),
++            ("privkey2.pem", PUBLIC_KEY),
++        ] {
++            let path = archive.join(name);
++            std::fs::write(&path, body).unwrap();
++            std::fs::File::options()
++                .write(true)
++                .open(&path)
++                .unwrap()
++                .set_modified(later)
++                .unwrap();
++        }
++        std::fs::remove_file(&live_cert).unwrap();
++        std::fs::remove_file(&live_key).unwrap();
++        std::os::unix::fs::symlink(archive.join("fullchain2.pem"), &live_cert).unwrap();
++        std::os::unix::fs::symlink(archive.join("privkey2.pem"), &live_key).unwrap();
++
++        assert!(tls.acceptor().await.is_some());
++        let second = tls.cached.read().await.as_ref().unwrap().stamps;
++        assert_ne!(
++            first.public, second.public,
++            "renewed certificate was not reloaded"
++        );
++        assert_eq!(first.node, second.node);
++    }
++
++    #[test]
++    fn the_public_pair_loads_and_is_checked_against_its_host() {
++        let cert = &load_certified_key(PUBLIC_CERT, PUBLIC_KEY).unwrap().cert[0];
++        assert!(ensure_cert_covers(cert, PUBLIC_HOST).is_ok());
++        assert!(ensure_cert_covers(cert, "other.example.org").is_err());
++        assert!(load_certified_key(PUBLIC_CERT, KEY).is_err());
++    }
++
++    #[test]
++    fn a_public_site_needs_both_pem_paths() {
++        let config = crate::config::Config {
++            public_host: Some(PUBLIC_HOST.into()),
++            public_cert: Some("/etc/letsencrypt/live/x/fullchain.pem".into()),
++            ..crate::config::Config::default()
++        };
++        assert!(PublicSite::from_config(&config).is_none());
++
++        let config = crate::config::Config {
++            public_key: Some("/etc/letsencrypt/live/x/privkey.pem".into()),
++            ..config
++        };
++        let site = PublicSite::from_config(&config).unwrap();
++        assert_eq!(site.host, PUBLIC_HOST);
++
++        assert!(PublicSite::from_config(&crate::config::Config::default()).is_none());
++    }
++
++    const RENEWED_CERT: &[u8] = include_bytes!("testdata/public-renewed.crt");
++    const RENEWED_KEY: &[u8] = include_bytes!("testdata/public-renewed.key");
++
++    /// Write `body` to `path` with an mtime `secs` seconds ahead, so the
++    /// change is seen whatever the filesystem's timestamp granularity.
++    fn write_later(path: &Path, body: &[u8], secs: u64) {
++        std::fs::write(path, body).unwrap();
++        std::fs::File::options()
++            .write(true)
++            .open(path)
++            .unwrap()
++            .set_modified(SystemTime::now() + std::time::Duration::from_secs(secs))
++            .unwrap();
++    }
++
++    #[tokio::test]
++    async fn the_last_good_public_pair_outlives_a_renewal_in_progress() {
++        let f = fixture().await;
++        let tls = GateTls::with_paths(&f.node_cert, &f.node_key).with_public_site(Some(site(&f)));
++        assert_eq!(
++            chain_of(&resolver(&tls).await.pick(Some(PUBLIC_HOST))),
++            Some(der(PUBLIC_CERT))
++        );
++
++        // New key beside the old certificate: the pair does not match.
++        write_later(&f.public_key, RENEWED_KEY, 5);
++        let r = resolver(&tls).await;
++        assert_eq!(chain_of(&r.pick(Some(PUBLIC_HOST))), Some(der(PUBLIC_CERT)));
++        // Still never offered for any other name.
++        assert_eq!(chain_of(&r.pick(Some("node.local"))), Some(der(CERT)));
++        assert_eq!(chain_of(&r.pick(None)), Some(der(CERT)));
++
++        // A file momentarily absent while a link is repointed.
++        std::fs::remove_file(&f.public_cert).unwrap();
++        let r = resolver(&tls).await;
++        assert_eq!(chain_of(&r.pick(Some(PUBLIC_HOST))), Some(der(PUBLIC_CERT)));
++
++        // The renewal completes: the new pair takes over.
++        write_later(&f.public_cert, RENEWED_CERT, 10);
++        let r = resolver(&tls).await;
++        assert_eq!(
++            chain_of(&r.pick(Some(PUBLIC_HOST))),
++            Some(der(RENEWED_CERT))
++        );
++        assert_eq!(chain_of(&r.pick(Some("node.local"))), Some(der(CERT)));
++    }
++
++    #[tokio::test]
++    async fn a_public_pair_that_keeps_failing_is_not_reread_on_every_connection() {
++        let f = fixture().await;
++        tokio::fs::write(&f.public_key, OTHER_KEY).await.unwrap();
++        let mut tls =
++            GateTls::with_paths(&f.node_cert, &f.node_key).with_public_site(Some(site(&f)));
++        tls.public_retry = std::time::Duration::from_secs(3600);
++        let loads = || tls.public_loads.load(std::sync::atomic::Ordering::Relaxed);
++
++        for _ in 0..5 {
++            assert!(tls.acceptor().await.is_some());
++        }
++        assert_eq!(
++            loads(),
++            1,
++            "a failing public pair was re-read per connection"
++        );
++
++        // A change to the files is still picked up at once.
++        write_later(&f.public_key, PUBLIC_KEY, 5);
++        assert!(tls.acceptor().await.is_some());
++        assert_eq!(loads(), 2);
++        assert!(tls.cached.read().await.as_ref().unwrap().retry_at.is_none());
++    }
++
++    #[tokio::test]
++    async fn a_failing_public_pair_is_retried_once_the_interval_passes() {
++        let f = fixture().await;
++        tokio::fs::write(&f.public_key, OTHER_KEY).await.unwrap();
++        let mut tls =
++            GateTls::with_paths(&f.node_cert, &f.node_key).with_public_site(Some(site(&f)));
++        tls.public_retry = std::time::Duration::ZERO;
++        assert!(tls.acceptor().await.is_some());
++        assert!(tls.acceptor().await.is_some());
++        assert_eq!(
++            tls.public_loads.load(std::sync::atomic::Ordering::Relaxed),
++            2
++        );
++    }
+ }
+diff --git a/core/archipelago/src/config.rs b/core/archipelago/src/config.rs
+index a270541..192f746 100644
+--- a/core/archipelago/src/config.rs
++++ b/core/archipelago/src/config.rs
+@@ -77,6 +77,26 @@ pub struct Config {
+     /// `nostr_relays` + `nostr_tor_proxy` for discovery transport.
+     #[serde(default)]
+     pub swarm_enabled: bool,
++    /// The node's public DNS hostname (e.g. `node.example.org`), when an
++    /// operator has pointed a domain at it. App ports present `public_cert`
++    /// to browsers that ask for this name (TLS SNI) and the node-CA leaf to
++    /// everyone else, and manifests can name it as `{{PUBLIC_HOST}}`. Unset
++    /// (the default) changes nothing. An invalid value is ignored with a
++    /// warning rather than half-applied.
++    #[serde(default)]
++    pub public_host: Option<String>,
++    /// PEM certificate chain covering `public_host`. Read on change, so a
++    /// renewal is picked up without a restart. It and `public_key` must be
++    /// readable by the daemon's user (`archipelago`), which certbot's
++    /// `/etc/letsencrypt/live/<host>/` is not: have a certbot deploy hook copy
++    /// `fullchain.pem` and `privkey.pem` to e.g.
++    /// `/etc/archipelago/ssl/public/{fullchain,privkey}.pem`
++    /// (`root:archipelago`, mode `0640`), each via a temporary file and `mv`.
++    #[serde(default)]
++    pub public_cert: Option<PathBuf>,
++    /// PEM private key for `public_cert`; see `public_cert` for where to put it.
++    #[serde(default)]
++    pub public_key: Option<PathBuf>,
+ }
+ 
+ impl Config {
+@@ -199,6 +219,14 @@ impl Config {
+             }
+         }
+ 
++        // Public hostname and its certificate pair. Empty means unset, as for
++        // ARCHIPELAGO_NOSTR_TOR_PROXY.
++        config.apply_public_site(
++            std::env::var("ARCHIPELAGO_PUBLIC_HOST").ok(),
++            std::env::var("ARCHIPELAGO_PUBLIC_CERT").ok(),
++            std::env::var("ARCHIPELAGO_PUBLIC_KEY").ok(),
++        );
++
+         // Host IP for container env vars (detect if not set)
+         if let Ok(ip) = std::env::var("ARCHIPELAGO_HOST_IP") {
+             config.host_ip = ip;
+@@ -222,6 +250,86 @@ impl Config {
+ 
+         Ok(config)
+     }
++
++    /// Overlay the public-site env overrides on whatever the config file set,
++    /// then validate the hostname. Takes the env values as arguments so tests
++    /// need not mutate the process environment.
++    fn apply_public_site(
++        &mut self,
++        host: Option<String>,
++        cert: Option<String>,
++        key: Option<String>,
++    ) {
++        if let Some(v) = host {
++            self.public_host = Some(v);
++        }
++        if let Some(v) = cert {
++            self.public_cert = Some(PathBuf::from(v));
++        }
++        if let Some(v) = key {
++            self.public_key = Some(PathBuf::from(v));
++        }
++        let blank = |p: &PathBuf| p.as_os_str().is_empty();
++        if self.public_cert.as_ref().is_some_and(blank) {
++            self.public_cert = None;
++        }
++        if self.public_key.as_ref().is_some_and(blank) {
++            self.public_key = None;
++        }
++
++        self.public_host = match self.public_host.take() {
++            Some(raw) if raw.trim().is_empty() => None,
++            Some(raw) => {
++                let host = normalise_public_host(&raw);
++                if host.is_none() {
++                    tracing::warn!(
++                        public_host = %raw,
++                        "ignoring public_host: expected a DNS hostname such as node.example.org \
++                         (no scheme, port, path or IP address)"
++                    );
++                }
++                host
++            }
++            None => None,
++        };
++    }
++}
++
++/// A public hostname as the gate and manifests use it: ASCII lowercase (DNS
++/// names are case-insensitive, so `Node.Example.org` is folded rather than
++/// refused) with one trailing dot dropped (`node.example.org.` is the same
++/// name, written fully qualified), letters, digits and hyphens in dot-separated labels of 1 to 63
++/// characters, no label starting or ending with a hyphen, at least two
++/// labels, at most 253 characters. A final label of only digits is refused so
++/// an IPv4 literal cannot pass; `:` and `/` are outside the alphabet, which
++/// rules out IPv6, a scheme, a port and a path. `None` when any of that fails.
++pub(crate) fn normalise_public_host(raw: &str) -> Option<String> {
++    let host = raw.trim().to_ascii_lowercase();
++    let host = host.strip_suffix('.').unwrap_or(&host).to_string();
++    if host.is_empty() || host.len() > 253 {
++        return None;
++    }
++    let labels: Vec<&str> = host.split('.').collect();
++    if labels.len() < 2 {
++        return None;
++    }
++    let label_ok = |l: &str| {
++        (1..=63).contains(&l.len())
++            && l.bytes()
++                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
++            && !l.starts_with('-')
++            && !l.ends_with('-')
++    };
++    if !labels.iter().all(|l| label_ok(l)) {
++        return None;
++    }
++    if labels
++        .last()
++        .is_some_and(|tld| tld.bytes().all(|b| b.is_ascii_digit()))
++    {
++        return None;
++    }
++    Some(host)
+ }
+ 
+ impl Default for Config {
+@@ -250,6 +358,9 @@ impl Default for Config {
+             nostr_tor_proxy: Some("127.0.0.1:9050".into()),
+             use_quadlet_backends: false,
+             swarm_enabled: false,
++            public_host: None,
++            public_cert: None,
++            public_key: None,
+         }
+     }
+ }
+@@ -489,4 +600,153 @@ mod tests {
+         let config = Config::default();
+         assert!(!config.use_quadlet_backends);
+     }
++
++    #[test]
++    fn public_site_is_unset_by_default_and_in_an_existing_config_file() {
++        let config = Config::default();
++        assert_eq!(config.public_host, None);
++        assert_eq!(config.public_cert, None);
++        assert_eq!(config.public_key, None);
++
++        // A config.toml written before these keys existed still parses.
++        let toml_str = r#"
++            data_dir = "/tmp/test-data"
++            bind_host = "127.0.0.1"
++            bind_port = 9999
++            log_level = "debug"
++            host_ip = "192.0.2.100"
++            dev_mode = false
++            container_runtime = "Podman"
++            port_offset = 20000
++            bitcoin_simulation = "Testnet"
++            dev_data_dir = "/tmp/dev-test"
++        "#;
++        let mut config: Config = toml::de::from_str(toml_str).unwrap();
++        config.apply_public_site(None, None, None);
++        assert_eq!(config.public_host, None);
++        assert_eq!(config.public_cert, None);
++        assert_eq!(config.public_key, None);
++    }
++
++    #[test]
++    fn public_site_is_read_from_the_config_file() {
++        let toml_str = r#"
++            data_dir = "/tmp/test-data"
++            bind_host = "127.0.0.1"
++            bind_port = 9999
++            log_level = "debug"
++            host_ip = "192.0.2.100"
++            dev_mode = false
++            container_runtime = "Podman"
++            port_offset = 20000
++            bitcoin_simulation = "Testnet"
++            dev_data_dir = "/tmp/dev-test"
++            public_host = "node.example.org"
++            public_cert = "/etc/letsencrypt/live/node.example.org/fullchain.pem"
++            public_key = "/etc/letsencrypt/live/node.example.org/privkey.pem"
++        "#;
++        let mut config: Config = toml::de::from_str(toml_str).unwrap();
++        config.apply_public_site(None, None, None);
++        assert_eq!(config.public_host.as_deref(), Some("node.example.org"));
++        assert_eq!(
++            config.public_cert,
++            Some(PathBuf::from(
++                "/etc/letsencrypt/live/node.example.org/fullchain.pem"
++            ))
++        );
++        assert_eq!(
++            config.public_key,
++            Some(PathBuf::from(
++                "/etc/letsencrypt/live/node.example.org/privkey.pem"
++            ))
++        );
++    }
++
++    #[test]
++    fn public_site_env_overrides_the_config_file() {
++        let mut config = Config {
++            public_host: Some("file.example.org".into()),
++            public_cert: Some(PathBuf::from("/file/fullchain.pem")),
++            public_key: Some(PathBuf::from("/file/privkey.pem")),
++            ..Config::default()
++        };
++        config.apply_public_site(
++            Some("env.example.org".into()),
++            Some("/env/fullchain.pem".into()),
++            Some("/env/privkey.pem".into()),
++        );
++        assert_eq!(config.public_host.as_deref(), Some("env.example.org"));
++        assert_eq!(
++            config.public_cert,
++            Some(PathBuf::from("/env/fullchain.pem"))
++        );
++        assert_eq!(config.public_key, Some(PathBuf::from("/env/privkey.pem")));
++
++        // An empty env value unsets, as for ARCHIPELAGO_NOSTR_TOR_PROXY.
++        config.apply_public_site(
++            Some(String::new()),
++            Some(String::new()),
++            Some(String::new()),
++        );
++        assert_eq!(config.public_host, None);
++        assert_eq!(config.public_cert, None);
++        assert_eq!(config.public_key, None);
++    }
++
++    #[test]
++    fn an_invalid_public_host_is_treated_as_unset() {
++        let mut config = Config {
++            public_host: Some("https://node.example.org:443/".into()),
++            ..Config::default()
++        };
++        config.apply_public_site(None, None, None);
++        assert_eq!(config.public_host, None);
++    }
++
++    #[test]
++    fn public_host_accepts_dns_hostnames() {
++        for (raw, want) in [
++            ("node.example.org", "node.example.org"),
++            ("demo.forgesworn.dev", "demo.forgesworn.dev"),
++            ("a-1.b2.example", "a-1.b2.example"),
++            ("xn--bcher-kva.example", "xn--bcher-kva.example"),
++            ("Node.Example.ORG", "node.example.org"),
++            ("  node.example.org\n", "node.example.org"),
++            ("node.example.org.", "node.example.org"),
++        ] {
++            assert_eq!(normalise_public_host(raw).as_deref(), Some(want), "{raw:?}");
++        }
++    }
++
++    #[test]
++    fn public_host_refuses_anything_but_a_dns_hostname() {
++        let long_label = format!("{}.example.org", "a".repeat(64));
++        let too_long = format!("{}.org", ["abcdefghij"; 25].join("."));
++        for raw in [
++            "",
++            "localhost",
++            "node",
++            "192.0.2.10",
++            "10.0.0.1",
++            "[2001:db8::1]",
++            "2001:db8::1",
++            "https://node.example.org",
++            "node.example.org:8443",
++            "node.example.org/path",
++            "node.example.org..",
++            ".",
++            ".node.example.org",
++            "node..example.org",
++            "-node.example.org",
++            "node-.example.org",
++            "node_1.example.org",
++            "*.example.org",
++            "node example.org",
++            "nödé.example.org",
++            long_label.as_str(),
++            too_long.as_str(),
++        ] {
++            assert_eq!(normalise_public_host(raw), None, "{raw:?} was accepted");
++        }
++    }
+ }
+diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
+index 59ed412..2bbbb50 100644
+--- a/core/archipelago/src/container/prod_orchestrator.rs
++++ b/core/archipelago/src/container/prod_orchestrator.rs
+@@ -1460,6 +1460,9 @@ pub struct ProdContainerOrchestrator {
+     /// exactly as leaving published-port drift untouched perpetuates a broken
+     /// container. Consumed (and cleared) by the drift check that recreates it.
+     credential_rotated: Mutex<HashSet<String>>,
++    /// The operator's public hostname (`Config::public_host`), rendered for
++    /// `{{PUBLIC_HOST}}`. `None` renders the host IP instead.
++    public_host: Option<String>,
+     #[cfg(test)]
+     test_disk_gb: Option<u64>,
+     #[cfg(test)]
+@@ -1524,6 +1527,7 @@ impl ProdContainerOrchestrator {
+             use_quadlet_backends: config.use_quadlet_backends,
+             env_secret_cache: Mutex::new(HashMap::new()),
+             credential_rotated: Mutex::new(HashSet::new()),
++            public_host: config.public_host.clone(),
+             #[cfg(test)]
+             test_disk_gb: None,
+             #[cfg(test)]
+@@ -1547,6 +1551,7 @@ impl ProdContainerOrchestrator {
+             use_quadlet_backends: false,
+             env_secret_cache: Mutex::new(HashMap::new()),
+             credential_rotated: Mutex::new(HashSet::new()),
++            public_host: None,
+             test_disk_gb: None,
+             test_bitcoin_host: None,
+         }
+@@ -3527,6 +3532,10 @@ impl ProdContainerOrchestrator {
+             return HostFacts {
+                 host_ip: "127.0.0.1".to_string(),
+                 host_mdns: "test.local".to_string(),
++                public_host: self
++                    .public_host
++                    .clone()
++                    .unwrap_or_else(|| "127.0.0.1".to_string()),
+                 disk_gb: self.test_disk_gb.unwrap_or(1000),
+                 bitcoin_host: "bitcoin-knots".to_string(),
+                 node_identity_pubkeys: String::new(),
+@@ -3540,6 +3549,7 @@ impl ProdContainerOrchestrator {
+             let host_mdns = Self::detect_host_mdns().await;
+             let disk_gb = self.disk_gb().await;
+             HostFacts {
++                public_host: self.public_host.clone().unwrap_or_else(|| host_ip.clone()),
+                 host_ip,
+                 host_mdns,
+                 disk_gb,
+@@ -3643,6 +3653,11 @@ impl ProdContainerOrchestrator {
+         self.test_bitcoin_host = Some(host.to_string());
+     }
+ 
++    #[cfg(test)]
++    pub fn set_public_host_for_test(&mut self, host: Option<&str>) {
++        self.public_host = host.map(str::to_string);
++    }
++
+     async fn detect_host_ip() -> Option<String> {
+         crate::host_ip::primary_host_ipv4().await
+     }
+@@ -4382,6 +4397,8 @@ impl ProdContainerOrchestrator {
+     /// carry. Keeps runtime-derived config (netbird's `config.yaml`/`nginx.conf`)
+     /// declarative instead of generated by per-app Rust:
+     /// - `{{HOST_IP}}` / `{{HOST_MDNS}}` — host facts (`hostname -I` / `.local`).
++    /// - `{{PUBLIC_HOST}}` — the operator's public hostname, or the host IP
++    ///   when none is configured.
+     /// - `{{NETWORK_GATEWAY}}` — the gateway of the app's podman network, i.e.
+     ///   aardvark's DNS address. nginx uses it as an explicit `resolver` so it
+     ///   re-resolves container names per request instead of pinning a stale IP
+@@ -4396,11 +4413,15 @@ impl ProdContainerOrchestrator {
+         content: &str,
+     ) -> Result<String> {
+         let mut out = content.to_string();
+-        if out.contains("{{HOST_IP}}") || out.contains("{{HOST_MDNS}}") {
++        if out.contains("{{HOST_IP}}")
++            || out.contains("{{HOST_MDNS}}")
++            || out.contains("{{PUBLIC_HOST}}")
++        {
+             let facts = self.detect_host_facts().await;
+             out = out
+                 .replace("{{HOST_IP}}", &facts.host_ip)
+-                .replace("{{HOST_MDNS}}", &facts.host_mdns);
++                .replace("{{HOST_MDNS}}", &facts.host_mdns)
++                .replace("{{PUBLIC_HOST}}", &facts.public_host);
+         }
+         if out.contains("{{NETWORK_GATEWAY}}") {
+             self.ensure_container_network(manifest).await?;
+@@ -4490,6 +4511,7 @@ impl ProdContainerOrchestrator {
+         let render = |s: &str| {
+             s.replace("{{HOST_IP}}", &facts.host_ip)
+                 .replace("{{HOST_MDNS}}", &facts.host_mdns)
++                .replace("{{PUBLIC_HOST}}", &facts.public_host)
+         };
+         for cert in &manifest.app.container.generated_certs {
+             if tokio::fs::metadata(&cert.crt).await.is_ok()
+@@ -6186,6 +6208,40 @@ app:
+         }
+     }
+ 
++    #[tokio::test]
++    async fn public_host_placeholder_names_the_public_host_or_falls_back_to_the_host_ip() {
++        let yaml = "app:\n  id: wildbloom-node\n  name: wildbloom-node\n  version: 1.0.0\n  container:\n    image: x:1\n    derived_env:\n      - key: WILDBLOOM_PUBLIC_URL\n        template: \"https://{{PUBLIC_HOST}}:3742\"\n";
++
++        // The cfg(test) host facts give a host IP of 127.0.0.1.
++        for (configured, expected) in [
++            (Some("node.example.org"), "https://node.example.org:3742"),
++            (None, "https://127.0.0.1:3742"),
++        ] {
++            let rt = Arc::new(MockRuntime::default());
++            let mut orch = orch_with(rt).await;
++            orch.set_public_host_for_test(configured);
++
++            let mut manifest = AppManifest::parse(yaml).unwrap();
++            orch.resolve_dynamic_env(&mut manifest).await.unwrap();
++            assert!(
++                manifest
++                    .app
++                    .environment
++                    .iter()
++                    .any(|e| e == &format!("WILDBLOOM_PUBLIC_URL={expected}")),
++                "configured={configured:?}: got {:?}",
++                manifest.app.environment
++            );
++
++            // Manifest files render it the same way.
++            let rendered = orch
++                .render_file_placeholders(&manifest, "url = https://{{PUBLIC_HOST}}:3742\n")
++                .await
++                .unwrap();
++            assert_eq!(rendered, format!("url = {expected}\n"));
++        }
++    }
++
+     const NODE_IDENTITY_PUBKEYS_YAML: &str = "app:\n  id: wildbloom-node\n  name: wildbloom-node\n  version: 1.0.0\n  container:\n    image: x:1\n    derived_env:\n      - key: WILDBLOOM_ALLOW_PUBKEYS\n        template: \"{{NODE_IDENTITY_PUBKEYS}}\"\n";
+ 
+     /// Writes `pubkey_hex` as the node public key, in `NodeIdentity`'s format.
+diff --git a/core/container/src/manifest.rs b/core/container/src/manifest.rs
+index a51bf07..659fdd9 100644
+--- a/core/container/src/manifest.rs
++++ b/core/container/src/manifest.rs
+@@ -195,7 +195,8 @@ pub struct ContainerConfig {
+     pub entrypoint: Option<Vec<String>>,
+ 
+     /// Environment keys whose values are rendered from a small
+-    /// allow-list of host facts (`HOST_IP`, `HOST_MDNS`, `DISK_GB`).
++    /// allow-list of host facts (`HOST_IP`, `HOST_MDNS`, `PUBLIC_HOST`,
++    /// `DISK_GB`, …).
+     /// Resolved by `ContainerConfig::resolve_derived_env` at apply time
+     /// — never hard-coded into the manifest.
+     ///
+@@ -1420,6 +1421,11 @@ pub struct HostFacts {
+     /// mDNS hostname (`<hostname>.local`). Survives DHCP churn and
+     /// reinstall-on-different-IP. Requires avahi-daemon on the node.
+     pub host_mdns: String,
++    /// The node's public DNS hostname when the operator configured one
++    /// (`public_host`), otherwise the same value as `host_ip`, so a manifest
++    /// can use it unconditionally: a node without a domain keeps advertising
++    /// its address exactly as `{{HOST_IP}}` would.
++    pub public_host: String,
+     /// Usable disk size in gigabytes at `/var/lib/archipelago` (or
+     /// `/` if the data partition is not yet mounted). Drives the
+     /// prune-vs-full-node decision in bitcoin-knots custom_args.
+@@ -1445,6 +1451,7 @@ impl HostFacts {
+         Self {
+             host_ip: "192.0.2.12".to_string(),
+             host_mdns: "test-node.local".to_string(),
++            public_host: "node.example.org".to_string(),
+             disk_gb: 2000,
+             bitcoin_host: "bitcoin-knots".to_string(),
+             node_identity_pubkeys: "1111111111111111111111111111111111111111111111111111111111111111,2222222222222222222222222222222222222222222222222222222222222222".to_string(),
+@@ -1457,6 +1464,7 @@ impl HostFacts {
+ const DERIVED_PLACEHOLDERS: &[&str] = &[
+     "HOST_IP",
+     "HOST_MDNS",
++    "PUBLIC_HOST",
+     "DISK_GB",
+     "BITCOIN_HOST",
+     "NODE_IDENTITY_PUBKEYS",
+@@ -1543,6 +1551,7 @@ impl ContainerConfig {
+                     .template
+                     .replace("{{HOST_IP}}", &facts.host_ip)
+                     .replace("{{HOST_MDNS}}", &facts.host_mdns)
++                    .replace("{{PUBLIC_HOST}}", &facts.public_host)
+                     .replace("{{DISK_GB}}", &facts.disk_gb.to_string())
+                     .replace("{{BITCOIN_HOST}}", &facts.bitcoin_host)
+                     .replace("{{NODE_IDENTITY_PUBKEYS}}", &facts.node_identity_pubkeys);
+@@ -2412,6 +2421,32 @@ app:
+         );
+     }
+ 
++    #[test]
++    fn resolve_derived_env_renders_public_host() {
++        let yaml = r#"
++app:
++  id: wildbloom-node
++  name: Wildbloom Node
++  version: 0.2.2
++  container:
++    image: ghcr.io/forgesworn/wildbloom-node:0.2.2
++    derived_env:
++      - key: WILDBLOOM_PUBLIC_URL
++        template: "https://{{PUBLIC_HOST}}:3742"
++      - key: WILDBLOOM_SERVER_NAME
++        template: "{{PUBLIC_HOST}},{{HOST_IP}},{{HOST_MDNS}}"
++"#;
++        let manifest = AppManifest::parse(yaml).unwrap();
++        let facts = HostFacts::sample();
++        assert_eq!(
++            manifest.app.container.resolve_derived_env(&facts),
++            vec![
++                "WILDBLOOM_PUBLIC_URL=https://node.example.org:3742".to_string(),
++                "WILDBLOOM_SERVER_NAME=node.example.org,192.0.2.12,test-node.local".to_string(),
++            ]
++        );
++    }
++
+     #[test]
+     fn node_identity_pubkeys_placeholder_is_accepted() {
+         let yaml = r#"
+@@ -2494,6 +2529,10 @@ app:
+                     key: "CORE_RPC_HOST".to_string(),
+                     template: "{{BITCOIN_HOST}}".to_string(),
+                 },
++                DerivedEnv {
++                    key: "PUBLIC_URL".to_string(),
++                    template: "https://{{PUBLIC_HOST}}:3742".to_string(),
++                },
+             ],
+             secret_env: vec![],
+             generated_secrets: vec![],
+@@ -2505,6 +2544,7 @@ app:
+         let facts = HostFacts {
+             host_ip: "192.0.2.12".to_string(),
+             host_mdns: "test-node.local".to_string(),
++            public_host: "node.example.org".to_string(),
+             disk_gb: 2000,
+             bitcoin_host: "bitcoin-core".to_string(),
+             node_identity_pubkeys: String::new(),
+@@ -2514,6 +2554,7 @@ app:
+         assert_eq!(out[0], "FM_API_URL=ws://test-node.local:8174");
+         assert_eq!(out[1], "INFO=192.0.2.12-2000");
+         assert_eq!(out[2], "CORE_RPC_HOST=bitcoin-core");
++        assert_eq!(out[3], "PUBLIC_URL=https://node.example.org:3742");
+     }
+ 
+     struct MapSecretsProvider {
+diff --git a/docs/app-developer-guide.md b/docs/app-developer-guide.md
+index 12c0936..eea0f0f 100644
+--- a/docs/app-developer-guide.md
++++ b/docs/app-developer-guide.md
+@@ -108,7 +108,7 @@ app:
+ | `app.container.pull_policy` | Pull behavior, usually `if-not-present` |
+ | `app.container.network` | Podman network setting such as `archy-net` or `pasta`; dangerous namespace-sharing modes are rejected |
+ | `app.container.entrypoint` / `custom_args` | Entrypoint and command override |
+-| `app.container.derived_env` | Environment values rendered from host facts. The complete placeholder set is `{{HOST_IP}}`, `{{HOST_MDNS}}`, `{{DISK_GB}}`, `{{BITCOIN_HOST}}`, `{{NODE_IDENTITY_PUBKEYS}}`; an unknown name or an unbalanced `{{` is a parse error, so typos fail loudly. `{{NODE_IDENTITY_PUBKEYS}}` is the Nostr public keys of the identities the app signer (the NIP-07 bridge's identity picker) offers, the node's own appliance identity excluded, as sorted, comma-joined 64-char hex. It is resolved when the app is installed or started, so changes to your identities, including removals, take effect on the app's next restart: until then a removed identity keeps its access; with no such identity the app refuses to start rather than render an empty value |
++| `app.container.derived_env` | Environment values rendered from host facts. The complete placeholder set is `{{HOST_IP}}`, `{{HOST_MDNS}}`, `{{PUBLIC_HOST}}`, `{{DISK_GB}}`, `{{BITCOIN_HOST}}`, `{{NODE_IDENTITY_PUBKEYS}}`; an unknown name or an unbalanced `{{` is a parse error, so typos fail loudly. `{{PUBLIC_HOST}}` is the node's public hostname when the operator has set one, otherwise the `{{HOST_IP}}` value. `{{NODE_IDENTITY_PUBKEYS}}` is the Nostr public keys of the identities the app signer (the NIP-07 bridge's identity picker) offers, the node's own appliance identity excluded, as sorted, comma-joined 64-char hex. It is resolved when the app is installed or started, so changes to your identities, including removals, take effect on the app's next restart: until then a removed identity keeps its access; with no such identity the app refuses to start rather than render an empty value |
+ | `app.container.secret_env` | Environment values read from `/var/lib/archipelago/secrets/<secret_file>`, injected as podman secrets (never visible in `podman inspect` or unit files) |
+ | `app.container.generated_secrets` | Secrets the orchestrator creates on first use (`hex16`/`hex32`/`base64`/`bcrypt`) — self-healing, 0600, no host provisioning |
+ | `app.container.generated_certs` | Self-signed TLS certs materialised before create; CN/SANs rendered from host facts |
+@@ -526,6 +526,7 @@ Use `overwrite: false` for first-run defaults that users or the app may later mo
+ | Placeholder | Renders to |
+ |---|---|
+ | `{{HOST_IP}}` / `{{HOST_MDNS}}` | Host facts (`hostname -I` / the node's `.local` name) |
++| `{{PUBLIC_HOST}}` | The node's public hostname (`public_host`), or the `{{HOST_IP}}` value when none is set |
+ | `{{NETWORK_GATEWAY}}` | The gateway of the app's Podman network, i.e. aardvark's DNS address. Use it as an nginx `resolver` so container names re-resolve per request instead of pinning a stale IP and 502-ing after a restart |
+ | `{{secret:NAME}}` | The trimmed contents of the `0600` secret `NAME` from the service-owned secrets dir. `NAME` must be a bare filename. Never logged |
+ 
+diff --git a/docs/app-manifest-spec.md b/docs/app-manifest-spec.md
+index 2c45edc..c6b5c70 100644
+--- a/docs/app-manifest-spec.md
++++ b/docs/app-manifest-spec.md
+@@ -93,7 +93,7 @@ Exactly **one** of `image` or `build` must be present (image XOR build).
+ | `network_aliases` | list of string | Extra DNS names on `network` (podman `--network-alias`) — lets stack members answer to short baked-in hostnames (`api`, `minio`, `relay`). |
+ | `entrypoint` | list of string | Entrypoint override. |
+ | `custom_args` | list of string | Extra positional args appended after the image. |
+-| `derived_env` | list | `- { key, template }` — template rendered against host facts at apply time. The allow-list is exactly `{{HOST_IP}}`, `{{HOST_MDNS}}`, `{{DISK_GB}}`, `{{BITCOIN_HOST}}`, `{{NODE_IDENTITY_PUBKEYS}}` (`DERIVED_PLACEHOLDERS`); an unknown name or unbalanced `{{` fails validation. `{{BITCOIN_HOST}}` resolves to whichever Bitcoin app is running (`bitcoin-knots` or `bitcoin-core`, defaulting to knots). `{{NODE_IDENTITY_PUBKEYS}}` resolves to the Nostr public keys of the identities the app signer (the NIP-07 bridge's identity picker) offers, the node's own appliance identity excluded, as sorted, comma-joined 64-char hex. It is resolved at install and on every start, so changes to your identities, including removals, take effect on the app's next restart: until then a removed identity keeps its access; with no such identity the app refuses to start rather than render an empty value. Never hard-code host specifics. |
++| `derived_env` | list | `- { key, template }` — template rendered against host facts at apply time. The allow-list is exactly `{{HOST_IP}}`, `{{HOST_MDNS}}`, `{{PUBLIC_HOST}}`, `{{DISK_GB}}`, `{{BITCOIN_HOST}}`, `{{NODE_IDENTITY_PUBKEYS}}` (`DERIVED_PLACEHOLDERS`); an unknown name or unbalanced `{{` fails validation. `{{PUBLIC_HOST}}` resolves to the node's public hostname (`public_host` in `/etc/archipelago/config.toml`), or to the `{{HOST_IP}}` value when none is set, so it can be used unconditionally. `{{BITCOIN_HOST}}` resolves to whichever Bitcoin app is running (`bitcoin-knots` or `bitcoin-core`, defaulting to knots). `{{NODE_IDENTITY_PUBKEYS}}` resolves to the Nostr public keys of the identities the app signer (the NIP-07 bridge's identity picker) offers, the node's own appliance identity excluded, as sorted, comma-joined 64-char hex. It is resolved at install and on every start, so changes to your identities, including removals, take effect on the app's next restart: until then a removed identity keeps its access; with no such identity the app refuses to start rather than render an empty value. Never hard-code host specifics. |
+ | `secret_env` | list | `- { key, secret_file }` — value read from `/var/lib/archipelago/secrets/<secret_file>` and injected as a **podman secret**, so it never appears in `podman inspect` or unit files. `secret_file` must be a bare filename (no `/`, no `..`). |
+ | `generated_secrets` | list | `- { name, kind }` — orchestrator materialises the secret on first use (0600, rootless service user, idempotent + self-healing). `kind ∈ hex16 | hex32 | base64 | bcrypt` (bcrypt writes `<name>` = hash and `<name>.pw` = plaintext). |
+ | `generated_certs` | list | `- { crt, key, common_name?, sans? }` — self-signed TLS materialised before create; CN/SANs rendered against host facts. |
+-- 
+2.53.0
+

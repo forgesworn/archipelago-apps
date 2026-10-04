@@ -16,9 +16,9 @@ app:
       - key: WILDBLOOM_ALLOW_PUBKEYS
         template: "{{NODE_IDENTITY_PUBKEYS}}"
       - key: WILDBLOOM_PUBLIC_URL
-        template: "https://{{HOST_IP}}:3742"
+        template: "https://{{PUBLIC_HOST}}:3742"
       - key: WILDBLOOM_SERVER_NAME
-        template: "{{HOST_IP}},{{HOST_MDNS}}"
+        template: "{{HOST_IP}},{{HOST_MDNS}},{{PUBLIC_HOST}}"
 
   dependencies:
     - storage: 10Gi
