@@ -1,8 +1,8 @@
-From 30a6c384f4b020280c01ba5a4ba292bbdfab413f Mon Sep 17 00:00:00 2001
+From 7293ce0c1bb5bf7d624fe70f63a806d5038b836b Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 13:22:44 +0200
-Subject: [PATCH 9/9] fix: frame a sideloaded gated app over https on an https
- dashboard
+Subject: [PATCH 09/14] fix: frame a sideloaded gated app over https on an
+ https dashboard
 
 portAuth read the port's auth from the signed catalogue only, so an app
 the catalogue does not list was never treated as gate-fronted and kept
@@ -207,7 +207,7 @@ index 675996c..c351ce0 100644
      if (routeQueryPath) base += routeQueryPath
      return base
 diff --git a/neode-ui/src/views/apps/appsConfig.ts b/neode-ui/src/views/apps/appsConfig.ts
-index bcafeaa..0422941 100644
+index 0957c39..01cc43a 100644
 --- a/neode-ui/src/views/apps/appsConfig.ts
 +++ b/neode-ui/src/views/apps/appsConfig.ts
 @@ -5,7 +5,7 @@ import { computed } from 'vue'
@@ -219,7 +219,7 @@ index bcafeaa..0422941 100644
  import { isAutoTabApp } from '@/utils/autoTabApps'
  import {
    SERVICE_NAMES as SHARED_SERVICE_NAMES,
-@@ -332,7 +332,7 @@ export function resolveRuntimeLaunchUrl(pkg: PackageDataEntry): string {
+@@ -337,7 +337,7 @@ export function resolveRuntimeLaunchUrl(pkg: PackageDataEntry): string {
    // a container-published plain-HTTP port would fail over https outright.
    try {
      const port = new URL(local).port
@@ -276,7 +276,7 @@ index be2abea..196c978 100644
 +  })
 +})
 diff --git a/neode-ui/src/views/discover/curatedApps.ts b/neode-ui/src/views/discover/curatedApps.ts
-index 88ba088..b35f3a6 100644
+index 005c21e..4bbbd25 100644
 --- a/neode-ui/src/views/discover/curatedApps.ts
 +++ b/neode-ui/src/views/discover/curatedApps.ts
 @@ -134,13 +134,22 @@ const CATALOG_APP_ID_ALIASES: Record<string, string> = {

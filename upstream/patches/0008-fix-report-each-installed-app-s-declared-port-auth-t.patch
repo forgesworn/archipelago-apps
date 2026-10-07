@@ -1,7 +1,7 @@
-From 738c5245d1e9831df809e714f20c25174cf3322b Mon Sep 17 00:00:00 2001
+From 16f5a9b48878a2f9d32bc1ad9dd4e5579f438d4f Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 13:20:10 +0200
-Subject: [PATCH 8/9] fix: report each installed app's declared port auth to
+Subject: [PATCH 08/14] fix: report each installed app's declared port auth to
  the dashboard
 
 The dashboard picks https or http for an app frame from the signed
@@ -92,10 +92,10 @@ index 269ef7a..36a0d6e 100644
          AppManifest::parse(yaml).expect("test manifest must parse")
      }
 diff --git a/core/archipelago/src/container/docker_packages.rs b/core/archipelago/src/container/docker_packages.rs
-index 0d318c0..af3212b 100644
+index 8d9a982..13c8642 100644
 --- a/core/archipelago/src/container/docker_packages.rs
 +++ b/core/archipelago/src/container/docker_packages.rs
-@@ -283,6 +283,7 @@ impl DockerPackageScanner {
+@@ -286,6 +286,7 @@ impl DockerPackageScanner {
                              InterfaceAddress {
                                  tor_address: tor,
                                  lan_address,
@@ -103,7 +103,7 @@ index 0d318c0..af3212b 100644
                              },
                          );
                          addresses
-@@ -332,6 +333,23 @@ impl DockerPackageScanner {
+@@ -335,6 +336,23 @@ impl DockerPackageScanner {
          }
          // HTTP on loopback can precede the LAN/Tor listener after install.
          let port_map = crate::appgate::identity::build_port_map();
@@ -149,10 +149,10 @@ index 77540dd..418ecb9 100644
  
  #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 diff --git a/core/archipelago/src/server.rs b/core/archipelago/src/server.rs
-index 66d27b5..507a075 100644
+index 15632e4..1c79f50 100644
 --- a/core/archipelago/src/server.rs
 +++ b/core/archipelago/src/server.rs
-@@ -2175,6 +2175,7 @@ fn ensure_main_lan_address(pkg: &mut crate::data_model::PackageDataEntry, port:
+@@ -2217,6 +2217,7 @@ fn ensure_main_lan_address(pkg: &mut crate::data_model::PackageDataEntry, port:
          .or_insert_with(|| crate::data_model::InterfaceAddress {
              tor_address: String::new(),
              lan_address: None,

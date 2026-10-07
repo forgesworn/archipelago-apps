@@ -1,7 +1,7 @@
-From f6c32167bcfc6f7b5a33cf7c799bcef3170097b1 Mon Sep 17 00:00:00 2001
+From 7ddab471b97d660b236f695f9d68950040f87858 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 13:43:19 +0200
-Subject: [PATCH 11/11] feat: manage several login signers in Settings
+Subject: [PATCH 11/14] feat: manage several login signers in Settings
 
 Settings lists every enrolled login signer, each with its own Remove,
 and keeps the add control until five are enrolled, then says why it is
@@ -19,10 +19,10 @@ approving signer in its status.
  6 files changed, 167 insertions(+), 33 deletions(-)
 
 diff --git a/neode-ui/mock-backend.js b/neode-ui/mock-backend.js
-index 6f57fc3..dae2f54 100755
+index 040da3a..ab558ab 100755
 --- a/neode-ui/mock-backend.js
 +++ b/neode-ui/mock-backend.js
-@@ -1989,7 +1989,7 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -1991,7 +1991,7 @@ app.post('/rpc/v1', async (req, res) => {
  
          if (process.env.MOCK_SIGNER_2FA === '1') {
            res.cookie('pending', `pending-${Date.now()}`, { httpOnly: true, maxAge: 5 * 60 * 1000 })
@@ -31,7 +31,7 @@ index 6f57fc3..dae2f54 100755
          }
  
          const sessionId = `session-${Date.now()}`
-@@ -2225,7 +2225,7 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2227,7 +2227,7 @@ app.post('/rpc/v1', async (req, res) => {
        }
  
        // Linked-signer login (dev stand-in). Approval takes ~4 s. Toggles:
@@ -40,7 +40,7 @@ index 6f57fc3..dae2f54 100755
        //   MOCK_SIGNER_2FA=1        the account has TOTP (code 123456); the signer
        //                            is offered at the code step instead
        //   MOCK_SIGNER_OUTCOME=     denied | offline | expired | refused | failed
-@@ -2235,12 +2235,12 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2237,12 +2237,12 @@ app.post('/rpc/v1', async (req, res) => {
        //   MOCK_SIGNER_STATUS=      paused | foreign | pending | denied
        // Texts are the node's own fixed constants.
        case 'auth.login.signer.available': {
@@ -55,7 +55,7 @@ index 6f57fc3..dae2f54 100755
            return refuse(MOCK_SIGNER_TEXT.notEnabled)
          }
          if (process.env.MOCK_SIGNER_OUTCOME === 'busy') return refuse(MOCK_SIGNER_TEXT.busy)
-@@ -2269,8 +2269,11 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2271,8 +2271,11 @@ app.post('/rpc/v1', async (req, res) => {
          if (!mockSigner.linked.some(i => i.id === identity_id)) {
            return res.json({ error: { code: -32603, message: 'Invalid identity: only an identity linked to a signer can log in' } })
          }
@@ -69,7 +69,7 @@ index 6f57fc3..dae2f54 100755
          }
          if (process.env.MOCK_SIGNER_OUTCOME === 'busy') {
            return res.json({ error: { code: -32603, message: MOCK_SIGNER_TEXT.enrolBusy } })
-@@ -2282,34 +2285,36 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2284,34 +2287,36 @@ app.post('/rpc/v1', async (req, res) => {
          const out = await mockSigner.poll(params?.attempt_id, 'enrol')
          if (out.error) return res.json({ error: { code: -32603, message: out.error } })
          if (out.status === 'approved') {
@@ -115,7 +115,7 @@ index 6f57fc3..dae2f54 100755
          return res.json({ result: { paused_until: mode === 'paused' ? now + 600 : null, recent } })
        }
  
-@@ -2317,8 +2322,8 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2319,8 +2324,8 @@ app.post('/rpc/v1', async (req, res) => {
          if (params?.password !== userState.passwordHash && params?.password !== MOCK_PASSWORD) {
            return res.json({ error: { code: -32603, message: 'Password Incorrect' } })
          }
@@ -126,7 +126,7 @@ index 6f57fc3..dae2f54 100755
          return res.json({ result: { removed: had } })
        }
  
-@@ -6248,10 +6253,13 @@ const MOCK_SIGNER_TEXT = {
+@@ -6303,10 +6308,13 @@ const MOCK_SIGNER_TEXT = {
    refused: 'linked signer login was refused: the signed reply did not check out',
    failed: 'linked signer login failed',
    enrolBusy: 'linked signer is already waiting to approve an enrolment; approve or deny it on the signer first',
@@ -141,7 +141,7 @@ index 6f57fc3..dae2f54 100755
    attempts: new Map(),
    linkedIdentities() {
      return this.linked.map(i => ({
-@@ -6270,6 +6278,12 @@ const mockSigner = {
+@@ -6325,6 +6333,12 @@ const mockSigner = {
      this.linked.push(rec)
      return { ...rec, origin: 'linked' }
    },
@@ -154,7 +154,7 @@ index 6f57fc3..dae2f54 100755
    begin(purpose, identityId) {
      const attempt_id = Math.random().toString(16).slice(2).padEnd(32, '0').slice(0, 32)
      const code = String(Math.floor(Math.random() * 10000)).padStart(4, '0')
-@@ -6287,9 +6301,10 @@ const mockSigner = {
+@@ -6342,9 +6356,10 @@ const mockSigner = {
      return { status: 'approved', identityId: a.identityId }
    },
  }

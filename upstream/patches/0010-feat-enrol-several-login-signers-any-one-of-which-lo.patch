@@ -1,7 +1,7 @@
-From 88f757a942d6287a4822f2af9fb3a4fba5c4ae78 Mon Sep 17 00:00:00 2001
+From 216c29b816c875a4a8dd8307a4f2e6ec6242da3e Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 13:40:51 +0200
-Subject: [PATCH 10/11] feat: enrol several login signers, any one of which
+Subject: [PATCH 10/14] feat: enrol several login signers, any one of which
  logs in
 
 Up to five linked signers can now be enrolled for dashboard login, say a

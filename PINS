@@ -1,10 +1,10 @@
 # Pinned inputs. Sourced by scripts and CI. Change deliberately, one pin per commit.
 ARCHY_REPO=https://source.archipelago-foundation.org/lfg2025/archy.git
-ARCHY_RELEASE=v1.8.22-alpha
-ARCHY_REF=6d5f3ffb850bfd3dcd396bac986ba770935d1daa
+ARCHY_RELEASE=v1.9.0-alpha
+ARCHY_REF=7abd04a7f680e72105ae783cecbe2268e3c8e71b
 # SHA-256 of the ARCHY_RELEASE frontend asset node/install-lite.sh installs:
 # releases/download/${ARCHY_RELEASE}/archipelago-frontend-${ARCHY_RELEASE#v}.tar.gz
-FRONTEND_SHA256=2da485a2da75ff2fbe4aba52d6f217150e303be43a031723480c9c4ff9d43f41
+FRONTEND_SHA256=6d5135fa8e79b1bc84c8ed972770ebf99fe6611d819e5c1453f38f1593c26e66
 WILDBLOOM_REF=29d382e2d2ba775ed77c7efa8d534b49d22d8dfd
 WILDBLOOM_NODE_REF=b3b254b10c42e94135f735abebfcbcc9262fef4d
 # Packaging revisions: bump when the image changes without an upstream pin change.
@@ -12,8 +12,8 @@ WILDBLOOM_NODE_REF=b3b254b10c42e94135f735abebfcbcc9262fef4d
 WILDBLOOM_PKG_REV=4
 WILDBLOOM_NODE_PKG_REV=2
 # Bumped whenever upstream/patches changes; names the backend release asset.
-BACKEND_PATCH_LEVEL=9
+BACKEND_PATCH_LEVEL=1
 # Frontend build: bumped whenever upstream/patches or the build recipe changes;
 # names the frontend release asset. Node major matches archy's own CI (ci.yml NODE_VERSION).
-FRONTEND_PATCH_LEVEL=4
+FRONTEND_PATCH_LEVEL=1
 FRONTEND_NODE_MAJOR=20

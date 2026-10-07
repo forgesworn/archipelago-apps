@@ -1,8 +1,8 @@
-From 4b83cd0b9441c45c2e3bc0408919c0145995e9ea Mon Sep 17 00:00:00 2001
+From 516d7234575888b7e5400a2afd807cbb103e33a4 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 17:27:32 +0200
-Subject: [PATCH] fix: catch a signer's pairing reply sent before the node
- subscribed
+Subject: [PATCH 14/14] fix: catch a signer's pairing reply sent before the
+ node subscribed
 
 A nostrconnect pairing subscribed with limit 0, so it only saw events
 published after the subscription was live. The link is on screen as soon

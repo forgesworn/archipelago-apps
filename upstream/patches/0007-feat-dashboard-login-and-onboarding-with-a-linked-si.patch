@@ -1,7 +1,8 @@
-From e614dcc99adac9ea1c53cdc567c59e6346b84f05 Mon Sep 17 00:00:00 2001
+From b98eadb19f2a53ebaadb4d0ac055a03ca6607d40 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 09:05:19 +0200
-Subject: [PATCH] feat: dashboard login and onboarding with a linked signer
+Subject: [PATCH 07/14] feat: dashboard login and onboarding with a linked
+ signer
 
 Log in to the dashboard by approving on a linked signer: a button above
 the password form when a signer is enrolled, the code shown large, and
@@ -70,10 +71,10 @@ dialog. Mock backend entries cover every new method.
  create mode 100644 neode-ui/src/views/settings/__tests__/LoginSignersSection.test.ts
 
 diff --git a/neode-ui/mock-backend.js b/neode-ui/mock-backend.js
-index 0efb1af..6f57fc3 100755
+index 7628123..040da3a 100755
 --- a/neode-ui/mock-backend.js
 +++ b/neode-ui/mock-backend.js
-@@ -1818,7 +1818,7 @@ app.post(['/app/bitcoin-ui/rpc/v1', '/app/bitcoin-core/rpc/v1', '/app/bitcoin-kn
+@@ -1820,7 +1820,7 @@ app.post(['/app/bitcoin-ui/rpc/v1', '/app/bitcoin-core/rpc/v1', '/app/bitcoin-kn
  })
  
  // RPC endpoint
@@ -82,7 +83,7 @@ index 0efb1af..6f57fc3 100755
    const { method, params } = req.body
    console.log(`[RPC] ${method}`)
  
-@@ -1987,6 +1987,11 @@ app.post('/rpc/v1', (req, res) => {
+@@ -1989,6 +1989,11 @@ app.post('/rpc/v1', (req, res) => {
            })
          }
  
@@ -94,7 +95,7 @@ index 0efb1af..6f57fc3 100755
          const sessionId = `session-${Date.now()}`
          sessions.set(sessionId, {
            createdAt: new Date(),
-@@ -2219,6 +2224,113 @@ app.post('/rpc/v1', (req, res) => {
+@@ -2221,6 +2226,113 @@ app.post('/rpc/v1', (req, res) => {
          return res.json({ result: 'ok' })
        }
  
@@ -208,7 +209,7 @@ index 0efb1af..6f57fc3 100755
        case 'auth.totp.status': {
          return res.json({ result: { enabled: false } })
        }
-@@ -2248,6 +2360,13 @@ app.post('/rpc/v1', (req, res) => {
+@@ -2250,6 +2362,13 @@ app.post('/rpc/v1', (req, res) => {
  
        case 'auth.login.totp':
        case 'auth.login.backup': {
@@ -222,7 +223,7 @@ index 0efb1af..6f57fc3 100755
          return res.json({ result: { success: true } })
        }
  
-@@ -2332,6 +2451,7 @@ app.post('/rpc/v1', (req, res) => {
+@@ -2334,6 +2453,7 @@ app.post('/rpc/v1', (req, res) => {
                  nostr_npub: 'npub1mockmerchantidentitypubkeyvalue000000000000000000000000def',
                  profile: { display_name: 'My Shop', website: 'https://myshop.onion', picture: '/demo-avatars/business.svg' },
                },
@@ -230,7 +231,7 @@ index 0efb1af..6f57fc3 100755
              ],
            },
          })
-@@ -6115,6 +6235,63 @@ function sessionBucketProxy(bucket) {
+@@ -6170,6 +6290,63 @@ function sessionBucketProxy(bucket) {
  const mockData = sessionBucketProxy('mockData')
  const walletState = sessionBucketProxy('walletState')
  const userState = sessionBucketProxy('userState')
@@ -463,7 +464,7 @@ index 0000000..8a6ae3a
 +  })
 +})
 diff --git a/neode-ui/src/api/rpc-client.ts b/neode-ui/src/api/rpc-client.ts
-index 454bc5c..bd6fa0b 100644
+index ce3c274..7321304 100644
 --- a/neode-ui/src/api/rpc-client.ts
 +++ b/neode-ui/src/api/rpc-client.ts
 @@ -244,7 +244,7 @@ class RPCClient {

@@ -1,7 +1,7 @@
-From da74e3570a9d0ce70d4cf63038e9700d8a5112ee Mon Sep 17 00:00:00 2001
+From bff58a4ad49d6d74a1229ee4346e7b055a676aed Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 09:25:30 +0200
-Subject: [PATCH] feat: log in to the dashboard with a linked signer
+Subject: [PATCH 06/14] feat: log in to the dashboard with a linked signer
 
 A linked identity can now be enrolled to log in to the dashboard through
 its NIP-46 signer. The password stays and always works; enrolment never
@@ -116,7 +116,7 @@ show for the node and showed a bare client key instead.
  create mode 100644 core/archipelago/src/signer_login.rs
 
 diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
-index e7f12a1..527c8af 100644
+index 89af364..0eb4114 100644
 --- a/core/archipelago/src/api/rpc/dispatcher.rs
 +++ b/core/archipelago/src/api/rpc/dispatcher.rs
 @@ -29,6 +29,10 @@ impl RpcHandler {
@@ -1784,10 +1784,10 @@ index 7170f35..72bf566 100644
      async fn test_verify_password_no_user() {
          let dir = tempfile::tempdir().unwrap();
 diff --git a/core/archipelago/src/main.rs b/core/archipelago/src/main.rs
-index 1f8d602..7791687 100644
+index 9f263f1..5a66fd2 100644
 --- a/core/archipelago/src/main.rs
 +++ b/core/archipelago/src/main.rs
-@@ -78,6 +78,7 @@ pub mod seed;
+@@ -80,6 +80,7 @@ pub mod seed;
  mod server;
  mod session;
  mod settings;
@@ -1796,10 +1796,10 @@ index 1f8d602..7791687 100644
  mod storage_crypto;
  mod streaming;
 diff --git a/core/archipelago/src/rate_limit.rs b/core/archipelago/src/rate_limit.rs
-index 8fc725c..4770e91 100644
+index 38740f3..3c6dde0 100644
 --- a/core/archipelago/src/rate_limit.rs
 +++ b/core/archipelago/src/rate_limit.rs
-@@ -112,6 +112,15 @@ impl EndpointRateLimiter {
+@@ -114,6 +114,15 @@ impl EndpointRateLimiter {
          limits.insert("update.apply".to_string(), (10, 60));
          limits.insert("system.reboot".to_string(), (2, 300));
          limits.insert("system.shutdown".to_string(), (2, 300));
@@ -1815,7 +1815,7 @@ index 8fc725c..4770e91 100644
          // Password and TOTP changes
          limits.insert("auth.changePassword".to_string(), (3, 300));
          limits.insert("auth.totp.setup".to_string(), (3, 300));
-@@ -375,6 +384,33 @@ mod tests {
+@@ -377,6 +386,33 @@ mod tests {
          }
      }
  

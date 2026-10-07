@@ -1,8 +1,8 @@
-From 6e756d5bd5d0c066fa99b5e2895121dce9ef1162 Mon Sep 17 00:00:00 2001
+From 56e60259dfffe46e88b8b6eaeade282f12da0ca2 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 16:46:15 +0200
-Subject: [PATCH] feat: link a signer by scanning a code, then offer it for
- login
+Subject: [PATCH 13/14] feat: link a signer by scanning a code, then offer it
+ for login
 
 ---
  neode-ui/mock-backend.js                      |  34 ++
@@ -21,10 +21,10 @@ Subject: [PATCH] feat: link a signer by scanning a code, then offer it for
  create mode 100644 neode-ui/src/components/signer/LinkedSignerLoginOffer.vue
 
 diff --git a/neode-ui/mock-backend.js b/neode-ui/mock-backend.js
-index dae2f54..31df580 100755
+index ab558ab..7c8b20c 100755
 --- a/neode-ui/mock-backend.js
 +++ b/neode-ui/mock-backend.js
-@@ -2233,6 +2233,7 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2235,6 +2235,7 @@ app.post('/rpc/v1', async (req, res) => {
        //                            are refused as busy), paused (start refused)
        //   MOCK_SIGNER_QUICK=1      "approved too fast" enrolment warning
        //   MOCK_SIGNER_STATUS=      paused | foreign | pending | denied
@@ -32,7 +32,7 @@ index dae2f54..31df580 100755
        // Texts are the node's own fixed constants.
        case 'auth.login.signer.available': {
          return res.json({ result: mockSigner.enrolled.length > 0 && process.env.MOCK_SIGNER_2FA !== '1' })
-@@ -2336,6 +2337,37 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2338,6 +2339,37 @@ app.post('/rpc/v1', async (req, res) => {
          return res.json({ result: mockSigner.link(String(name || 'My signer')) })
        }
  
@@ -70,7 +70,7 @@ index dae2f54..31df580 100755
        case 'auth.totp.status': {
          return res.json({ result: { enabled: false } })
        }
-@@ -6261,6 +6293,8 @@ const mockSigner = {
+@@ -6316,6 +6348,8 @@ const mockSigner = {
    /** Login signers, first enrolled first; any one of them logs in. */
    enrolled: [],
    attempts: new Map(),

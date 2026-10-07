@@ -1,7 +1,7 @@
-From 30952153dfe7a76ce05aff862a07ed011a1c04df Mon Sep 17 00:00:00 2001
+From e3db2870d47b4d470cd00d9ab5a95175d6223564 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sat, 3 Oct 2026 07:39:05 +0200
-Subject: [PATCH 3/5] feat: link identities to remote NIP-46 signers
+Subject: [PATCH 03/14] feat: link identities to remote NIP-46 signers
 
 Add identity.link-nip46, which links an identity to a bunker:// signer.
 The node generates a client keypair, sends connect with the URI's
@@ -40,7 +40,7 @@ sanitiser, which now truncates on a character boundary.
  create mode 100644 core/archipelago/src/remote_signer.rs
 
 diff --git a/core/Cargo.lock b/core/Cargo.lock
-index 7a6109f..b6fad58 100644
+index 4752150..7ecdf76 100644
 --- a/core/Cargo.lock
 +++ b/core/Cargo.lock
 @@ -143,6 +143,7 @@ dependencies = [
@@ -52,7 +52,7 @@ index 7a6109f..b6fad58 100644
   "qrcode",
   "rand 0.8.5",
 diff --git a/core/archipelago/Cargo.toml b/core/archipelago/Cargo.toml
-index de02f93..ad569f3 100644
+index 46edac9..6d5de58 100644
 --- a/core/archipelago/Cargo.toml
 +++ b/core/archipelago/Cargo.toml
 @@ -93,6 +93,9 @@ reqwest = { version = "0.11", default-features = false, features = ["json", "soc
@@ -66,10 +66,10 @@ index de02f93..ad569f3 100644
  # Backup encryption (DID identity export) + TOTP 2FA encryption
  argon2 = "0.5.3"
 diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
-index d7fbf06..8b01160 100644
+index f7426b0..7a1202f 100644
 --- a/core/archipelago/src/api/rpc/dispatcher.rs
 +++ b/core/archipelago/src/api/rpc/dispatcher.rs
-@@ -175,6 +175,7 @@ impl RpcHandler {
+@@ -178,6 +178,7 @@ impl RpcHandler {
              "identity.publish-profile" => self.handle_identity_publish_profile(params).await,
              "identity.export-keys" => self.handle_identity_export_keys(params).await,
              "identity.create-nostr-key" => self.handle_identity_create_nostr_key(params).await,
@@ -244,7 +244,7 @@ index 643d351..000c34f 100644
      fn tor_unavailable_precondition_passes_through() {
          let msg = "Tor address not available. Tor may not be running.";
 diff --git a/core/archipelago/src/api/rpc/mod.rs b/core/archipelago/src/api/rpc/mod.rs
-index 8950338..ea4f48b 100644
+index 8950338..ea4f48be 100644
 --- a/core/archipelago/src/api/rpc/mod.rs
 +++ b/core/archipelago/src/api/rpc/mod.rs
 @@ -345,6 +345,18 @@ impl RpcHandler {
@@ -289,7 +289,7 @@ index 8950338..ea4f48b 100644
  
  #[cfg(test)]
 diff --git a/core/archipelago/src/identity_manager.rs b/core/archipelago/src/identity_manager.rs
-index 23d6b10..739c68c 100644
+index 26f81aa..d20db6b 100644
 --- a/core/archipelago/src/identity_manager.rs
 +++ b/core/archipelago/src/identity_manager.rs
 @@ -11,10 +11,17 @@ use std::time::Duration;
@@ -394,7 +394,7 @@ index 23d6b10..739c68c 100644
  }
  
  pub struct IdentityManager {
-@@ -214,6 +284,7 @@ impl IdentityManager {
+@@ -226,6 +296,7 @@ impl IdentityManager {
              nostr_pubkey_hex: None,
              profile: Some(default_profile),
              derivation_index: None,
@@ -402,7 +402,7 @@ index 23d6b10..739c68c 100644
          };
  
          let file_path = self.identities_dir.join(format!("{}.json", id));
-@@ -292,6 +363,7 @@ impl IdentityManager {
+@@ -304,6 +375,7 @@ impl IdentityManager {
              nostr_pubkey_hex: None,
              profile: Some(default_profile),
              derivation_index: Some(0),
@@ -410,7 +410,7 @@ index 23d6b10..739c68c 100644
          };
  
          let json =
-@@ -364,6 +436,7 @@ impl IdentityManager {
+@@ -376,6 +448,7 @@ impl IdentityManager {
              nostr_pubkey_hex: Some(nostr_pubkey_hex),
              profile: Some(default_profile),
              derivation_index: Some(index),
@@ -418,7 +418,7 @@ index 23d6b10..739c68c 100644
          };
  
          let file_path = self.identities_dir.join(format!("{}.json", id));
-@@ -401,6 +474,146 @@ impl IdentityManager {
+@@ -413,6 +486,146 @@ impl IdentityManager {
          Ok(record)
      }
  
@@ -565,7 +565,7 @@ index 23d6b10..739c68c 100644
      /// Get a single identity by ID (without secret key).
      pub async fn get(&self, id: &str) -> Result<IdentityRecord> {
          let file_path = self.identities_dir.join(format!("{}.json", id));
-@@ -853,6 +1066,18 @@ impl IdentityManager {
+@@ -865,6 +1078,18 @@ impl IdentityManager {
              })
          });
  
@@ -584,7 +584,7 @@ index 23d6b10..739c68c 100644
          Ok(IdentityRecord {
              id: file.id,
              name: file.name,
-@@ -864,6 +1089,8 @@ impl IdentityManager {
+@@ -876,6 +1101,8 @@ impl IdentityManager {
              nostr_pubkey: file.nostr_pubkey_hex,
              nostr_npub,
              profile,
@@ -593,7 +593,7 @@ index 23d6b10..739c68c 100644
          })
      }
  
-@@ -888,6 +1115,7 @@ impl IdentityManager {
+@@ -900,6 +1127,7 @@ impl IdentityManager {
  #[cfg(test)]
  mod tests {
      use super::*;
@@ -601,7 +601,7 @@ index 23d6b10..739c68c 100644
      use tempfile::tempdir;
  
      #[tokio::test]
-@@ -1014,6 +1242,8 @@ mod tests {
+@@ -1026,6 +1254,8 @@ mod tests {
              nostr_pubkey: None,
              nostr_npub: None,
              profile: None,
@@ -610,7 +610,7 @@ index 23d6b10..739c68c 100644
          }
      }
  
-@@ -1138,6 +1368,290 @@ mod tests {
+@@ -1175,6 +1405,290 @@ mod tests {
          );
      }
  
@@ -902,10 +902,10 @@ index 23d6b10..739c68c 100644
      async fn test_delete_default_shifts() {
          let dir = tempdir().unwrap();
 diff --git a/core/archipelago/src/main.rs b/core/archipelago/src/main.rs
-index 2013a13..1f8d602 100644
+index 1e8b99d..9f263f1 100644
 --- a/core/archipelago/src/main.rs
 +++ b/core/archipelago/src/main.rs
-@@ -73,6 +73,7 @@ mod nostr_relays;
+@@ -75,6 +75,7 @@ mod nostr_security_tests;
  mod peers;
  mod port_allocator;
  mod rate_limit;
@@ -932,10 +932,10 @@ index f37b89f..83cd9f4 100644
  pub(crate) async fn load_or_create_nostr_keys(identity_dir: &Path) -> Result<Keys> {
      let secret_path = identity_dir.join(NOSTR_SECRET_FILE);
 diff --git a/core/archipelago/src/rate_limit.rs b/core/archipelago/src/rate_limit.rs
-index 205f8c2..0bffc72 100644
+index 74496ab..a76ee23 100644
 --- a/core/archipelago/src/rate_limit.rs
 +++ b/core/archipelago/src/rate_limit.rs
-@@ -90,6 +90,7 @@ impl EndpointRateLimiter {
+@@ -92,6 +92,7 @@ impl EndpointRateLimiter {
          limits.insert("lnd.finalize-psbt".to_string(), (5, 300));
          // Identity/credential operations
          limits.insert("identity.create".to_string(), (10, 300));
