@@ -65,3 +65,34 @@ retrieve a new owner upload. No payment or real user data was involved.
 
 This is container upgrade evidence. It does not establish a completed update of
 an existing physical Archipelago installation or independent multi-device recovery.
+
+## Existing test-node upgrade (8 October)
+
+Both new packages were also installed on the existing Archipelago 1.9.0-alpha
+test node. Before changing the storage image, its writer was stopped and a
+private offline copy of its volume and original manifests was retained.
+After upgrading, all 16 pre-existing blobs (114,786 bytes) were downloaded and
+compared byte-for-byte against that backup. SQLite integrity passed; the owner
+allowlist and public URL matched their previous values. Both containers became
+healthy. The external web UI still required authentication (HTTP 401 without a
+session) and the storage health endpoint returned HTTP 200.
+
+The refreshed browser opened at `/#client` inside the dashboard and selected
+the existing Heartwood identity without re-pairing. The provider's optional
+NIP-98 bootstrap exposed a packaging bug: SPA fallback returned 200 for its
+non-existent health endpoint. Packaging revision 2 returns 404 for `/api/`
+routes, so that unsupported login flow cannot start. The provider itself is
+unchanged.
+
+The dashboard's quick Start control did not recreate the stopped storage
+container, and its sideload form rejected the already-installed app ID. The
+operator completed the upgrade using the existing rootless systemd container
+units after staging the same new manifests. A missing Podman temporary directory
+was recreated with ownership limited to the Archipelago user; no recursive
+ownership changes were made. Existing volumes, identities and authorisation
+rules were preserved.
+
+New signed writes and proof checks passed in container acceptance. The additional
+live-browser fixture upload was not completed because browser automation did not
+receive the file chooser. Do not count that attempt as a live write/recovery pass.
+This upgrade is separate from soak testing and independent node-loss acceptance.
