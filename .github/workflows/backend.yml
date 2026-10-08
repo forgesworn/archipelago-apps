@@ -117,7 +117,7 @@ jobs:
               || { echo "::error::$1: expected $2 passed"; exit 1; }
           }
           check remote_signer::tests:: 39
-          check identity_manager::tests:: 32
+          check identity_manager::tests:: 33
           check api::rpc::nostr_signing_origin_tests:: 3
           check api::rpc::middleware::sanitize_tests:: 10
           check rate_limit::tests:: 10
