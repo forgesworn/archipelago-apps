@@ -37,7 +37,7 @@ for path in /api/nostr-auth/health /api/auth/nostr/session; do
   [ "$code" = 404 ] || { echo "FAIL: $path expected 404, got $code"; exit 1; }
 done
 # The pinned client must include the refreshed local recovery and service UI.
-for marker in 'id="client-retrieve"' 'id="saved-recovery"' 'id="storage-layout-summary"' 'id="storage-audit"' 'id="checkout-offers"'; do
+for marker in 'id="demo-result"' 'Saved event or pool receipt' 'id="client-retrieve"' 'id="saved-recovery"' 'id="storage-layout-summary"' 'id="storage-audit"' 'id="checkout-offers"'; do
   grep -qF "$marker" <<<"$html"
 done
 echo "smoke OK: wildbloom"
