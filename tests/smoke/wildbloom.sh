@@ -30,4 +30,8 @@ provider=$(curl -fsS http://127.0.0.1:3743/nostr-provider.js)
 grep -qF "type: 'nostr-request'" <<<"$provider"
 # SPA fallback keeps the injection; this does not prove deep-link assets load (Vite base "./").
 curl -fsS http://127.0.0.1:3743/some/deep/link | grep -qF 'nostr-provider.js?v=tab-signer-v4'
+# The pinned client must include the refreshed local recovery and service UI.
+for marker in 'id="client-retrieve"' 'id="saved-recovery"' 'id="storage-layout-summary"' 'id="storage-audit"' 'id="checkout-offers"'; do
+  grep -qF "$marker" <<<"$html"
+done
 echo "smoke OK: wildbloom"

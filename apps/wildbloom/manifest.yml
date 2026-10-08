@@ -5,11 +5,11 @@ app:
   upstream:
     kind: github
     repo: forgesworn/wildbloom
-  description: Publish files over Nostr, Blossom and BitTorrent, signed by your node identities.
+  description: Encrypt files, keep replicas or recoverable shards, and recover from saved receipts. Discover trusted nodes, buy storage directly from participating operators and verify stored bytes, signed by your node identities.
   category: nostr
 
   container:
-    image: ghcr.io/forgesworn/wildbloom:0.0.1-29d382e-4
+    image: ghcr.io/forgesworn/wildbloom:0.0.1-fa2877d-1
     pull_policy: if-not-present
     network: archy-net
 
@@ -58,15 +58,15 @@ app:
   interfaces:
     main:
       name: Web UI
-      description: Publish and fetch files signed by your node identities
+      description: Encrypt, publish and recover files using your node identities
       type: ui
       port: 3743
       protocol: http
-      path: /
+      path: /#client
 
   metadata:
     author: ForgeSworn
     website: https://github.com/forgesworn/wildbloom
     repo: https://github.com/forgesworn/wildbloom
     license: MIT
-    tags: [nostr, blossom, bittorrent]
+    tags: [nostr, blossom, storage, encryption]
