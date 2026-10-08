@@ -96,3 +96,19 @@ New signed writes and proof checks passed in container acceptance. The additiona
 live-browser fixture upload was not completed because browser automation did not
 receive the file chooser. Do not count that attempt as a live write/recovery pass.
 This upgrade is separate from soak testing and independent node-loss acceptance.
+
+
+## Browser usability refresh
+
+Browser image `0.0.1-045e35a-1` includes the refreshed overview, corrected hover contrast,
+responsive text layouts and larger consent controls. Saved-file recovery now
+explicitly accepts both signed file events and pool receipts. The visible client
+has its own level-one heading and clearer field spacing.
+
+This is a browser-only update. The Wildbloom Node image, storage volume, existing
+identities and signer provider remain unchanged. The unsupported `/api/` routes
+still return 404, preserving the fix for the unwanted authentication prompt.
+
+The upstream production-browser checks include expanded service panels and
+18 viewport widths with enlarged text and WCAG text spacing. Spoken screen-reader
+and physical mobile acceptance remain separate from these automated checks.
