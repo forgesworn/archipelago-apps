@@ -10,7 +10,9 @@ Archipelago itself.
 | App | What it is |
 |---|---|
 | `wildbloom-node` | Blossom storage owned by your node identities |
-| `wildbloom` | Publish files over Nostr, Blossom and BitTorrent, signed by your node identities |
+| `wildbloom` | Encrypt, replicate or shard files, recover from receipts, and use your node identities to sign |
+
+For existing installations, see the [Wildbloom upgrade guide](docs/wildbloom-upgrade.md).
 
 The patches also let a node identity keep its key in a NIP-46 remote signer
 (a hardware signer such as Heartwood, or a phone app): see

@@ -1,15 +1,15 @@
 app:
   id: wildbloom-node
   name: Wildbloom Node
-  version: 0.2.2
+  version: 0.3.5
   upstream:
     kind: github
     repo: forgesworn/wildbloom-node
-  description: Blossom storage on your node, owned by your node identities. Only your node identities can upload; anyone who can reach the node and knows a file's hash can read it, as with any Blossom server, so encrypt private files before upload.
+  description: Blossom storage for encrypted files and shards, owned by your node identities. Only your node identities can upload; anyone who can reach the node and knows a file's hash can read it, as with any Blossom server, so encrypt private files before upload.
   category: nostr
 
   container:
-    image: ghcr.io/forgesworn/wildbloom-node:0.2.2-b3b254b-2
+    image: ghcr.io/forgesworn/wildbloom-node:0.3.5-2ea211e-1
     pull_policy: if-not-present
     network: archy-net
     derived_env:
@@ -47,7 +47,10 @@ app:
       target: /data
       options: [rw]
 
-  environment: []
+  # Full-read audits are opt-in because they consume disk and download bandwidth.
+  # Paid storage stays off unless an operator provisions a private checkout profile.
+  environment:
+    - WILDBLOOM_STORAGE_PROOFS=false
 
   health_check:
     type: http
@@ -62,4 +65,4 @@ app:
     website: https://github.com/forgesworn/wildbloom-node
     repo: https://github.com/forgesworn/wildbloom-node
     license: MIT
-    tags: [nostr, blossom, storage]
+    tags: [nostr, blossom, storage, encryption]

@@ -20,8 +20,8 @@ for _ in $(seq 20); do curl -fsS http://127.0.0.1:3743/ >/dev/null && break; sle
 # localhost inside the container, which resolves to ::1. Probe it the same way.
 docker exec "$cid" sh -c 'wget -q -T 5 -O /dev/null http://localhost:3743/'
 html=$(curl -fsS http://127.0.0.1:3743/)
-echo "$html" | grep -qF '<script src="/nostr-provider.js?v=tab-signer-v4"></script></head>'
-echo "$html" | grep -qF "script-src 'self'"
+grep -qF '<script src="/nostr-provider.js?v=tab-signer-v4"></script></head>' <<<"$html"
+grep -qF "script-src 'self'" <<<"$html"
 # The baked provider is served (no post_install here, so it must come from the image),
 # uncached, and is Archipelago's real file rather than a placeholder.
 curl -fsSI http://127.0.0.1:3743/nostr-provider.js | grep -qi '^cache-control: no-cache, no-store'
@@ -29,5 +29,10 @@ curl -fsSI http://127.0.0.1:3743/nostr-provider.js | grep -qi '^cache-control: n
 provider=$(curl -fsS http://127.0.0.1:3743/nostr-provider.js)
 grep -qF "type: 'nostr-request'" <<<"$provider"
 # SPA fallback keeps the injection; this does not prove deep-link assets load (Vite base "./").
-curl -fsS http://127.0.0.1:3743/some/deep/link | grep -qF 'nostr-provider.js?v=tab-signer-v4'
+fallback=$(curl -fsS http://127.0.0.1:3743/some/deep/link)
+grep -qF 'nostr-provider.js?v=tab-signer-v4' <<<"$fallback"
+# The pinned client must include the refreshed local recovery and service UI.
+for marker in 'id="client-retrieve"' 'id="saved-recovery"' 'id="storage-layout-summary"' 'id="storage-audit"' 'id="checkout-offers"'; do
+  grep -qF "$marker" <<<"$html"
+done
 echo "smoke OK: wildbloom"

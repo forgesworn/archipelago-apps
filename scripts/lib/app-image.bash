@@ -8,7 +8,7 @@ app_image() {
   case "$1" in
     wildbloom-node)
       APP_REF=${WILDBLOOM_NODE_REF:?}
-      APP_TAG="ghcr.io/forgesworn/wildbloom-node:0.2.2-${APP_REF:0:7}-${WILDBLOOM_NODE_PKG_REV:?}" ;;
+      APP_TAG="ghcr.io/forgesworn/wildbloom-node:0.3.5-${APP_REF:0:7}-${WILDBLOOM_NODE_PKG_REV:?}" ;;
     wildbloom)
       APP_REF=${WILDBLOOM_REF:?}
       APP_TAG="ghcr.io/forgesworn/wildbloom:0.0.1-${APP_REF:0:7}-${WILDBLOOM_PKG_REV:?}" ;;
