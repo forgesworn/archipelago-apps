@@ -1,0 +1,139 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,4 +1,5 @@
+ [workspace]
++exclude = ["vendor/shelter-kit"]
+ members = ["crates/wildbloomd", "crates/private-state", "crates/release-verify", "crates/wildbloom-checkout"]
+ resolver = "3"
+ 
+@@ -33,3 +34,6 @@
+ tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
+ url = "2.5.7"
+ wildbloom-core = { package = "shelter-kit", git = "https://github.com/forgesworn/shelter-kit", tag = "v0.5.0" }
++
++[patch."https://github.com/forgesworn/shelter-kit"]
++shelter-kit = { path = "vendor/shelter-kit" }
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2162,7 +2162,6 @@
+ [[package]]
+ name = "shelter-kit"
+ version = "0.5.0"
+-source = "git+https://github.com/forgesworn/shelter-kit?tag=v0.5.0#a2847bdfefd12ec1066a3e2f1cc3608fb9e3ee06"
+ dependencies = [
+  "axum",
+  "base64 0.23.1",
+--- a/crates/wildbloom-checkout/src/service.rs
++++ b/crates/wildbloom-checkout/src/service.rs
+@@ -34,6 +34,7 @@
+ #[derive(Clone)]
+ pub struct Checkout {
+     config: Arc<Config>,
++    max_paid_bytes: Option<u64>,
+     ledger: Ledger,
+     store: Store,
+     lightning: Option<Arc<dyn LightningBackend>>,
+@@ -51,12 +52,21 @@
+         config.validate()?;
+         Ok(Self {
+             config: Arc::new(config),
++            max_paid_bytes: None,
+             ledger,
+             store,
+             lightning,
+             notes,
+             receiving: Arc::new(tokio::sync::Mutex::new(())),
+         })
++    }
++    /// Set the seller allocation ceiling before exposing this checkout.
++    pub fn with_sales_capacity(mut self, max_paid_bytes: Option<u64>) -> Result<Self, Error> {
++        if max_paid_bytes.is_some_and(|limit| limit > self.store.quota_bytes()) {
++            return Err(Error::Invalid);
++        }
++        self.max_paid_bytes = max_paid_bytes;
++        Ok(self)
+     }
+     pub fn config(&self) -> &Config {
+         &self.config
+@@ -183,15 +193,18 @@
+                 .state(&q.order_id, State::Reserving, State::Expired)?;
+         } else {
+             self.store
+-                .reserve_paid_sale(&PaidSale {
+-                    order_id: q.order_id.clone(),
+-                    signer_pubkey: q.signer_pubkey.clone(),
+-                    capacity_bytes: q.offer.capacity_bytes,
+-                    duration_seconds: q.offer.duration_seconds,
+-                    grace_seconds: q.offer.grace_seconds,
+-                    hold_expires_at: q.expires_at,
+-                    renews: q.renews.clone(),
+-                })
++                .reserve_paid_sale_with_ceiling(
++                    &PaidSale {
++                        order_id: q.order_id.clone(),
++                        signer_pubkey: q.signer_pubkey.clone(),
++                        capacity_bytes: q.offer.capacity_bytes,
++                        duration_seconds: q.offer.duration_seconds,
++                        grace_seconds: q.offer.grace_seconds,
++                        hold_expires_at: q.expires_at,
++                        renews: q.renews.clone(),
++                    },
++                    self.max_paid_bytes.unwrap_or(i64::MAX as u64),
++                )
+                 .map_err(|e| match e {
+                     StoreError::QuotaExceeded => Error::Capacity,
+                     StoreError::InvalidPaidSale | StoreError::PaidAllowanceUnavailable => {
+--- a/crates/wildbloom-checkout/src/profile.rs
++++ b/crates/wildbloom-checkout/src/profile.rs
+@@ -13,6 +13,8 @@
+ pub struct RuntimeProfile {
+     pub checkout: Config,
+     pub state: PathBuf,
++    #[serde(default)]
++    pub max_paid_bytes: Option<u64>,
+     pub browser_origins: Vec<String>,
+     pub phoenixd: Option<PhoenixProfile>,
+     #[serde(default)]
+@@ -114,7 +116,8 @@
+                     .collect(),
+             )?) as Arc<dyn crate::NoteTransport>)
+         };
+-        let checkout = Checkout::new(self.checkout, ledger, store, lightning, notes)?;
++        let checkout = Checkout::new(self.checkout, ledger, store, lightning, notes)?
++            .with_sales_capacity(self.max_paid_bytes)?;
+         if checkout.rails().is_empty() {
+             return Err(Error::Invalid);
+         }
+--- a/crates/wildbloom-checkout/src/tests.rs
++++ b/crates/wildbloom-checkout/src/tests.rs
+@@ -1640,3 +1640,30 @@
+         .collect();
+     assert!(c.validate().is_err());
+ }
++
++#[tokio::test]
++async fn seller_capacity_refuses_quote_before_payment() {
++    let mut f = Fixture::new();
++    f.checkout = f.checkout.with_sales_capacity(Some(100)).unwrap();
++    let first = f
++        .checkout
++        .quote(&principal(1), request("first", Rail::Lightning))
++        .await
++        .unwrap();
++    assert_eq!(first.state, State::Quoted);
++    assert!(matches!(
++        f.checkout
++            .quote(&principal(2), request("second", Rail::Lightning))
++            .await,
++        Err(Error::Capacity)
++    ));
++    assert_eq!(f.lightning.creates.load(Ordering::SeqCst), 0);
++    assert_eq!(
++        f.checkout
++            .quote(&principal(1), request("first", Rail::Lightning))
++            .await
++            .unwrap()
++            .quote_digest,
++        first.quote_digest
++    );
++}

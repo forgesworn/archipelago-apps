@@ -28,7 +28,7 @@ service deliberately; do not give ordinary storage nodes the recovery key.
    image tags from the same repository revision. Do not remove the storage volume
    or run the old and new writers against it at the same time.
 3. Open the browser app from the dashboard. Connect its existing node identity,
-   use the node's trusted HTTPS Blossom URL and recover a known file. The node CA
+   check the automatically selected HTTPS Blossom URL and recover a known file. The node CA
    must already be trusted by this browser.
 4. Verify a new upload from an allowed identity and refusal of a stranger's write.
    Keep the offline backup until both old-file retrieval and new writes pass.
@@ -54,6 +54,8 @@ private checkout profile and persistent checkout state, with coordinated offline
 backups of checkout and storage. Do not paste receiving credentials into a public
 manifest. See the upstream [checkout documentation](https://github.com/forgesworn/wildbloom-node/blob/main/docs/CHECKOUT.md)
 before enabling it. Installing the app does not configure a merchant service.
+The [Archipelago Moneyer setup](wildbloom-selling.md) prepares a private profile
+and manifest with an aggregate sales ceiling and an owner reserve.
 
 ## Upgrade evidence
 

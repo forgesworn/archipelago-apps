@@ -1,0 +1,20 @@
+{
+  "node_origin": "https://storage.example:3742",
+  "browser_origins": ["https://storage.example:3743"],
+  "seller_id": "my-archipelago",
+  "seller_name": "My Archipelago node",
+  "quota_bytes": 214748364800,
+  "owner_reserved_bytes": 107374182400,
+  "max_blob_bytes": 1073741824,
+  "offer_id": "storage-month",
+  "offer_revision": 1,
+  "offer_capacity_bytes": 10737418240,
+  "duration_seconds": 2592000,
+  "grace_seconds": 604800,
+  "price_sats": 500,
+  "delivery_bytes": 107374182400,
+  "delivery_policy": "Operator-managed delivery; no automatic bandwidth meter",
+  "retention_policy": "30 days of writes and 7 further days for recovery",
+  "refund_policy": "REPLACE with your contact and fulfilment/refund terms",
+  "moneyer_evaluation_accepted": false
+}

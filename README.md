@@ -13,6 +13,9 @@ Archipelago itself.
 | `wildbloom` | Encrypt, replicate or shard files, recover from receipts, and use your node identities to sign |
 
 For existing installations, see the [Wildbloom upgrade guide](docs/wildbloom-upgrade.md).
+The browser defaults to your own node. For optional Moneyer LNURLcash sales,
+capacity reserved for yourself and private configuration, see
+[own storage and selling](docs/wildbloom-selling.md).
 
 The patches also let a node identity keep its key in a NIP-46 remote signer
 (a hardware signer such as Heartwood, or a phone app): see
