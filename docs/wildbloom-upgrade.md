@@ -112,3 +112,16 @@ still return 404, preserving the fix for the unwanted authentication prompt.
 The upstream production-browser checks include expanded service panels and
 18 viewport widths with enlarged text and WCAG text spacing. Spoken screen-reader
 and physical mobile acceptance remain separate from these automated checks.
+
+## Marketing film refresh
+
+Browser image `0.0.1-a7f79cb-1` adds the illustrated 32-second recovery film and
+its full text alternative. Playback is requested explicitly and stays on the
+node's own web origin. The client still opens directly from the dashboard;
+visitors can reach the film through the Wildbloom home link.
+
+The package smoke check verifies the new player, same-origin media policy,
+MP4 MIME type and partial-content response used for seeking. This is a
+browser-only refresh. The storage daemon, identities and signer provider keep
+their existing versions. The real app and Archipelago walkthrough is separate
+work; the illustrated film is not a live storage demonstration.

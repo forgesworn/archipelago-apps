@@ -37,7 +37,17 @@ for path in /api/nostr-auth/health /api/auth/nostr/session; do
   [ "$code" = 404 ] || { echo "FAIL: $path expected 404, got $code"; exit 1; }
 done
 # The pinned client must include the refreshed local recovery and service UI.
-for marker in 'id="demo-result"' 'Saved event or pool receipt' 'id="client-retrieve"' 'id="saved-recovery"' 'id="storage-layout-summary"' 'id="storage-audit"' 'id="checkout-offers"'; do
+for marker in 'id="demo-result"' 'Saved event or pool receipt' 'id="client-retrieve"' 'id="saved-recovery"' 'id="storage-layout-summary"' 'id="storage-audit"' 'id="checkout-offers"' 'id="recovery-film"' 'Read the story instead' "media-src 'self'"; do
   grep -qF "$marker" <<<"$html"
 done
+# The self-hosted explainer must decode and seek through nginx too. Require
+# exactly one hashed film and the MP4 MIME type, then exercise a byte range.
+film=$(docker exec "$cid" sh -c 'printf "%s\n" /usr/share/nginx/html/assets/*.mp4')
+[[ "$film" =~ ^/usr/share/nginx/html/assets/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8}\.mp4$ ]] || { echo 'FAIL: expected one hashed MP4'; exit 1; }
+film_headers=$(curl -fsSI "http://127.0.0.1:3743/assets/${film##*/}")
+grep -qi '^content-type: video/mp4' <<<"$film_headers"
+film_range=$(curl -fsS -D - -o /dev/null --range 0-1 "http://127.0.0.1:3743/assets/${film##*/}")
+grep -qE '^HTTP/[0-9.]+ 206 ' <<<"$film_range"
+grep -qi '^content-range: bytes 0-1/' <<<"$film_range"
+grep -qiE '^content-length: 2[[:space:]]*$' <<<"$film_range"
 echo "smoke OK: wildbloom"
