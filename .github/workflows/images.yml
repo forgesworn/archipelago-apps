@@ -35,7 +35,7 @@ jobs:
           load: true
           tags: ${{ steps.plan.outputs.tag }}
       - if: steps.plan.outputs.build == 'true'
-        run: tests/smoke/wildbloom-node.sh "${{ steps.plan.outputs.tag }}"
+        run: tests/smoke/wildbloom-node.sh "${{ steps.plan.outputs.tag }}" ghcr.io/forgesworn/wildbloom-node:0.2.2-b3b254b-2
       - if: steps.plan.outputs.push == 'true' && github.ref == 'refs/heads/main'
         run: |
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin

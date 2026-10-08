@@ -2,6 +2,7 @@
 # Start the wildbloom-node image, upload a blob signed by a throwaway owner key, fetch it back.
 set -euo pipefail
 image=${1:?image}
+previous=${2:-}
 here=$(cd "$(dirname "$0")" && pwd)
 (cd "$here" && npm ci --silent)
 secret=$(openssl rand -hex 32)
@@ -12,9 +13,12 @@ pubkey=$(cd "$here" && node --input-type=module -e 'import { getPublicKey } from
 data=$(mktemp -d)
 sudo chown 0:0 "$data"
 # --read-only matches the manifest's readonly_root: true.
-cid=$(docker run -d --cap-drop=ALL --security-opt no-new-privileges --read-only --tmpfs /tmp -p 127.0.0.1:3742:3742 -v "$data:/data" \
+start_node() {
+  docker run -d --cap-drop=ALL --security-opt no-new-privileges --read-only --tmpfs /tmp -p 127.0.0.1:3742:3742 -v "$data:/data" \
   -e WILDBLOOM_ALLOW_PUBKEYS="$pubkey" -e WILDBLOOM_PUBLIC_URL=http://localhost:3742 \
-  -e WILDBLOOM_SERVER_NAME=localhost,127.0.0.1 "$image")
+  -e WILDBLOOM_SERVER_NAME=localhost,127.0.0.1 -e WILDBLOOM_STORAGE_PROOFS=true "$1"
+}
+cid=$(start_node "${previous:-$image}")
 trap 'docker logs "$cid" | tail -n 50; docker rm -f "$cid" >/dev/null; sudo rm -rf "$data"' EXIT
 # The node's containers (Podman/netavark) have ::1 on lo, and so do Docker 26+ containers on an
 # IPv4-only network. Assert it so the localhost probe below matches the node. Test the content:
@@ -41,6 +45,18 @@ curl -fsS -X PUT --data-binary @"$payload" -H "Authorization: Nostr $auth" \
   -H "X-SHA-256: $sha" -H "Content-Type: application/octet-stream" http://127.0.0.1:3742/upload
 curl -fsS "http://127.0.0.1:3742/$sha" -o "$payload.back"
 cmp "$payload" "$payload.back"
+if [ -n "$previous" ]; then
+  # Stop the old writer before opening exactly the same persistent volume.
+  docker stop "$cid" >/dev/null
+  docker rm "$cid" >/dev/null
+  cid=$(start_node "$image")
+  for _ in $(seq 30); do curl -fsS http://127.0.0.1:3742/healthz >/dev/null && break; sleep 1; done
+  curl -fsS http://127.0.0.1:3742/healthz
+  curl -fsS "http://127.0.0.1:3742/$sha" -o "$payload.back"
+  cmp "$payload" "$payload.back"
+  echo "Existing bytes survived the version-to-version volume upgrade."
+fi
+(cd "$here" && node storage-proof.mjs "$secret" "$payload")
 # A stranger's key must be refused. Fresh payload, so the refusal is about auth, not a stored blob.
 stranger=$(openssl rand -hex 32)
 payload2=$(mktemp); head -c 4096 /dev/urandom > "$payload2"
@@ -49,4 +65,10 @@ bad=$(cd "$here" && node sign-auth.mjs "$stranger" upload "$sha2" localhost)
 code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT --data-binary @"$payload2" -H "Authorization: Nostr $bad" \
   -H "X-SHA-256: $sha2" -H "Content-Type: application/octet-stream" http://127.0.0.1:3742/upload)
 { [ "$code" = 401 ] || [ "$code" = 403 ]; } || { echo "stranger upload expected 401 or 403, got $code"; exit 1; }
+good=$(cd "$here" && node sign-auth.mjs "$secret" upload "$sha2" localhost)
+curl -fsS -X PUT --data-binary @"$payload2" -H "Authorization: Nostr $good" \
+  -H "X-SHA-256: $sha2" -H "Content-Type: application/octet-stream" http://127.0.0.1:3742/upload
+curl -fsS "http://127.0.0.1:3742/$sha2" -o "$payload2.back"
+cmp "$payload2" "$payload2.back"
+rm -f "$payload" "$payload.back" "$payload2" "$payload2.back"
 echo "smoke OK: $sha (stranger refused with $code)"
