@@ -31,6 +31,11 @@ grep -qF "type: 'nostr-request'" <<<"$provider"
 # SPA fallback keeps the injection; this does not prove deep-link assets load (Vite base "./").
 fallback=$(curl -fsS http://127.0.0.1:3743/some/deep/link)
 grep -qF 'nostr-provider.js?v=tab-signer-v4' <<<"$fallback"
+# Unsupported API probes must never look like a working login service.
+for path in /api/nostr-auth/health /api/auth/nostr/session; do
+  code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:3743$path")
+  [ "$code" = 404 ] || { echo "FAIL: $path expected 404, got $code"; exit 1; }
+done
 # The pinned client must include the refreshed local recovery and service UI.
 for marker in 'id="client-retrieve"' 'id="saved-recovery"' 'id="storage-layout-summary"' 'id="storage-audit"' 'id="checkout-offers"'; do
   grep -qF "$marker" <<<"$html"
