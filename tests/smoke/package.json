@@ -1,1 +1,1 @@
-{ "private": true, "type": "module", "dependencies": { "nostr-tools": "2.23.9" } }
+{"private":true,"type":"module","dependencies":{"nostr-tools":"2.23.9","playwright-core":"1.62.1"}}

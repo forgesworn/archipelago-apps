@@ -18,11 +18,20 @@ app=${1:?app id}
 : "${NODE:=root@95.216.164.146}" "${ARCHY_PASSWORD:?dashboard password}"
 : "${INSTALL_TIMEOUT:=600}"
 root=$(cd "$(dirname "$0")/.." && pwd)
-manifest=$root/apps/$app/manifest.yml
+manifest=${APP_MANIFEST:-$root/apps/$app/manifest.yml}
 [ -f "$manifest" ] || { echo "no manifest at $manifest" >&2; exit 1; }
 # The first image: under the container: block.
-image=$(awk '/^[[:space:]]+container:[[:space:]]*$/ {c=1; next}
-  c && /^[[:space:]]+image:[[:space:]]*[^[:space:]]/ {gsub(/["\047]/, "", $2); print $2; exit}' "$manifest")
+image=$(python3 - "$manifest" "$app" <<'PY'
+import sys, yaml
+app = yaml.safe_load(open(sys.argv[1]))['app']
+if app['id'] != sys.argv[2]:
+    raise SystemExit('manifest app id does not match requested app')
+image = app['container']['image']
+if not isinstance(image, str) or not image.startswith('ghcr.io/forgesworn/' + sys.argv[2] + ':'):
+    raise SystemExit('unexpected app image')
+print(image)
+PY
+)
 [ -n "$image" ] || { echo "no container image in $manifest" >&2; exit 1; }
 dir=/opt/archipelago/web-ui/archipelago-runtime/apps/$app
 

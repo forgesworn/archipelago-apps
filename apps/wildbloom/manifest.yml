@@ -9,9 +9,12 @@ app:
   category: nostr
 
   container:
-    image: ghcr.io/forgesworn/wildbloom:0.0.1-a7f79cb-1
+    image: ghcr.io/forgesworn/wildbloom:0.0.1-a7f79cb-2
     pull_policy: if-not-present
     network: archy-net
+    derived_env:
+      - key: WILDBLOOM_HOME_NODE_URL
+        template: "https://{{PUBLIC_HOST}}:3742"
 
   dependencies:
     - app_id: wildbloom-node

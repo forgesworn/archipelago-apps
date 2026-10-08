@@ -30,10 +30,11 @@ common_smoke=(.github/workflows/images.yml scripts/image-plan.sh scripts/lib/app
 case "$app" in
   wildbloom-node)
     smoke=(tests/smoke/wildbloom-node.sh tests/smoke/package.json
-           tests/smoke/package-lock.json tests/smoke/sign-auth.mjs)
+           tests/smoke/package-lock.json tests/smoke/sign-auth.mjs tests/smoke/seller-capacity.mjs
+           scripts/configure-wildbloom-sales.py docs/wildbloom-sales.example.json)
     pin_re='^(WILDBLOOM_NODE_REF|WILDBLOOM_NODE_PKG_REV)=' ;;
   wildbloom)
-    smoke=(tests/smoke/wildbloom.sh)
+    smoke=(tests/smoke/wildbloom.sh tests/smoke/own-node.mjs tests/smoke/package.json tests/smoke/package-lock.json)
     pin_re='^(WILDBLOOM_REF|WILDBLOOM_PKG_REV)=' ;;
 esac
 smoke+=("${common_smoke[@]}")

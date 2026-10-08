@@ -2,7 +2,7 @@
 # Serve the wildbloom image and check the signer injection and cache headers.
 set -euo pipefail
 image=${1:?image}
-cid=$(docker run -d --cap-drop=ALL --cap-add CHOWN --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges -p 127.0.0.1:3743:3743 "$image")
+cid=$(docker run -d --cap-drop=ALL --cap-add CHOWN --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges -p 127.0.0.1:3743:3743 -e WILDBLOOM_HOME_NODE_URL=https://storage.example:3742 "$image")
 trap 'docker logs "$cid" | tail -n 30; docker rm -f "$cid" >/dev/null' EXIT
 # The node's containers (Podman/netavark) have ::1 on lo, and so do Docker 26+ containers on an
 # IPv4-only network. Assert it so the localhost probe below matches the node. Test the content:
@@ -20,7 +20,9 @@ for _ in $(seq 20); do curl -fsS http://127.0.0.1:3743/ >/dev/null && break; sle
 # localhost inside the container, which resolves to ::1. Probe it the same way.
 docker exec "$cid" sh -c 'wget -q -T 5 -O /dev/null http://localhost:3743/'
 html=$(curl -fsS http://127.0.0.1:3743/)
-grep -qF '<script src="/nostr-provider.js?v=tab-signer-v4"></script></head>' <<<"$html"
+grep -qF '<script src="/nostr-provider.js?v=tab-signer-v4"></script>' <<<"$html"
+grep -qF '<script src="/archipelago-node.js"></script>' <<<"$html"
+curl -fsSI http://127.0.0.1:3743/archipelago-config.js | grep -qi '^cache-control: no-store'
 grep -qF "script-src 'self'" <<<"$html"
 # The baked provider is served (no post_install here, so it must come from the image),
 # uncached, and is Archipelago's real file rather than a placeholder.
@@ -50,4 +52,5 @@ film_range=$(curl -fsS -D - -o /dev/null --range 0-1 "http://127.0.0.1:3743/asse
 grep -qE '^HTTP/[0-9.]+ 206 ' <<<"$film_range"
 grep -qi '^content-range: bytes 0-1/' <<<"$film_range"
 grep -qiE '^content-length: 2[[:space:]]*$' <<<"$film_range"
+WILDBLOOM_EXPECT_HOME=https://storage.example:3742 node "$(dirname "$0")/own-node.mjs"
 echo "smoke OK: wildbloom"
