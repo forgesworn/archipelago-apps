@@ -9,7 +9,7 @@ app:
   category: nostr
 
   container:
-    image: ghcr.io/forgesworn/wildbloom:0.0.1-045e35a-1
+    image: ghcr.io/forgesworn/wildbloom:0.0.1-a7f79cb-1
     pull_policy: if-not-present
     network: archy-net
 
