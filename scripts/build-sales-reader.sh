@@ -19,7 +19,7 @@ serde_json = "1"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 TOML
 # Keep the source module's numeric boundary, without importing unrelated settings.
-rg '^pub const MAX:' "$archy/core/archipelago/src/settings/wildbloom_storage.rs" > "$fixture/src/wildbloom_storage.rs"
+grep '^pub const MAX:' "$archy/core/archipelago/src/settings/wildbloom_storage.rs" > "$fixture/src/wildbloom_storage.rs"
 cat > "$fixture/src/main.rs" <<'RS'
 mod wildbloom_storage;
 mod sales;
