@@ -45,7 +45,7 @@ runuser -u archipelago -- env XDG_RUNTIME_DIR=/run/user/1000 \
 
 This is a deliberate storage outage. Keep dashboard settings unchanged during
 recovery. The tool verifies the active dashboard revision, image and volume;
-stops the node; makes and byte-verifies a full offline backup; invokes exactly
+temporarily masks and stops the node to prevent an automatic restart; makes and byte-verifies a full offline backup; invokes exactly
 one existing operator operation using the running image ID and original pinned
 receiver configuration; then restarts the node. It never creates an invoice,
 accepts a new note, resets state, spends a refund, resolves issuer DNS or restores
@@ -69,7 +69,9 @@ are kept under `/var/lib/archipelago/wildbloom-recovery-backups/`; they contain
 private receiving assets and are never automatically restored or deleted.
 
 After power loss or SIGKILL, inspect the journal and service before retrying.
-Start `wildbloom-node.service` if needed. A `running` journal is an unknown outcome,
+Remove this tool's runtime mask and start the node if needed:
+`systemctl --user unmask --runtime wildbloom-node.service`, then
+`systemctl --user start wildbloom-node.service`. A `running` journal is an unknown outcome,
 not permission for a new payment. Reconciliation of the same existing order is
 the recovery path. Never restore a pre-recovery receiving backup over live state:
 it may contain assets already spent or rotated.

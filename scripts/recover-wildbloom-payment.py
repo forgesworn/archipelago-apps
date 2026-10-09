@@ -186,6 +186,8 @@ def recover(root, settings, action, order, execute=run, make_backup=backup):
     eligible(action, state, quote)
     image, profile = configuration(root, settings, execute)
     execute(['systemctl', '--user', 'is-active', '--quiet', SERVICE])
+    require(execute(['systemctl', '--user', 'show', '--property=LoadState', '--value', SERVICE]).strip() == 'loaded',
+            'Resolve the existing service mask before recovery.')
     directory = root / 'operator/recovery'
     private_dir(directory, create=True)
     lock_path = directory / 'operation.lock'
@@ -205,8 +207,13 @@ def recover(root, settings, action, order, execute=run, make_backup=backup):
         private_dir(backups, create=True)
         destination = backups / request_id
         stopped = False
+        masked = False
         outcome = None
         try:
+            # A runtime mask prevents the management daemon or systemd from
+            # restarting the storage writer while its offline backup is copied.
+            masked = True
+            execute(['systemctl', '--user', 'mask', '--runtime', SERVICE])
             # Always attempt restart if stop was requested, even on timeout.
             stopped = True
             execute(['systemctl', '--user', 'stop', SERVICE], timeout=120)
@@ -237,11 +244,12 @@ def recover(root, settings, action, order, execute=run, make_backup=backup):
             raise
         finally:
             # A timeout may leave the container alive. Refuse overlapping writers.
-            if stopped:
+            if stopped or masked:
                 try:
                     running = execute(['podman', 'ps', '--format', '{{.Names}}']).splitlines()
                     if CONTAINER in running:
                         execute(['podman', 'stop', '--time', '15', CONTAINER], timeout=30)
+                    execute(['systemctl', '--user', 'unmask', '--runtime', SERVICE])
                     execute(['systemctl', '--user', 'start', SERVICE], timeout=120)
                     execute(['systemctl', '--user', 'is-active', '--quiet', SERVICE])
                     value['node_restarted'] = True
@@ -249,7 +257,7 @@ def recover(root, settings, action, order, execute=run, make_backup=backup):
                     value['node_restarted'] = False
                     value['status'] = 'restart_required'
                     save(journal, value)
-                    raise Refused('Node restart could not be verified. Start wildbloom-node.service and inspect the order. Do not send another payment.') from None
+                    raise Refused('Node restart could not be verified. Unmask and start wildbloom-node.service, then inspect the order. Do not send another payment.') from None
             value['finished_at'] = int(time.time())
             save(journal, value)
         return dict(status=value['status'], order_state=outcome, backup=str(destination))

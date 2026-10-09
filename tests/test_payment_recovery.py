@@ -46,6 +46,8 @@ class RecoveryTests(unittest.TestCase):
                 'Mounts':[{'Destination':'/data','Source':str(self.root),'RW':True}],
                 'Config':{'Env':['WILDBLOOM_CHECKOUT_PROFILE=/data/operator/dashboard-profile-2.json',
                   'WILDBLOOM_ARCHIPELAGO_SETTINGS_REVISION=2','WILDBLOOM_QUOTA_BYTES=10000','WILDBLOOM_MAX_BLOB_BYTES=1000']}}])
+        if args[:3] == ['systemctl','--user','show']:
+            return 'loaded\n'
         if args[:2] == ['podman','ps']:
             return 'wildbloom-node\n' if self.running else ''
         if args[:3] == ['systemctl','--user','stop']:
@@ -74,6 +76,11 @@ class RecoveryTests(unittest.TestCase):
         result=self.recover()
         self.assertEqual(result['order_state'],'active')
         self.assertTrue(self.running)
+        mask = self.calls.index(['systemctl','--user','mask','--runtime',r.SERVICE])
+        stop = self.calls.index(['systemctl','--user','stop',r.SERVICE])
+        unmask = self.calls.index(['systemctl','--user','unmask','--runtime',r.SERVICE])
+        start = self.calls.index(['systemctl','--user','start',r.SERVICE])
+        self.assertLess(mask,stop); self.assertLess(stop,unmask); self.assertLess(unmask,start)
         self.assertTrue(Path(result['backup']).is_dir())
         self.assertEqual(self.journals()[0]['status'],'completed')
         self.assertFalse(any('lightning' in args or 'lnurlcash' in args for args in self.calls))
