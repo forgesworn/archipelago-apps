@@ -65,12 +65,14 @@ jobs:
           APP_IMAGE: ${{ steps.pins.outputs.app_image }}
           NODE_IMAGE: ${{ steps.pins.outputs.node_image }}
         run: |
+          set -euo pipefail
           export WILDBLOOM_SALES_READER="$GITHUB_WORKSPACE/.cache/sales-reader/target/debug/sales-reader"
           export WILDBLOOM_SOURCE_DIR="$GITHUB_WORKSPACE/.cache/services-app"
           export WILDBLOOM_CHECKOUT_FIXTURE="$GITHUB_WORKSPACE/.cache/services-node/target/debug/examples/checkout_fixture"
           export WILDBLOOM_TEST_TLS_KEY="$GITHUB_WORKSPACE/.cache/services-tls/key.pem"
           export NODE_EXTRA_CA_CERTS="$GITHUB_WORKSPACE/.cache/services-tls/cert.pem"
           node tests/smoke/packaged-services.mjs "$NODE_IMAGE" "$APP_IMAGE" | tee .cache/packaged-services-report.json
+          node --input-type=module -e 'import fs from "node:fs"; import assert from "node:assert/strict"; const r=JSON.parse(fs.readFileSync(".cache/packaged-services-report.json")); assert.equal(r.result,"passed"); assert.ok(r.checks.includes("dashboard read-only sales projection of the live packaged ledger and renewed allowance"));'
       - uses: actions/upload-artifact@v4
         if: success()
         with:
