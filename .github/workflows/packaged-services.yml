@@ -2,7 +2,7 @@ name: Packaged storage services
 on:
   push:
     branches: ['**']
-    paths: [tests/smoke/packaged-services.mjs, tests/smoke/package.json, tests/smoke/package-lock.json, .github/workflows/packaged-services.yml]
+    paths: [upstream/patches/**, scripts/build-sales-reader.sh, tests/smoke/packaged-services.mjs, tests/smoke/package.json, tests/smoke/package-lock.json, .github/workflows/packaged-services.yml]
   workflow_dispatch:
 permissions:
   contents: read
@@ -39,6 +39,11 @@ jobs:
         with: { toolchain: '1.94.1', cache: false }
       - name: Build only the synthetic receiver fixture
         run: cargo build --locked --manifest-path .cache/services-node/Cargo.toml -p wildbloom-checkout --example checkout_fixture
+      - name: Build the dashboard sales reader from the package patch set
+        run: |
+          ARCHY_FULL=1 scripts/fetch-archy.sh .cache/services-archy
+          scripts/apply-patches.sh .cache/services-archy
+          scripts/build-sales-reader.sh .cache/services-archy
       - name: Pull published images; do not rebuild the app or daemon
         env:
           APP_IMAGE: ${{ steps.pins.outputs.app_image }}
@@ -60,6 +65,7 @@ jobs:
           APP_IMAGE: ${{ steps.pins.outputs.app_image }}
           NODE_IMAGE: ${{ steps.pins.outputs.node_image }}
         run: |
+          export WILDBLOOM_SALES_READER="$GITHUB_WORKSPACE/.cache/sales-reader/target/debug/sales-reader"
           export WILDBLOOM_SOURCE_DIR="$GITHUB_WORKSPACE/.cache/services-app"
           export WILDBLOOM_CHECKOUT_FIXTURE="$GITHUB_WORKSPACE/.cache/services-node/target/debug/examples/checkout_fixture"
           export WILDBLOOM_TEST_TLS_KEY="$GITHUB_WORKSPACE/.cache/services-tls/key.pem"
