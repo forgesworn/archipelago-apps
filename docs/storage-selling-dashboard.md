@@ -94,6 +94,8 @@ Local checks on 9 October 2026:
   notes or real payments were submitted.
 
 CI repeats these checks alongside the existing backend suite and release build.
-Real Moneyer settlement, renewal/refund and paired-backup restore acceptance
-remain separate work before public sales. Live deployment evidence is recorded
-in the release PR rather than inferred from local tests.
+The [acceptance record](acceptance-own-node-sales.md) separately documents live
+Moneyer settlement, paired restore and a recipient-confirmed manual refund, plus
+the customer browser journey with synthetic receivers. Real renewal and automated
+refunds remain unverified. Public sales stay off until an operator configures and
+deliberately enables them; successful tests do not enable sales.

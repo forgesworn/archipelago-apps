@@ -1,4 +1,50 @@
-# Own-node default and seller capacity acceptance — 8 October 2026
+# Own-node default and seller capacity acceptance
+
+## 9 October 2026: deployed setup and customer acceptance
+
+The own-node integration and editable storage/selling dashboard are deployed on
+the test node. Selling remains optional and off. Personal storage requires no
+customer contact or refund terms; each operator supplies their own details if
+they choose to sell. The earlier local-only evidence is retained below.
+
+| Scope | Verified result |
+| --- | --- |
+| Packaged own-node browser | Authenticated browser selected the configured node; Tor and pool modes cleared or disabled the own-node path as appropriate |
+| Live dashboard | Authenticated draft save and reviewed apply passed; the node retained its 10 GiB quota and all 16 existing blobs byte-for-byte |
+| Real Moneyer payment, private test node | A 50-sat received note activated a 1 MiB allowance; paid upload and exact retrieval passed |
+| Payment recovery | The same receipt and file survived restart; a paired storage/checkout backup opened in a network-disabled clone and returned the same active receipt and exact file without another payment |
+| Manual refund | One journalled refund returned the full 50 sats; Moneyer reported settlement, the received note was retired, and the recipient independently confirmed receipt |
+| Optional-selling frontend | Released p3 files match the live HTTPS bytes; the generic seller name, blank contact/refund terms and sales-off configuration remain unchanged |
+
+Deployment evidence is recorded in [PR #6](https://github.com/forgesworn/archipelago-apps/pull/6)
+and [PR #9](https://github.com/forgesworn/archipelago-apps/pull/9).
+Private test keys, notes, order references, refund destination and journals are
+not repository artifacts. The refund endpoint did not return a payment preimage:
+issuer settlement and recipient confirmation are recorded separately from
+cryptographic proof. This was an operator-directed refund, not a shipped
+automatic refund feature or an interruption-recovery test.
+
+The [customer browser acceptance run](https://github.com/forgesworn/wildbloom/actions/runs/37925844453)
+passed against Wildbloom `a7f79cbb237f3db56f6cab2620bd6aae16eeb07e` and
+Wildbloom Node `2ea211e78e0bcd2624d6e4bc17031456c0742cef`, the upstream revisions
+pinned by this package. It exercised a real daemon with synthetic receivers:
+unpaid upload refusal, Lightning quote/invoice/activation, one invoice across
+checks, restart and private order recovery, encrypted paid upload, full-read
+audit, corruption refusal and LNURLcash renewal. It also checked that payment
+and audit records were not published to relays or persisted in browser storage,
+and checked service-control accessibility.
+
+That run used upstream source, not the Archipelago container or its added
+capacity patches. The package-specific capacity and own-node browser checks
+below cover those integration boundaries. Synthetic renewal is not live Moneyer
+renewal, and a one-host test is not multi-device or independent custody evidence.
+
+Remaining operational work belongs to an operator who chooses to sell: select
+their offer and support/refund terms, review the issuer, and deliberately enable
+sales. Public customer checkout on this test node remains disabled. Real renewal,
+automatic refunds and refund interruption recovery have not been accepted.
+
+## 8 October 2026: local implementation and container acceptance
 
 Local implementation and container acceptance. Images were built on macOS with
 Linux ARM64 containers. No image was published and no physical Archipelago node
@@ -46,8 +92,6 @@ submits a note or calls a receiving endpoint. Its Docker volume is temporary and
 removed afterwards. CI retains the existing version-to-version storage-volume
 upgrade test; that older-image upgrade was not repeated in this local run.
 
-Setup now supplies editable capacity and price defaults. Outstanding operational
-inputs: the operator's choice of disk quota, owner reserve, customer offer size,
-price and contact/refund terms; Moneyer evaluation-mint
-acceptance; public reachability, live receiving/refund and paired-backup testing;
-then image publication and installation on the intended node.
+At this checkpoint, publication, installation, live receiving/refund and paired
+backup testing were still outstanding. See the 9 October section above for the
+subsequent results and the remaining operator choices.
