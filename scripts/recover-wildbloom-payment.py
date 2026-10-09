@@ -300,6 +300,6 @@ if __name__ == '__main__':
     except Refused as error:
         print(str(error), file=sys.stderr)
         sys.exit(1)
-    except BaseException:
+    except (Exception, KeyboardInterrupt):
         print('Recovery did not complete. Inspect the local recovery journal and node service before retrying. No new payment was created.', file=sys.stderr)
         sys.exit(1)

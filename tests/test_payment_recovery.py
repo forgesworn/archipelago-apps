@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import sqlite3
 import tempfile
+import subprocess
+import sys
 import unittest
 
 spec = importlib.util.spec_from_file_location('recovery', Path(__file__).parents[1] / 'scripts/recover-wildbloom-payment.py')
@@ -116,6 +118,11 @@ class RecoveryTests(unittest.TestCase):
         self.db.chmod(0o644)
         with self.assertRaises(r.Refused): self.recover()
         self.assertFalse(self.calls)
+    def test_help_is_successful_and_does_not_claim_payment_failure(self):
+        result = subprocess.run([sys.executable, str(Path(r.__file__)), '--help'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stderr, '')
+        self.assertIn('--confirm-restart', result.stdout)
     def test_backup_refuses_symlinks(self):
         (self.root/'leak').symlink_to(self.settings)
         with self.assertRaises(r.Refused): self.recover()
