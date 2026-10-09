@@ -1,4 +1,4 @@
-From a5df1d2c7e0383190ae53b3a46056a0054c6b2c5 Mon Sep 17 00:00:00 2001
+From 99afbfec9a7a90427e84b88a0b37b67f687c6c2a Mon Sep 17 00:00:00 2001
 From: ForgeSworn <dev@forgesworn.dev>
 Date: Fri, 9 Oct 2026 07:58:51 +0100
 Subject: [PATCH] feat: configure Wildbloom storage and selling from Settings
@@ -11,12 +11,12 @@ Subject: [PATCH] feat: configure Wildbloom storage and selling from Settings
  .../src/container/prod_orchestrator.rs        |  84 +++
  core/archipelago/src/container/traits.rs      |   6 +
  core/archipelago/src/settings/mod.rs          |   2 +
- .../src/settings/wildbloom_storage.rs         | 491 ++++++++++++++++++
+ .../src/settings/wildbloom_storage.rs         | 493 ++++++++++++++++++
  neode-ui/src/router/index.ts                  |   5 +
  neode-ui/src/views/Settings.vue               |   6 +
  .../src/views/settings/StorageSelling.vue     | 210 ++++++++
  .../settings/__tests__/StorageSelling.test.ts | 101 ++++
- 12 files changed, 1338 insertions(+)
+ 12 files changed, 1340 insertions(+)
  create mode 100644 core/archipelago/src/api/rpc/wildbloom.rs
  create mode 100644 core/archipelago/src/settings/wildbloom_storage.rs
  create mode 100644 neode-ui/src/views/settings/StorageSelling.vue
@@ -639,10 +639,10 @@ index 8ffaf64..839995c 100644
 +pub mod wildbloom_storage;
 diff --git a/core/archipelago/src/settings/wildbloom_storage.rs b/core/archipelago/src/settings/wildbloom_storage.rs
 new file mode 100644
-index 0000000..adab532
+index 0000000..a8cf9ce
 --- /dev/null
 +++ b/core/archipelago/src/settings/wildbloom_storage.rs
-@@ -0,0 +1,491 @@
+@@ -0,0 +1,493 @@
 +//! Private operator settings. Drafts never affect the daemon; only an explicit
 +//! apply publishes a new immutable profile, reusing the same receiving ledger.
 +use anyhow::{ensure, Context, Result};
@@ -741,6 +741,7 @@ index 0000000..adab532
 +fn browser_origin(value: &str) -> bool {
 +    reqwest::Url::parse(value).is_ok_and(|url| {
 +        value.len() <= 2048
++            && !value.contains('*')
 +            && url.scheme() == "https"
 +            && url.username().is_empty()
 +            && url.password().is_none()
@@ -1005,6 +1006,7 @@ index 0000000..adab532
 +            "https://user@app.example",
 +            "https://app.example?x",
 +            "https://app.example#x",
++            "https://*.example",
 +            "https://app.example:0",
 +            "https://app.onion",
 +        ] {
