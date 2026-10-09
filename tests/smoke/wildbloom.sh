@@ -42,6 +42,11 @@ done
 for marker in 'id="demo-result"' 'Saved event or pool receipt' 'id="client-retrieve"' 'id="saved-recovery"' 'id="storage-layout-summary"' 'id="storage-audit"' 'id="checkout-offers"' 'id="recovery-film"' 'Read the story instead' "media-src 'self'"; do
   grep -qF "$marker" <<<"$html"
 done
+# The pinned bundle includes the post-success request-ID rotation used by private
+# checkout retries. Upstream services acceptance exercises the behaviour; this
+# package check catches accidentally building the preceding five-call bundle.
+random_uuid_count=$(docker exec "$cid" sh -c 'grep -o "randomUUID()" /usr/share/nginx/html/assets/index-*.js | wc -l')
+[ "$random_uuid_count" -ge 6 ] || { echo "FAIL: checkout retry rotation is missing from the browser bundle"; exit 1; }
 # The self-hosted explainer must decode and seek through nginx too. Require
 # exactly one hashed film and the MP4 MIME type, then exercise a byte range.
 film=$(docker exec "$cid" sh -c 'printf "%s\n" /usr/share/nginx/html/assets/*.mp4')

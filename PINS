@@ -5,7 +5,7 @@ ARCHY_REF=7abd04a7f680e72105ae783cecbe2268e3c8e71b
 # SHA-256 of the ARCHY_RELEASE frontend asset node/install-lite.sh installs:
 # releases/download/${ARCHY_RELEASE}/archipelago-frontend-${ARCHY_RELEASE#v}.tar.gz
 FRONTEND_SHA256=6d5135fa8e79b1bc84c8ed972770ebf99fe6611d819e5c1453f38f1593c26e66
-WILDBLOOM_REF=a7f79cbb237f3db56f6cab2620bd6aae16eeb07e
+WILDBLOOM_REF=1d2a7c3f2c4a1355ffb1d1f3b6269955f3588ecf
 WILDBLOOM_NODE_REF=2ea211e78e0bcd2624d6e4bc17031456c0742cef
 # Packaging revisions: bump when the image changes without an upstream pin change.
 # The node never re-pulls an existing tag, so every image change needs a new tag.
