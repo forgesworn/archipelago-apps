@@ -1,3 +1,17 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 0255f5f..f0d4488 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2162,7 +2162,6 @@ dependencies = [
+ [[package]]
+ name = "shelter-kit"
+ version = "0.5.0"
+-source = "git+https://github.com/forgesworn/shelter-kit?tag=v0.5.0#a2847bdfefd12ec1066a3e2f1cc3608fb9e3ee06"
+ dependencies = [
+  "axum",
+  "base64 0.23.1",
+diff --git a/Cargo.toml b/Cargo.toml
+index b99ddd6..e2a7f8f 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -1,4 +1,5 @@
@@ -6,26 +20,41 @@
  members = ["crates/wildbloomd", "crates/private-state", "crates/release-verify", "crates/wildbloom-checkout"]
  resolver = "3"
  
-@@ -33,3 +34,6 @@
+@@ -33,3 +34,6 @@ tracing = "0.1.41"
  tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
  url = "2.5.7"
  wildbloom-core = { package = "shelter-kit", git = "https://github.com/forgesworn/shelter-kit", tag = "v0.5.0" }
 +
 +[patch."https://github.com/forgesworn/shelter-kit"]
 +shelter-kit = { path = "vendor/shelter-kit" }
---- a/Cargo.lock
-+++ b/Cargo.lock
-@@ -2162,7 +2162,6 @@
- [[package]]
- name = "shelter-kit"
- version = "0.5.0"
--source = "git+https://github.com/forgesworn/shelter-kit?tag=v0.5.0#a2847bdfefd12ec1066a3e2f1cc3608fb9e3ee06"
- dependencies = [
-  "axum",
-  "base64 0.23.1",
+diff --git a/crates/wildbloom-checkout/src/profile.rs b/crates/wildbloom-checkout/src/profile.rs
+index 1574d58..21cbdef 100644
+--- a/crates/wildbloom-checkout/src/profile.rs
++++ b/crates/wildbloom-checkout/src/profile.rs
+@@ -13,6 +13,8 @@ use wildbloom_core::Store;
+ pub struct RuntimeProfile {
+     pub checkout: Config,
+     pub state: PathBuf,
++    #[serde(default)]
++    pub max_paid_bytes: Option<u64>,
+     pub browser_origins: Vec<String>,
+     pub phoenixd: Option<PhoenixProfile>,
+     #[serde(default)]
+@@ -114,7 +116,8 @@ impl RuntimeProfile {
+                     .collect(),
+             )?) as Arc<dyn crate::NoteTransport>)
+         };
+-        let checkout = Checkout::new(self.checkout, ledger, store, lightning, notes)?;
++        let checkout = Checkout::new(self.checkout, ledger, store, lightning, notes)?
++            .with_sales_capacity(self.max_paid_bytes)?;
+         if checkout.rails().is_empty() {
+             return Err(Error::Invalid);
+         }
+diff --git a/crates/wildbloom-checkout/src/service.rs b/crates/wildbloom-checkout/src/service.rs
+index f53a088..d41c98e 100644
 --- a/crates/wildbloom-checkout/src/service.rs
 +++ b/crates/wildbloom-checkout/src/service.rs
-@@ -34,6 +34,7 @@
+@@ -38,6 +38,7 @@ pub trait RefundTransport: Send + Sync {
  #[derive(Clone)]
  pub struct Checkout {
      config: Arc<Config>,
@@ -33,7 +62,7 @@
      ledger: Ledger,
      store: Store,
      lightning: Option<Arc<dyn LightningBackend>>,
-@@ -51,12 +52,21 @@
+@@ -56,6 +57,7 @@ impl Checkout {
          config.validate()?;
          Ok(Self {
              config: Arc::new(config),
@@ -41,10 +70,10 @@
              ledger,
              store,
              lightning,
-             notes,
-             receiving: Arc::new(tokio::sync::Mutex::new(())),
-         })
-+    }
+@@ -68,6 +70,14 @@ impl Checkout {
+         self.refunds = Some(refunds);
+         self
+     }
 +    /// Set the seller allocation ceiling before exposing this checkout.
 +    pub fn with_sales_capacity(mut self, max_paid_bytes: Option<u64>) -> Result<Self, Error> {
 +        if max_paid_bytes.is_some_and(|limit| limit > self.store.quota_bytes()) {
@@ -52,10 +81,11 @@
 +        }
 +        self.max_paid_bytes = max_paid_bytes;
 +        Ok(self)
-     }
++    }
      pub fn config(&self) -> &Config {
          &self.config
-@@ -183,15 +193,18 @@
+     }
+@@ -197,15 +207,18 @@ impl Checkout {
                  .state(&q.order_id, State::Reserving, State::Expired)?;
          } else {
              self.store
@@ -83,30 +113,11 @@
                  .map_err(|e| match e {
                      StoreError::QuotaExceeded => Error::Capacity,
                      StoreError::InvalidPaidSale | StoreError::PaidAllowanceUnavailable => {
---- a/crates/wildbloom-checkout/src/profile.rs
-+++ b/crates/wildbloom-checkout/src/profile.rs
-@@ -13,6 +13,8 @@
- pub struct RuntimeProfile {
-     pub checkout: Config,
-     pub state: PathBuf,
-+    #[serde(default)]
-+    pub max_paid_bytes: Option<u64>,
-     pub browser_origins: Vec<String>,
-     pub phoenixd: Option<PhoenixProfile>,
-     #[serde(default)]
-@@ -114,7 +116,8 @@
-                     .collect(),
-             )?) as Arc<dyn crate::NoteTransport>)
-         };
--        let checkout = Checkout::new(self.checkout, ledger, store, lightning, notes)?;
-+        let checkout = Checkout::new(self.checkout, ledger, store, lightning, notes)?
-+            .with_sales_capacity(self.max_paid_bytes)?;
-         if checkout.rails().is_empty() {
-             return Err(Error::Invalid);
-         }
+diff --git a/crates/wildbloom-checkout/src/tests.rs b/crates/wildbloom-checkout/src/tests.rs
+index 53248ff..83298d8 100644
 --- a/crates/wildbloom-checkout/src/tests.rs
 +++ b/crates/wildbloom-checkout/src/tests.rs
-@@ -1640,3 +1640,30 @@
+@@ -1850,3 +1850,30 @@ fn offers_fit_the_browser_transport_without_precision_loss() {
          .collect();
      assert!(c.validate().is_err());
  }
