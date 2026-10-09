@@ -96,6 +96,7 @@ Local checks on 9 October 2026:
 CI repeats these checks alongside the existing backend suite and release build.
 The [acceptance record](acceptance-own-node-sales.md) separately documents live
 Moneyer settlement, paired restore and a recipient-confirmed manual refund, plus
-the customer browser journey with synthetic receivers. Real renewal and automated
+the customer browser journey against the published Archipelago images with
+synthetic receivers, including renewal at the paid-capacity ceiling. Real renewal and automated
 refunds remain unverified. Public sales stay off until an operator configures and
 deliberately enables them; successful tests do not enable sales.

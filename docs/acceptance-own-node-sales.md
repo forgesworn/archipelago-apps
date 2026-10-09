@@ -34,10 +34,43 @@ audit, corruption refusal and LNURLcash renewal. It also checked that payment
 and audit records were not published to relays or persisted in browser storage,
 and checked service-control accessibility.
 
-That run used upstream source, not the Archipelago container or its added
-capacity patches. The package-specific capacity and own-node browser checks
-below cover those integration boundaries. Synthetic renewal is not live Moneyer
+That upstream run is now complemented by the
+[published-image customer journey](https://github.com/forgesworn/archipelago-apps/actions/runs/37929711659),
+which passed on 9 October using the actual Archipelago app and patched Node
+containers. Both images were pulled from GHCR and run by immutable digest;
+neither application nor daemon was rebuilt for this acceptance run.
+
+| Published image | Accepted registry digest |
+| --- | --- |
+| `wildbloom:0.0.1-a7f79cb-2` | `sha256:7880b875100ebc216072c57886e4f7cb4b39c0aee9212deeabc9ff4049c677e6` |
+| `wildbloom-node:0.3.5-2ea211e-2` | `sha256:ff5ac6d45b471cfa809b07bcfe75fd2ae5cd9523f2f41c00d2fba4acb8750b95` |
+
+The packaged browser selected its own node on first load and after reload.
+Lightning purchase, private order recovery, encrypted upload, full-read retrieval
+after daemon restart, deliberate corruption refusal and LNURLcash renewal all
+passed. With the 1 MiB paid-capacity ceiling full, a second buyer was refused
+before and after restarts; the existing buyer could renew without counting their
+capacity twice. Restart and payment checks created neither a replacement invoice
+nor another note rotation. Browser persistence, payment/proof relay publication
+boundaries and service-control accessibility also passed.
+
+This Linux/Chromium run used isolated synthetic receiving services and an
+ephemeral loopback HTTPS certificate. It did not change the deployed node, enable
+public sales or submit real payments. Synthetic renewal is not live Moneyer
 renewal, and a one-host test is not multi-device or independent custody evidence.
+The downloadable `packaged-services-report` CI artifact records image identities
+and the passed checks.
+
+Repeat after the images selected by `PINS` have been published:
+
+```sh
+gh workflow run packaged-services.yml --ref main
+```
+
+The workflow builds only the synthetic receiver example at `WILDBLOOM_NODE_REF`
+and imports test helpers from `WILDBLOOM_REF`. The browser app and storage daemon
+come from the published images. It also runs when its harness, dependencies or
+workflow change; image publication itself remains a separate operation.
 
 Remaining operational work belongs to an operator who chooses to sell: select
 their offer and support/refund terms, review the issuer, and deliberately enable

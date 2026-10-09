@@ -1,0 +1,72 @@
+name: Packaged storage services
+on:
+  push:
+    branches: ['**']
+    paths: [tests/smoke/packaged-services.mjs, tests/smoke/package.json, tests/smoke/package-lock.json, .github/workflows/packaged-services.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  customer-flow:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
+      - name: Read reviewed source pins and published image tags
+        id: pins
+        run: |
+          source PINS
+          source scripts/lib/app-image.bash
+          echo "app_ref=$WILDBLOOM_REF" >> "$GITHUB_OUTPUT"
+          echo "node_ref=$WILDBLOOM_NODE_REF" >> "$GITHUB_OUTPUT"
+          app_image wildbloom
+          echo "app_image=$APP_TAG" >> "$GITHUB_OUTPUT"
+          app_image wildbloom-node
+          echo "node_image=$APP_TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: forgesworn/wildbloom
+          ref: ${{ steps.pins.outputs.app_ref }}
+          path: .cache/services-app
+      - uses: actions/checkout@v4
+        with:
+          repository: forgesworn/wildbloom-node
+          ref: ${{ steps.pins.outputs.node_ref }}
+          path: .cache/services-node
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with: { toolchain: '1.94.1', cache: false }
+      - name: Build only the synthetic receiver fixture
+        run: cargo build --locked --manifest-path .cache/services-node/Cargo.toml -p wildbloom-checkout --example checkout_fixture
+      - name: Pull published images; do not rebuild the app or daemon
+        env:
+          APP_IMAGE: ${{ steps.pins.outputs.app_image }}
+          NODE_IMAGE: ${{ steps.pins.outputs.node_image }}
+        run: |
+          docker pull "$APP_IMAGE"
+          docker pull "$NODE_IMAGE"
+      - name: Install test tools and generate ephemeral loopback TLS certificate
+        run: |
+          npm ci --prefix tests/smoke --ignore-scripts
+          cd tests/smoke && npx playwright-core install --with-deps chromium
+          cd ../..
+          mkdir -p .cache/services-tls
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout .cache/services-tls/key.pem -out .cache/services-tls/cert.pem \
+            -subj '/CN=127.0.0.1' -addext 'subjectAltName=IP:127.0.0.1'
+      - name: Purchase, upload, restart, audit and renew through packaged browser
+        env:
+          APP_IMAGE: ${{ steps.pins.outputs.app_image }}
+          NODE_IMAGE: ${{ steps.pins.outputs.node_image }}
+        run: |
+          export WILDBLOOM_SOURCE_DIR="$GITHUB_WORKSPACE/.cache/services-app"
+          export WILDBLOOM_CHECKOUT_FIXTURE="$GITHUB_WORKSPACE/.cache/services-node/target/debug/examples/checkout_fixture"
+          export WILDBLOOM_TEST_TLS_KEY="$GITHUB_WORKSPACE/.cache/services-tls/key.pem"
+          export NODE_EXTRA_CA_CERTS="$GITHUB_WORKSPACE/.cache/services-tls/cert.pem"
+          node tests/smoke/packaged-services.mjs "$NODE_IMAGE" "$APP_IMAGE" | tee .cache/packaged-services-report.json
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: packaged-services-report
+          path: .cache/packaged-services-report.json
