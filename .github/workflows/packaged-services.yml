@@ -54,8 +54,8 @@ jobs:
       - name: Install test tools and generate ephemeral loopback TLS certificate
         run: |
           npm ci --prefix tests/smoke --ignore-scripts
-          cd tests/smoke && npx playwright-core install --with-deps chromium
-          cd ../..
+          # The harness uses the runner's Google Chrome, not downloaded Chromium.
+          test -x /usr/bin/google-chrome
           mkdir -p .cache/services-tls
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
             -keyout .cache/services-tls/key.pem -out .cache/services-tls/cert.pem \

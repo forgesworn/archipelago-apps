@@ -484,11 +484,15 @@ try {
   assert.equal(inventory.summary.paid_orders, 2);
   assert.equal(inventory.summary.retained_customers, 1);
   assert.equal(inventory.summary.allocated_bytes, 1024 * 1024);
-  assert.equal(inventory.orders.length, 2);
-  assert.deepEqual(inventory.orders[0].allowance, inventory.orders[1].allowance, "Renewal shares the latest allowance dates");
-  assert.equal(inventory.orders[0].allowance.status, "active");
+  const activated = inventory.orders.filter(order => order.state === "active");
+  assert.equal(activated.length, 2);
+  // The daemon journals before reserving capacity. The four refused buyers'
+  // requests remain reserving; viewing them must not turn them into purchases.
+  assert.equal(inventory.orders.filter(order => order.state === "reserving").length, 4);
+  assert.equal(inventory.summary.needs_attention, 4);
+  assert.deepEqual(activated[0].allowance, activated[1].allowance, "Renewal shares the latest allowance dates");
+  assert.equal(activated[0].allowance.status, "active");
   for (const order of inventory.orders) {
-    assert.equal(order.state, "active");
     for (const forbidden of ["invoice", "rotation", "payment_hash", "settlement", "note_id"]) assert.equal(forbidden in order, false);
   }
   assert.equal((await (await fetch(mintOrigin)).json()).note_rotations, 1, "Dashboard read must not contact the receiver");
