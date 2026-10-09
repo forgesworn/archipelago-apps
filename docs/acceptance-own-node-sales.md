@@ -3,18 +3,22 @@
 ## 9 October 2026: deployed setup and customer acceptance
 
 The own-node integration and editable storage/selling dashboard are deployed on
-the test node. Selling remains optional and off. Personal storage requires no
-customer contact or refund terms; each operator supplies their own details if
-they choose to sell. The earlier local-only evidence is retained below.
+the test node. Selling remains optional; it is deliberately enabled on this test
+node with an operator-selected 500-sat, 5 GiB, 30-day offer and 7-day retention
+grace. Personal storage requires no customer contact or refund terms; each
+operator supplies their own details if they choose to sell. The earlier
+local-only evidence is retained below.
 
 | Scope | Verified result |
 | --- | --- |
 | Packaged own-node browser | Authenticated browser selected the configured node; Tor and pool modes cleared or disabled the own-node path as appropriate |
 | Live dashboard | Authenticated draft save and reviewed apply passed; the node retained its 10 GiB quota and all 16 existing blobs byte-for-byte |
-| Real Moneyer payment, private test node | A 50-sat received note activated a 1 MiB allowance; paid upload and exact retrieval passed |
+| Earlier Moneyer payment and refund, private test node | A 50-sat received note activated a 1 MiB allowance; paid upload and exact retrieval passed before the full refund exercise |
+| Enabled seller acceptance | A separate 500-sat Moneyer note activated a 5 GiB allowance; a 65,608-byte encrypted blob was uploaded, fetched and decrypted to the exact 129-byte source |
 | Payment recovery | The same receipt and file survived restart; a paired storage/checkout backup opened in a network-disabled clone and returned the same active receipt and exact file without another payment |
+| Enabled seller restart | The active 5 GiB allowance and encrypted blob survived a real daemon restart; both databases passed integrity checks and the store retained all 17 blobs (180,394 bytes) |
 | Manual refund | One journalled refund returned the full 50 sats; Moneyer reported settlement, the received note was retired, and the recipient independently confirmed receipt |
-| Optional-selling frontend | Released p3 files match the live HTTPS bytes; the generic seller name, blank contact/refund terms and sales-off configuration remain unchanged |
+| Optional-selling frontend | The dashboard keeps price, capacity, duration, grace and delivery limits editable; public support contact remains optional |
 
 Deployment evidence is recorded in [PR #6](https://github.com/forgesworn/archipelago-apps/pull/6)
 and [PR #9](https://github.com/forgesworn/archipelago-apps/pull/9).
@@ -23,6 +27,13 @@ not repository artifacts. The refund endpoint did not return a payment preimage:
 issuer settlement and recipient confirmation are recorded separately from
 cryptographic proof. This was an operator-directed refund, not a shipped
 automatic refund feature or an interruption-recovery test.
+
+Before the enabled-seller restart, the live checkout process was found to hold
+an uncheckpointed SQLite WAL whose directory entries had been removed. The
+operator stopped the writer, recovered the database and WAL through its open file
+descriptors, verified the active and quoted orders in an isolated copy, then
+installed a checkpointed database while retaining a private recovery copy. The
+post-restart checkout and storage databases both report `integrity_check=ok`.
 
 The [customer browser acceptance run](https://github.com/forgesworn/wildbloom/actions/runs/37925844453)
 passed against Wildbloom `a7f79cbb237f3db56f6cab2620bd6aae16eeb07e` and
@@ -72,10 +83,10 @@ and imports test helpers from `WILDBLOOM_REF`. The browser app and storage daemo
 come from the published images. It also runs when its harness, dependencies or
 workflow change; image publication itself remains a separate operation.
 
-Remaining operational work belongs to an operator who chooses to sell: select
-their offer and support/refund terms, review the issuer, and deliberately enable
-sales. Public customer checkout on this test node remains disabled. Real renewal,
-automatic refunds and refund interruption recovery have not been accepted.
+The test node's operator has selected the current offer, reviewed Moneyer terms
+and deliberately enabled public checkout. Other operators choose their own values
+and may leave selling disabled. Real renewal, automatic refunds and refund
+interruption recovery have not been accepted.
 
 ## 8 October 2026: local implementation and container acceptance
 
