@@ -46,8 +46,9 @@ It requires Python 3 and PyYAML (also used by the manifest validator).
 3. Set the per-customer offer capacity, term, grace period and integer sat price.
    Capacity counts ciphertext, including encryption overhead. Delivery is
    operator-managed; `delivery_bytes` is not an enforced download meter.
-   Fill in real contact/refund terms and increment `offer_revision` when changing
-   published terms. Existing quotes retain their original terms.
+   Fill in real sale/refund terms and increment `offer_revision` when changing
+   published terms. A public email, Nostr key, URL or personal contact details
+   are optional. Existing quotes retain their original terms.
 4. Prepare the files with an explicit DNS lookup:
 
    ```sh

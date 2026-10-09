@@ -2,7 +2,7 @@
 
 The patched Archipelago dashboard adds **Settings → Storage & selling** at
 `/dashboard/settings/storage`. Requires matching backend and frontend
-`v1.9.0-alpha-p4` assets and Wildbloom Node `0.3.5-2ea211e-2`, installed using
+`v1.9.0-alpha-p6` assets and Wildbloom Node `0.3.5-2ea211e-2`, installed using
 the packaged rootless Quadlet and `/var/lib/archipelago/wildbloom-node` volume.
 This is a targeted test-node package, not a new upstream OTA or ISO.
 
@@ -14,13 +14,13 @@ This is a targeted test-node package, not a new upstream OTA or ISO.
    10 GiB that fits the remaining capacity. With no running node the draft
    suggestions are 200 GiB total and 100 GiB reserved, and applying is blocked.
 2. Selling is optional. Before checkout has been enabled, you can use your node
-   for your own files and save or apply storage settings with contact/refund
-   terms blank and sales off. Each
-   operator supplies their own seller details if they later enable sales;
-   a support address, Nostr public key or support page can be used rather than
-   personal contact details. No specific operator identity is preconfigured.
+   for your own files and save or apply storage settings with sale/refund terms
+   blank and sales off. Each operator supplies their own seller details if they
+   later enable sales. Published terms describe fulfilment and full-refund
+   conditions; a public email, Nostr key, URL or personal contact details are
+   optional. No specific operator identity is preconfigured.
    Choose total quota, owner reserve, file size limit, customer capacity, price,
-   term, recovery grace, delivery allowance, seller name and contact/refund terms.
+   term, recovery grace, delivery allowance, seller name and sale/refund terms.
    Every offered value is editable; zero reserve and zero grace are supported.
    Delivery remains operator-managed, not an enforced bandwidth meter.
    Add exact HTTPS origins under **Other customer app origins** to accept
