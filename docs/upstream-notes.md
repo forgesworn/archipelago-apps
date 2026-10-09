@@ -342,3 +342,19 @@ app's `manifest.yml` declares under `metadata`. The app details sidebar
 the manifest's `metadata` block for the icon (`real_manifest_metadata`).
 Patch `0016` reads `author` and `license` from it too, keeping the old values
 as fallbacks.
+
+## Encrypted message and mesh contact stores can be read as plaintext (archy `7abd04a`, v1.9.0-alpha)
+
+`storage_crypto` writes `nonce ‖ ciphertext` with a random 12-byte nonce,
+and the two stores that use it (`node_message.rs`, the chat message store,
+and `load_mesh_contacts` in `mesh/mod.rs`) decide whether a file is legacy
+plaintext by its first byte alone: `{` or `[` means plaintext. The nonce's
+first byte is one of those in 2 of every 256 saves. On the next start that
+file is handed to `serde_json` as plaintext, fails to parse, and the store
+loads empty; the next save then overwrites the file. The message store
+also re-saves at once, because it believes it has just migrated a plaintext
+file. `storage_crypto::tests::seal_open_round_trips` asserts the same
+first-byte rule, so it fails about once in 128 runs (it failed our CI on
+9 Oct). Patch `0017` adds `storage_crypto::open_stored`, which tries the
+key first and accepts plaintext only if it also parses as JSON, so the
+on-disk format is unchanged. Both stores now load through it.
