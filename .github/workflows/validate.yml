@@ -13,6 +13,7 @@ jobs:
         with: { toolchain: stable, cache: false }
       - run: sudo apt-get update && sudo apt-get install -y python3-yaml
       - run: python3 tests/test-sales-config.py
+      - run: python3 -m unittest discover -s tests -p test_payment_recovery.py -v
       - run: scripts/fetch-archy.sh
       - run: scripts/apply-patches.sh
       - run: scripts/validate.sh

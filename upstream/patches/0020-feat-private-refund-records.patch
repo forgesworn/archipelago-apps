@@ -1,0 +1,527 @@
+From 0c13099b4fb9831cb85213f66ed2d144fc461e20 Mon Sep 17 00:00:00 2001
+From: archipelago-apps <ci@invalid>
+Date: Fri, 9 Oct 2026 14:55:20 +0100
+Subject: [PATCH] feat: record private operator refunds and explain payment
+ recovery
+
+---
+ core/archipelago/src/api/rpc/dispatcher.rs    |   1 +
+ core/archipelago/src/api/rpc/wildbloom.rs     |  33 +++
+ core/archipelago/src/settings/mod.rs          |   4 +-
+ .../src/settings/wildbloom_refunds.rs         | 229 ++++++++++++++++++
+ .../src/settings/wildbloom_sales.rs           |  24 +-
+ neode-ui/src/views/settings/StorageRefund.vue |  35 +++
+ neode-ui/src/views/settings/StorageSales.vue  |  17 +-
+ .../settings/__tests__/StorageRefund.test.ts  |  40 +++
+ 8 files changed, 376 insertions(+), 7 deletions(-)
+ create mode 100644 core/archipelago/src/settings/wildbloom_refunds.rs
+ create mode 100644 neode-ui/src/views/settings/StorageRefund.vue
+ create mode 100644 neode-ui/src/views/settings/__tests__/StorageRefund.test.ts
+
+diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
+index c3f3780..fdb7431 100644
+--- a/core/archipelago/src/api/rpc/dispatcher.rs
++++ b/core/archipelago/src/api/rpc/dispatcher.rs
+@@ -67,6 +67,7 @@ impl RpcHandler {
+             "package.versions" => self.handle_package_versions(params).await,
+             "package.set-config" => self.clone().handle_package_set_config(params).await,
+             "wildbloom.storage.orders" => self.handle_wildbloom_orders(params).await,
++            "wildbloom.storage.record-refund" => self.clone().handle_wildbloom_refund(params).await,
+             "wildbloom.storage.get" => self.handle_wildbloom_get().await,
+             "wildbloom.storage.save" => self.handle_wildbloom_save(params).await,
+             "wildbloom.storage.apply" => self.clone().handle_wildbloom_apply(params).await,
+diff --git a/core/archipelago/src/api/rpc/wildbloom.rs b/core/archipelago/src/api/rpc/wildbloom.rs
+index 116e788..385f19a 100644
+--- a/core/archipelago/src/api/rpc/wildbloom.rs
++++ b/core/archipelago/src/api/rpc/wildbloom.rs
+@@ -158,6 +158,38 @@ fn check_revision(record: &Record, expected: u64) -> Result<()> {
+ }
+ 
+ impl RpcHandler {
++    pub(super) async fn handle_wildbloom_refund(
++        self: Arc<Self>,
++        params: Option<Value>,
++    ) -> Result<Value> {
++        use crate::settings::wildbloom_refunds;
++        let request: wildbloom_refunds::Request =
++            serde_json::from_value(params.context("Missing refund record")?)
++                .context("Invalid refund record")?;
++        let root = self
++            .orchestrator
++            .as_ref()
++            .context("Wildbloom container management is unavailable")?
++            .wildbloom_settings_root()
++            .await?;
++        // Finish the durable write even if the browser disconnects. The lock is
++        // held inside the blocking task so cancellation cannot release it early.
++        tokio::spawn(async move {
++            let guard = storage::LOCK.lock().await;
++            let result =
++                tokio::task::spawn_blocking(move || wildbloom_refunds::record(&root, request))
++                    .await?;
++            drop(guard);
++            result.map(|r| json!({"status":"recorded", "refund":r}))
++        })
++        .await?
++        .map_err(|_| {
++            anyhow::anyhow!(
++                "Refund record could not be saved. Refresh before retrying. No money was sent."
++            )
++        })
++    }
++
+     pub(super) async fn handle_wildbloom_orders(&self, params: Option<Value>) -> Result<Value> {
+         use crate::settings::wildbloom_sales;
+         let request: wildbloom_sales::PageRequest =
+@@ -426,6 +458,7 @@ mod tests {
+         for method in [
+             "wildbloom.storage.get",
+             "wildbloom.storage.orders",
++            "wildbloom.storage.record-refund",
+             "wildbloom.storage.save",
+             "wildbloom.storage.apply",
+             "wildbloom.storage.resolve-moneyer",
+diff --git a/core/archipelago/src/settings/mod.rs b/core/archipelago/src/settings/mod.rs
+index 9630a64..d293dc9 100644
+--- a/core/archipelago/src/settings/mod.rs
++++ b/core/archipelago/src/settings/mod.rs
+@@ -10,5 +10,7 @@ pub mod transport;
+ 
+ pub mod bitcoin_storage;
+ 
+-pub mod wildbloom_storage;
+ pub mod wildbloom_sales;
++pub mod wildbloom_storage;
++
++pub mod wildbloom_refunds;
+diff --git a/core/archipelago/src/settings/wildbloom_refunds.rs b/core/archipelago/src/settings/wildbloom_refunds.rs
+new file mode 100644
+index 0000000..7d02a2d
+--- /dev/null
++++ b/core/archipelago/src/settings/wildbloom_refunds.rs
+@@ -0,0 +1,229 @@
++//! Private attestations of refunds the operator has already completed elsewhere.
++//! This journal cannot send money or alter checkout/allowance state.
++use super::{wildbloom_sales as sales, wildbloom_storage as storage};
++use anyhow::{ensure, Context, Result};
++use rusqlite::OptionalExtension;
++use serde::{Deserialize, Serialize};
++use std::{collections::BTreeMap, path::Path};
++
++#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct Refund {
++    pub order_id: String,
++    pub amount_msat: u64,
++    pub payment_hash: String,
++    pub recorded_at: u64,
++}
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct Request {
++    pub order_id: String,
++    pub amount_msat: u64,
++    pub payment_hash: String,
++    pub confirm_received: bool,
++}
++fn hash(v: &str) -> bool {
++    v.len() == 64
++        && v.bytes()
++            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
++}
++fn valid(r: &Refund) -> bool {
++    sales::id(&r.order_id)
++        && hash(&r.payment_hash)
++        && r.amount_msat > 0
++        && r.amount_msat <= storage::MAX
++        && r.amount_msat % 1000 == 0
++        && r.recorded_at > 0
++        && r.recorded_at <= storage::MAX
++}
++pub fn read(root: &Path) -> Result<BTreeMap<String, Refund>> {
++    let path = root.join("operator/refunds.json");
++    let meta = match std::fs::symlink_metadata(&path) {
++        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
++        other => other?,
++    };
++    use std::os::unix::fs::PermissionsExt;
++    ensure!(
++        meta.is_file() && meta.len() <= 4_000_000 && meta.permissions().mode() & 0o077 == 0,
++        "Invalid refund journal"
++    );
++    #[derive(Deserialize)]
++    #[serde(deny_unknown_fields)]
++    struct Journal {
++        version: u8,
++        refunds: Vec<Refund>,
++    }
++    let journal: Journal = serde_json::from_slice(&std::fs::read(path)?)?;
++    ensure!(
++        journal.version == 1 && journal.refunds.len() <= 10000,
++        "Unsupported refund journal"
++    );
++    let mut records = BTreeMap::new();
++    let mut hashes = std::collections::BTreeSet::new();
++    for r in journal.refunds {
++        ensure!(
++            valid(&r) && hashes.insert(r.payment_hash.clone()),
++            "Invalid refund record"
++        );
++        ensure!(
++            records.insert(r.order_id.clone(), r).is_none(),
++            "Duplicate refund record"
++        );
++    }
++    Ok(records)
++}
++/// Caller holds storage::LOCK, including throughout the blocking write.
++pub fn record(root: &Path, request: Request) -> Result<Refund> {
++    let now = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)?
++        .as_secs();
++    let refund = Refund {
++        order_id: request.order_id,
++        amount_msat: request.amount_msat,
++        payment_hash: request.payment_hash,
++        recorded_at: now,
++    };
++    ensure!(
++        request.confirm_received && valid(&refund),
++        "Confirm the completed refund and enter a valid payment hash"
++    );
++    sales::directory(root)?;
++    let dir = root.join("operator");
++    sales::directory(&dir)?;
++    sales::directory(&dir.join("checkout"))?;
++    let db = sales::open(&dir.join("checkout/checkout.sqlite3"))?;
++    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
++    ensure!(version == 1, "Unsupported checkout schema");
++    let (state, quote): (String, String) = db
++        .query_row(
++            "SELECT state,CASE WHEN length(quote)<=65536 THEN quote END FROM orders WHERE id=?1",
++            [&refund.order_id],
++            |r| Ok((r.get(0)?, r.get(1)?)),
++        )
++        .optional()?
++        .context("Order unavailable")?;
++    ensure!(
++        ["active", "refund_required"].contains(&state.as_str()),
++        "Reconcile the payment before recording a refund"
++    );
++    let quote: serde_json::Value = serde_json::from_str(&quote)?;
++    ensure!(
++        quote["order_id"] == refund.order_id
++            && quote["offer"]["price_msat"].as_u64() == Some(refund.amount_msat),
++        "This journal records a full refund of the original storage price"
++    );
++    let mut records = read(root)?;
++    if let Some(existing) = records.get(&refund.order_id) {
++        ensure!(
++            existing.amount_msat == refund.amount_msat
++                && existing.payment_hash == refund.payment_hash,
++            "A different refund is already recorded for this order"
++        );
++        return Ok(existing.clone());
++    }
++    ensure!(
++        records.len() < 10000
++            && !records
++                .values()
++                .any(|r| r.payment_hash == refund.payment_hash),
++        "Refund reference already recorded or journal full"
++    );
++    records.insert(refund.order_id.clone(), refund.clone());
++    let bytes = serde_json::to_vec(
++        &serde_json::json!({"version":1,"refunds":records.values().collect::<Vec<_>>()}),
++    )?;
++    let temp = dir.join(format!("refunds-{}.tmp", uuid::Uuid::new_v4()));
++    storage::write_private(&temp, &bytes)?;
++    std::fs::rename(temp, dir.join("refunds.json"))?;
++    std::fs::File::open(dir)?.sync_all()?;
++    Ok(refund)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::os::unix::fs::PermissionsExt;
++    fn fixture(state: &str) -> tempfile::TempDir {
++        let d = tempfile::tempdir().unwrap();
++        std::fs::create_dir_all(d.path().join("operator/checkout")).unwrap();
++        let p = d.path().join("operator/checkout/checkout.sqlite3");
++        let db = rusqlite::Connection::open(&p).unwrap();
++        db.execute_batch(
++            "PRAGMA user_version=1; CREATE TABLE orders(id TEXT,state TEXT,quote TEXT)",
++        )
++        .unwrap();
++        for id in ["order-a", "order-b"] {
++            db.execute(
++                "INSERT INTO orders VALUES(?1,?2,?3)",
++                rusqlite::params![
++                    id,
++                    state,
++                    serde_json::json!({"order_id":id,"offer":{"price_msat":50000}}).to_string()
++                ],
++            )
++            .unwrap();
++        }
++        drop(db);
++        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600)).unwrap();
++        d
++    }
++    fn request() -> Request {
++        Request {
++            order_id: "order-a".into(),
++            amount_msat: 50000,
++            payment_hash: "ab".repeat(32),
++            confirm_received: true,
++        }
++    }
++    #[test]
++    fn refund_records_are_idempotent_private_and_never_change_checkout() {
++        let d = fixture("refund_required");
++        let p = d.path().join("operator/checkout/checkout.sqlite3");
++        let before = std::fs::read(&p).unwrap();
++        let first = record(d.path(), request()).unwrap();
++        assert_eq!(record(d.path(), request()).unwrap(), first);
++        assert_eq!(read(d.path()).unwrap().len(), 1);
++        assert_eq!(std::fs::read(p).unwrap(), before);
++        let mut other = request();
++        other.payment_hash = "cd".repeat(32);
++        assert!(record(d.path(), other).is_err());
++        let mut other = request();
++        other.order_id = "order-b".into();
++        assert!(record(d.path(), other).is_err());
++    }
++    #[test]
++    fn refunds_refuse_uncertain_orders_partial_amounts_and_missing_confirmation() {
++        for state in [
++            "lnurl_pending",
++            "settled",
++            "awaiting_payment",
++            "quoted",
++            "invoice_pending",
++        ] {
++            let d = fixture(state);
++            assert!(record(d.path(), request()).is_err());
++            assert!(!d.path().join("operator/refunds.json").exists());
++        }
++        let d = fixture("active");
++        let mut r = request();
++        r.amount_msat = 49000;
++        assert!(record(d.path(), r).is_err());
++        let mut r = request();
++        r.confirm_received = false;
++        assert!(record(d.path(), r).is_err());
++        let mut r = request();
++        r.payment_hash = "lnurl-bearer-secret".into();
++        assert!(record(d.path(), r).is_err());
++        record(d.path(), request()).unwrap();
++    }
++    #[test]
++    fn corrupt_or_public_refund_journals_fail_closed() {
++        let d = fixture("active");
++        record(d.path(), request()).unwrap();
++        let p = d.path().join("operator/refunds.json");
++        std::fs::write(&p, "broken").unwrap();
++        assert!(read(d.path()).is_err());
++        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
++        assert!(record(d.path(), request()).is_err());
++    }
++}
+diff --git a/core/archipelago/src/settings/wildbloom_sales.rs b/core/archipelago/src/settings/wildbloom_sales.rs
+index 0f42fbe..c3065df 100644
+--- a/core/archipelago/src/settings/wildbloom_sales.rs
++++ b/core/archipelago/src/settings/wildbloom_sales.rs
+@@ -52,7 +52,7 @@ impl PageRequest {
+         Ok(())
+     }
+ }
+-fn id(value: &str) -> bool {
++pub(super) fn id(value: &str) -> bool {
+     !value.is_empty()
+         && value.len() <= 128
+         && value
+@@ -77,14 +77,14 @@ fn plain(value: &str, max: usize) -> Result<()> {
+     );
+     Ok(())
+ }
+-fn directory(path: &Path) -> Result<()> {
++pub(super) fn directory(path: &Path) -> Result<()> {
+     ensure!(
+         std::fs::symlink_metadata(path)?.is_dir(),
+         "Invalid sales directory"
+     );
+     Ok(())
+ }
+-fn open(path: &Path) -> Result<Connection> {
++pub(super) fn open(path: &Path) -> Result<Connection> {
+     use std::os::unix::fs::PermissionsExt;
+     for suffix in ["", "-wal", "-shm"] {
+         let file = path.with_file_name(format!(
+@@ -169,6 +169,21 @@ fn read_at(root: &Path, expected: bool, request: &PageRequest, now: u64) -> Resu
+     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+     ensure!(version == 1, "Unsupported checkout schema");
+     let store = open(&root.join("wildbloom.sqlite3"))?;
++    let refunds = super::wildbloom_refunds::read(root)?;
++    for refund in refunds.values() {
++        let (state, quote): (String, String) = db.query_row(
++            "SELECT state,CASE WHEN length(quote)<=65536 THEN quote END FROM orders WHERE id=?1",
++            [&refund.order_id],
++            |r| Ok((r.get(0)?, r.get(1)?)),
++        )?;
++        let q: Quote = serde_json::from_str(&quote)?;
++        ensure!(
++            ["active", "refund_required"].contains(&state.as_str())
++                && q.order_id == refund.order_id
++                && q.offer.price_msat == refund.amount_msat,
++            "Refund does not match checkout history"
++        );
++    }
+     let mut total = 0u64;
+     let mut attention = 0u64;
+     let mut paid = 0u64;
+@@ -281,7 +296,8 @@ fn read_at(root: &Path, expected: bool, request: &PageRequest, now: u64) -> Resu
+             json!({"order_id":order_id,"state":state,"customer_pubkey":quote.signer_pubkey,
+             "rail":quote.rail,"offer_id":quote.offer.id,"price_msat":quote.offer.price_msat,
+             "ordered_capacity_bytes":quote.offer.capacity_bytes,"created_at":quote.created_at,
+-            "quote_expires_at":quote.expires_at,"renews":quote.renews,"allowance":allowance}),
++            "quote_expires_at":quote.expires_at,"renews":quote.renews,"allowance":allowance,
++            "refund":refunds.get(&order_id)}),
+         );
+     }
+     let next = if more {
+diff --git a/neode-ui/src/views/settings/StorageRefund.vue b/neode-ui/src/views/settings/StorageRefund.vue
+new file mode 100644
+index 0000000..57ce5fc
+--- /dev/null
++++ b/neode-ui/src/views/settings/StorageRefund.vue
+@@ -0,0 +1,35 @@
++<script setup lang="ts">
++import { computed, ref } from 'vue'
++import { rpcClient } from '@/api/rpc-client'
++const props = defineProps<{ orderId: string; priceMsat: number }>()
++const emit = defineEmits<{ recorded: [] }>()
++const open = ref(false), busy = ref(false), confirmed = ref(false), hash = ref(''), error = ref('')
++const valid = computed(() => confirmed.value && /^[0-9a-f]{64}$/.test(hash.value.trim().toLowerCase()))
++async function record() {
++  if (busy.value || !valid.value) return
++  busy.value = true; error.value = ''
++  try {
++    await rpcClient.call({ method: 'wildbloom.storage.record-refund', params: { order_id: props.orderId,
++      amount_msat: props.priceMsat, payment_hash: hash.value.trim().toLowerCase(), confirm_received: confirmed.value }, maxRetries: 1 })
++    hash.value = ''; confirmed.value = false; open.value = false; emit('recorded')
++  } catch { error.value = 'The refund record could not be verified. Refresh the sales page before retrying. No money was sent.' }
++  finally { busy.value = false }
++}
++</script>
++<template>
++  <div class="border-t border-white/10 pt-3 text-sm">
++    <button v-if="!open" class="glass-button rounded-lg px-3 py-2" @click="open = true">Record completed refund</button>
++    <form v-else class="space-y-4" @submit.prevent="record">
++      <h3 class="font-semibold">Record a completed refund · {{ (priceMsat / 1000).toLocaleString() }} sats</h3>
++      <p class="text-white/70">Send the refund directly from your own wallet first and confirm receipt. This saves your record of a full refund; it does not send money or revoke the customer’s storage.</p>
++      <label class="block">Refund payment hash
++        <input v-model="hash" type="text" autocomplete="off" spellcheck="false" maxlength="64" :disabled="busy" class="mt-2 w-full rounded-lg border border-white/20 bg-black/20 p-3 font-mono text-xs" placeholder="64 hexadecimal characters" required>
++      </label>
++      <p class="text-xs text-white/60">Use the payment hash from the completed refund, not the original purchase. Do not paste an invoice, note or secret.</p>
++      <label class="flex items-start gap-3"><input v-model="confirmed" type="checkbox" :disabled="busy" class="mt-1"><span>I have confirmed that the customer received the full {{ (priceMsat / 1000).toLocaleString() }}-sat refund.</span></label>
++      <p v-if="error" role="alert" class="text-red-200">{{ error }}</p>
++      <div class="flex flex-wrap gap-3"><button type="submit" :disabled="busy || !valid" class="glass-button rounded-lg px-4 py-2 disabled:opacity-40">{{ busy ? 'Saving…' : 'Save refund record' }}</button>
++      <button type="button" :disabled="busy" class="rounded-lg px-4 py-2" @click="open = false; hash = ''; confirmed = false; error = ''">Cancel</button></div>
++    </form>
++  </div>
++</template>
+diff --git a/neode-ui/src/views/settings/StorageSales.vue b/neode-ui/src/views/settings/StorageSales.vue
+index 12b8fce..bd3865f 100644
+--- a/neode-ui/src/views/settings/StorageSales.vue
++++ b/neode-ui/src/views/settings/StorageSales.vue
+@@ -2,9 +2,10 @@
+ import { onBeforeUnmount, onMounted, ref } from 'vue'
+ import { RouterLink } from 'vue-router'
+ import { rpcClient } from '@/api/rpc-client'
++import StorageRefund from './StorageRefund.vue'
+ type Allowance = { capacity_bytes: number; starts_at: number; writes_until: number; retains_until: number; status: string }
+ type Order = { order_id: string; state: string; customer_pubkey: string; rail: string; offer_id: string
+-  price_msat: number; ordered_capacity_bytes: number; created_at: number; quote_expires_at: number; renews: string | null; allowance: Allowance | null }
++  price_msat: number; ordered_capacity_bytes: number; created_at: number; quote_expires_at: number; renews: string | null; allowance: Allowance | null; refund?: { amount_msat: number; payment_hash: string; recorded_at: number } | null }
+ type Snapshot = { status: 'ready'; checked_at: number; summary: { orders: number; paid_orders: number; needs_attention: number; retained_customers: number; allocated_bytes: number }; orders: Order[]; next_after: string | null }
+ type Result = Snapshot | { status: 'not_started' }
+ const result = ref<Result | null>(null)
+@@ -69,7 +70,7 @@ onBeforeUnmount(() => controller.abort())
+           </select>
+         </div><p class="text-xs text-white/60">Page {{ page + 1 }} · up to 50 orders, sorted by order ID</p>
+       </div>
+-      <p v-if="filter === 'attention'" class="rounded-lg bg-amber-400/10 p-4 text-sm text-amber-100">These records need operator review. A pending payment may already have been received. This view does not retry payments or issue refunds.</p>
++      <p v-if="filter === 'attention'" class="rounded-lg bg-amber-400/10 p-4 text-sm text-amber-100">These records need operator review. A pending payment may already have been received. Use the local operator recovery command for uncertain payments. Recording a refund does not send money.</p>
+       <p v-if="!result.orders.length" role="status" class="glass-card p-6">{{ result.summary.orders ? 'No orders match this filter.' : 'No customer orders yet.' }}</p>
+       <section v-for="order in result.orders" :key="order.order_id" class="glass-card p-5 space-y-4" :aria-label="`Order ${order.order_id}`">
+         <div class="flex flex-wrap justify-between gap-3">
+@@ -86,6 +87,18 @@ onBeforeUnmount(() => controller.abort())
+         <details class="border-t border-white/10 pt-3 text-sm"><summary class="cursor-pointer text-white/70">Order and customer references</summary>
+           <dl class="mt-3 space-y-3"><div><dt class="text-white/60">Order ID</dt><dd class="break-all font-mono text-xs mt-1">{{ order.order_id }}</dd></div><div><dt class="text-white/60">Customer public key</dt><dd class="break-all font-mono text-xs mt-1">{{ order.customer_pubkey }}</dd></div><div><dt class="text-white/60">Offer</dt><dd class="break-all mt-1">{{ order.offer_id }}</dd></div><div v-if="order.renews"><dt class="text-white/60">Renews</dt><dd class="break-all font-mono text-xs mt-1">{{ order.renews }}</dd></div></dl>
+         </details>
++        <div v-if="order.refund" class="rounded-lg border border-emerald-400/20 p-4 text-sm space-y-2">
++          <h3 class="font-semibold">Full refund recorded by operator</h3>
++          <p>{{ (order.refund.amount_msat / 1000).toLocaleString() }} sats · {{ date(order.refund.recorded_at) }}. Receipt was confirmed by the operator; this dashboard has not independently verified it. Existing storage rights remain unchanged.</p>
++          <details><summary class="cursor-pointer">Refund payment reference</summary><p class="break-all font-mono text-xs mt-2">{{ order.refund.payment_hash }}</p></details>
++        </div>
++        <StorageRefund v-else-if="['active', 'refund_required'].includes(order.state)" :key="order.order_id" :order-id="order.order_id" :price-msat="order.price_msat" @recorded="load(page, cursors[page])" />
++        <details v-if="['lnurl_pending', 'settled', 'awaiting_payment', 'invoice_pending'].includes(order.state)" class="border-t border-white/10 pt-3 text-sm">
++          <summary class="cursor-pointer">Recover this payment</summary>
++          <p class="mt-3 text-white/70">Run the installed recovery tool as the node’s archipelago service user. It briefly stops storage, verifies a full backup and reuses the original operation. A pending payment may already have arrived; do not ask the customer to pay again.</p>
++          <pre class="mt-3 whitespace-pre-wrap break-all rounded-lg bg-black/20 p-3 text-xs">/usr/local/bin/recover-wildbloom-payment {{ order.state === 'invoice_pending' ? 'recover-invoice' : 'reconcile' }} {{ order.order_id }} --confirm-restart</pre>
++          <p class="mt-2 text-xs text-white/60">After original-invoice recovery, run reconcile for this same order. Refresh to read the durable result. If the tool reports a restart failure, start wildbloom-node.service before retrying.</p>
++        </details>
+       </section>
+       <nav class="flex justify-between gap-3" aria-label="Sales pages">
+         <button class="glass-button rounded-lg px-4 py-2 disabled:opacity-40" :disabled="busy || page === 0" @click="load(page - 1, cursors[page - 1])">Previous page</button>
+diff --git a/neode-ui/src/views/settings/__tests__/StorageRefund.test.ts b/neode-ui/src/views/settings/__tests__/StorageRefund.test.ts
+new file mode 100644
+index 0000000..45fd075
+--- /dev/null
++++ b/neode-ui/src/views/settings/__tests__/StorageRefund.test.ts
+@@ -0,0 +1,40 @@
++import { flushPromises, mount } from '@vue/test-utils'
++import { beforeEach, describe, expect, it, vi } from 'vitest'
++vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
++import { rpcClient } from '@/api/rpc-client'
++import StorageRefund from '../StorageRefund.vue'
++const rpc = vi.mocked(rpcClient.call)
++const page = () => mount(StorageRefund, { props: { orderId: 'order-a', priceMsat: 50000 } })
++describe('Operator refund record', () => {
++  beforeEach(() => { rpc.mockReset(); rpc.mockResolvedValue({ status: 'recorded' }) })
++  it('makes no request until the operator opens, enters a hash and confirms receipt', async () => {
++    const w = page(); expect(rpc).not.toHaveBeenCalled()
++    await w.get('button').trigger('click')
++    expect(w.get('button[type=submit]').attributes('disabled')).toBeDefined()
++    await w.get('input[type=text]').setValue('ab'.repeat(32))
++    expect(w.get('button[type=submit]').attributes('disabled')).toBeDefined()
++    await w.get('input[type=checkbox]').setValue(true)
++    await w.get('form').trigger('submit'); await flushPromises()
++    expect(rpc).toHaveBeenCalledTimes(1)
++    expect(rpc).toHaveBeenCalledWith({ method: 'wildbloom.storage.record-refund', params: {
++      order_id: 'order-a', amount_msat: 50000, payment_hash: 'ab'.repeat(32), confirm_received: true }, maxRetries: 1 })
++    expect(w.emitted('recorded')).toHaveLength(1)
++  })
++  it('refuses bearer assets and clears a cancelled form', async () => {
++    const w = page(); await w.get('button').trigger('click')
++    await w.get('input[type=text]').setValue('lnurl-bearer-secret')
++    await w.get('input[type=checkbox]').setValue(true)
++    await w.get('form').trigger('submit'); expect(rpc).not.toHaveBeenCalled()
++    await w.findAll('button').find(b => b.text() === 'Cancel')!.trigger('click')
++    await w.get('button').trigger('click')
++    expect((w.get('input[type=text]').element as HTMLInputElement).value).toBe('')
++  })
++  it('keeps uncertain recording errors distinct from a failed refund', async () => {
++    rpc.mockRejectedValue(new Error('secret backend details'))
++    const w = page(); await w.get('button').trigger('click')
++    await w.get('input[type=text]').setValue('ab'.repeat(32)); await w.get('input[type=checkbox]').setValue(true)
++    await w.get('form').trigger('submit'); await flushPromises()
++    expect(w.get('[role=alert]').text()).toContain('Refresh the sales page before retrying')
++    expect(w.text()).not.toContain('secret backend details'); expect(w.emitted('recorded')).toBeUndefined()
++  })
++})
+-- 
+2.54.0 (Apple Git-157)
+
