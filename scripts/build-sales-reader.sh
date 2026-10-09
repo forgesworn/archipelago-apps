@@ -21,8 +21,10 @@ serde_json = "1"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["sync"] }
+reqwest = { version = "0.12", default-features = false }
 TOML
 cat > "$fixture/src/main.rs" <<'RS'
+#[allow(dead_code)]
 mod wildbloom_storage;
 mod wildbloom_sales;
 mod wildbloom_refunds;
