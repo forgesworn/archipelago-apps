@@ -1,4 +1,4 @@
-From 726c2ce8aa957ad37ec8ee2873517f79db3df129 Mon Sep 17 00:00:00 2001
+From 2b1c5dc0ee6c78bbf8b68600fa17749740151781 Mon Sep 17 00:00:00 2001
 From: ForgeSworn <dev@forgesworn.dev>
 Date: Fri, 9 Oct 2026 07:58:51 +0100
 Subject: [PATCH] feat: configure Wildbloom storage and selling from Settings
@@ -7,7 +7,7 @@ Subject: [PATCH] feat: configure Wildbloom storage and selling from Settings
  core/archipelago/src/api/rpc/dispatcher.rs    |   4 +
  core/archipelago/src/api/rpc/middleware.rs    |   1 +
  core/archipelago/src/api/rpc/mod.rs           |  13 +
- core/archipelago/src/api/rpc/wildbloom.rs     | 363 ++++++++++++++
+ core/archipelago/src/api/rpc/wildbloom.rs     | 415 ++++++++++++++++
  .../src/container/prod_orchestrator.rs        |  84 ++++
  core/archipelago/src/container/traits.rs      |   6 +
  core/archipelago/src/settings/mod.rs          |   2 +
@@ -16,7 +16,7 @@ Subject: [PATCH] feat: configure Wildbloom storage and selling from Settings
  neode-ui/src/views/Settings.vue               |   6 +
  .../src/views/settings/StorageSelling.vue     | 206 ++++++++
  .../settings/__tests__/StorageSelling.test.ts | 100 ++++
- 12 files changed, 1233 insertions(+)
+ 12 files changed, 1285 insertions(+)
  create mode 100644 core/archipelago/src/api/rpc/wildbloom.rs
  create mode 100644 core/archipelago/src/settings/wildbloom_storage.rs
  create mode 100644 neode-ui/src/views/settings/StorageSelling.vue
@@ -82,10 +82,10 @@ index 48e6a63..3203761 100644
              "node.nostr-sign" | "identity.nostr-sign"
 diff --git a/core/archipelago/src/api/rpc/wildbloom.rs b/core/archipelago/src/api/rpc/wildbloom.rs
 new file mode 100644
-index 0000000..4c5dfcb
+index 0000000..51d5d4f
 --- /dev/null
 +++ b/core/archipelago/src/api/rpc/wildbloom.rs
-@@ -0,0 +1,363 @@
+@@ -0,0 +1,415 @@
 +//! Authenticated dashboard controls for the packaged, rootless Wildbloom node.
 +use super::RpcHandler;
 +use crate::settings::wildbloom_storage::{self as storage, Active, Record, Settings, GIB, MAX};
@@ -120,6 +120,25 @@ index 0000000..4c5dfcb
 +    max_blob_bytes: u64,
 +    settings_revision: Option<u64>,
 +    checkout_started: bool,
++    #[serde(skip)]
++    checkout_profile: Option<String>,
++}
++
++fn external_configuration(record: &Record, runtime: &Runtime, ledger_exists: bool) -> bool {
++    if ledger_exists && !record.active.as_ref().is_some_and(|a| a.checkout_started) {
++        return true;
++    }
++    if let Some(profile) = &runtime.checkout_profile {
++        let Some(revision) = runtime.settings_revision else {
++            return true;
++        };
++        return !record
++            .active
++            .as_ref()
++            .is_some_and(|a| a.checkout_started && revision <= a.revision)
++            || *profile != format!("/data/operator/{}", storage::profile_name(revision));
++    }
++    false
 +}
 +
 +fn number(v: &Value, key: &str) -> Result<u64> {
@@ -179,6 +198,7 @@ index 0000000..4c5dfcb
 +            .map(str::parse)
 +            .transpose()?,
 +        checkout_started: value("WILDBLOOM_CHECKOUT_PROFILE=").is_some(),
++        checkout_profile: value("WILDBLOOM_CHECKOUT_PROFILE=").map(str::to_string),
 +    })
 +}
 +
@@ -247,9 +267,14 @@ index 0000000..4c5dfcb
 +            .clone()
 +            .or_else(|| record.active.as_ref().map(|a| a.settings.clone()))
 +            .unwrap_or(defaults);
-+        let external = runtime
-+            .as_ref()
-+            .is_some_and(|r| r.checkout_started && record.active.is_none());
++        let external = runtime.as_ref().is_some_and(|r| {
++            external_configuration(
++                &record,
++                r,
++                root.as_ref()
++                    .is_some_and(|root| root.join("operator/checkout").exists()),
++            )
++        });
 +        let applied = record.active.as_ref().is_some_and(|a| {
 +            runtime.as_ref().is_some_and(|r| {
 +                r.settings_revision == Some(a.revision)
@@ -346,7 +371,7 @@ index 0000000..4c5dfcb
 +            current.image == "ghcr.io/forgesworn/wildbloom-node:0.3.5-2ea211e-2",
 +            "Wildbloom installed image is not compatible with dashboard settings"
 +        );
-+        ensure!(!current.checkout_started || record.active.is_some(),
++        ensure!(!external_configuration(&record, &current, root.join("operator/checkout").exists()),
 +            "Wildbloom existing external sales configuration must be migrated before dashboard changes");
 +        if let Some(a) = &record.active {
 +            ensure!(
@@ -404,6 +429,33 @@ index 0000000..4c5dfcb
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++    #[test]
++    fn inactive_manual_receiving_state_is_not_silently_adopted() {
++        let mut runtime = Runtime {
++            image: String::new(),
++            quota_bytes: 10 * GIB,
++            used_bytes: 0,
++            committed_bytes: 0,
++            max_blob_bytes: GIB,
++            settings_revision: None,
++            checkout_started: false,
++            checkout_profile: None,
++        };
++        let mut record = Record::default();
++        assert!(!external_configuration(&record, &runtime, false));
++        assert!(external_configuration(&record, &runtime, true));
++        record.active = Some(Active {
++            revision: 4,
++            origin: "https://node.example:3742".into(),
++            checkout_started: true,
++            settings: Settings::defaults(10 * GIB),
++        });
++        runtime.settings_revision = Some(2);
++        runtime.checkout_profile = Some("/data/operator/dashboard-profile-2.json".into());
++        assert!(!external_configuration(&record, &runtime, true)); // Pending newer apply.
++        runtime.checkout_profile = Some("/data/operator/manual-profile.json".into());
++        assert!(external_configuration(&record, &runtime, true));
++    }
 +    #[test]
 +    fn app_ports_and_other_sites_cannot_manage_storage_with_shared_cookies() {
 +        let mut headers = hyper::HeaderMap::new();
