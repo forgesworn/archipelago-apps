@@ -139,7 +139,7 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y python3-yaml
           npm ci --prefix tests/smoke --ignore-scripts
-          scripts/test-storage-settings-profile.sh .cache/archy ghcr.io/forgesworn/wildbloom-node:0.3.5-2ea211e-2
+          scripts/test-storage-settings-profile.sh .cache/archy ghcr.io/forgesworn/wildbloom-node:0.3.5-bee5383-2
       - name: Build backend
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy/core
