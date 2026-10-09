@@ -2,7 +2,7 @@
 
 The patched Archipelago dashboard adds **Settings → Storage & selling** at
 `/dashboard/settings/storage`. Requires matching backend and frontend
-`v1.9.0-alpha-p2` assets and Wildbloom Node `0.3.5-2ea211e-2`, installed using
+`v1.9.0-alpha-p4` assets and Wildbloom Node `0.3.5-2ea211e-2`, installed using
 the packaged rootless Quadlet and `/var/lib/archipelago/wildbloom-node` volume.
 This is a targeted test-node package, not a new upstream OTA or ISO.
 
@@ -43,6 +43,10 @@ The usable quota leaves at least 5 GiB or 5% of disk capacity for the OS and
 other apps. This is a point-in-time capacity check, not a filesystem reservation;
 other applications may subsequently use disk space. Unavailable health/disk
 information blocks apply rather than being treated as zero usage.
+
+The **View sales & customers** link opens the [private sales view](storage-sales-dashboard.md)
+for order status, current allowances and expiry dates. Reading it does not
+contact the payment issuer or modify checkout.
 
 ## Existing customers and state
 

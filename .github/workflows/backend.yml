@@ -131,7 +131,7 @@ jobs:
           check appgate::identity::tests:: 11
           check auth::tests:: 15
           check public_host 7
-          check wildbloom 13
+          check wildbloom 19
           check manifest_metadata_str_tests:: 2
           check storage_crypto::tests:: 8
       - name: Dashboard profile on packaged node

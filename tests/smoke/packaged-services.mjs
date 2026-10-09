@@ -204,7 +204,7 @@ try {
         ],
       },
       max_paid_bytes: 1024 * 1024,
-      state: join(root, "checkout"),
+      state: join(root, "node", "operator", "checkout"),
       browser_origins: [appOrigin],
       phoenixd: { destination, password_file: password },
       notes: [
@@ -479,6 +479,23 @@ try {
   await wait(page, "active");
   assert.equal((await (await fetch(mintOrigin)).json()).note_rotations, 1, "Restart/check must not rotate the note again");
   await assertCapacityFull("after-renewal");
+  assert.ok(process.env.WILDBLOOM_SALES_READER, "Set WILDBLOOM_SALES_READER to the dashboard projection fixture");
+  const inventory = JSON.parse(execFileSync(process.env.WILDBLOOM_SALES_READER, [join(root, "node")], { encoding: "utf8" }));
+  assert.equal(inventory.summary.paid_orders, 2);
+  assert.equal(inventory.summary.retained_customers, 1);
+  assert.equal(inventory.summary.allocated_bytes, 1024 * 1024);
+  const activated = inventory.orders.filter(order => order.state === "active");
+  assert.equal(activated.length, 2);
+  // The daemon journals before reserving capacity. The four refused buyers'
+  // requests remain reserving; viewing them must not turn them into purchases.
+  assert.equal(inventory.orders.filter(order => order.state === "reserving").length, 4);
+  assert.equal(inventory.summary.needs_attention, 4);
+  assert.deepEqual(activated[0].allowance, activated[1].allowance, "Renewal shares the latest allowance dates");
+  assert.equal(activated[0].allowance.status, "active");
+  for (const order of inventory.orders) {
+    for (const forbidden of ["invoice", "rotation", "payment_hash", "settlement", "note_id"]) assert.equal(forbidden in order, false);
+  }
+  assert.equal((await (await fetch(mintOrigin)).json()).note_rotations, 1, "Dashboard read must not contact the receiver");
   assert.equal(publications.length, 1, "No payment or proof events published");
   await assertNoBrowserPersistence(page, context, "Node services");
   const axe = await new AxeBuilder({ page })
@@ -493,6 +510,7 @@ try {
         result: "passed",
         build,
         checks: [
+          "dashboard read-only sales projection of the live packaged ledger and renewed allowance",
           "published images resolved and run by digest",
           "packaged own-node default before checkout and after reload",
           "paid-capacity ceiling before/after restart and renewal without double counting",

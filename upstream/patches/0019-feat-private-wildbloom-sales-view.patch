@@ -1,0 +1,913 @@
+From 6c6d73250b7972a7939768dda5e9a9c997f5ab74 Mon Sep 17 00:00:00 2001
+From: archipelago-apps <ci@invalid>
+Date: Fri, 9 Oct 2026 13:50:07 +0100
+Subject: [PATCH] feat: show private Wildbloom sales and current customer
+ allowances
+
+---
+ core/Cargo.lock                               |  73 +++
+ core/archipelago/Cargo.toml                   |   4 +-
+ core/archipelago/src/api/rpc/dispatcher.rs    |   1 +
+ core/archipelago/src/api/rpc/wildbloom.rs     |  26 +
+ core/archipelago/src/settings/mod.rs          |   1 +
+ .../src/settings/wildbloom_sales.rs           | 493 ++++++++++++++++++
+ neode-ui/src/router/index.ts                  |   5 +
+ neode-ui/src/views/settings/StorageSales.vue  |  96 ++++
+ .../src/views/settings/StorageSelling.vue     |   1 +
+ .../settings/__tests__/StorageSales.test.ts   |  47 ++
+ 10 files changed, 745 insertions(+), 2 deletions(-)
+ create mode 100644 core/archipelago/src/settings/wildbloom_sales.rs
+ create mode 100644 neode-ui/src/views/settings/StorageSales.vue
+ create mode 100644 neode-ui/src/views/settings/__tests__/StorageSales.test.ts
+
+diff --git a/core/Cargo.lock b/core/Cargo.lock
+index 7ecdf76..e5638b9 100644
+--- a/core/Cargo.lock
++++ b/core/Cargo.lock
+@@ -150,6 +150,7 @@ dependencies = [
+  "reed-solomon-erasure",
+  "regex",
+  "reqwest 0.11.27",
++ "rusqlite",
+  "rustls-pemfile",
+  "rustls-webpki 0.101.7",
+  "sd-notify",
+@@ -1550,6 +1551,18 @@ dependencies = [
+  "windows-sys 0.61.2",
+ ]
+ 
++[[package]]
++name = "fallible-iterator"
++version = "0.3.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
++
++[[package]]
++name = "fallible-streaming-iterator"
++version = "0.1.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
++
+ [[package]]
+ name = "fastbloom"
+ version = "0.17.0"
+@@ -1966,6 +1979,9 @@ name = "hashbrown"
+ version = "0.16.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
++dependencies = [
++ "foldhash 0.2.0",
++]
+ 
+ [[package]]
+ name = "hashbrown"
+@@ -1978,6 +1994,15 @@ dependencies = [
+  "foldhash 0.2.0",
+ ]
+ 
++[[package]]
++name = "hashlink"
++version = "0.12.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a596f1b20ed2cc5ecac41a164aaebc7258057060f06c0cf7a2ba3991ee7990fb"
++dependencies = [
++ "hashbrown 0.17.1",
++]
++
+ [[package]]
+ name = "heapless"
+ version = "0.7.17"
+@@ -3066,6 +3091,17 @@ dependencies = [
+  "redox_syscall 0.7.3",
+ ]
+ 
++[[package]]
++name = "libsqlite3-sys"
++version = "0.38.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
++dependencies = [
++ "cc",
++ "pkg-config",
++ "vcpkg",
++]
++
+ [[package]]
+ name = "libssh2-sys"
+ version = "0.3.1"
+@@ -4720,6 +4756,31 @@ dependencies = [
+  "windows-sys 0.52.0",
+ ]
+ 
++[[package]]
++name = "rsqlite-vfs"
++version = "0.1.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c51c9ae4df8a7fba42103df5c621fa3c37eccf3a3c650879e90fc48b11cc192c"
++dependencies = [
++ "hashbrown 0.16.1",
++ "thiserror 2.0.18",
++]
++
++[[package]]
++name = "rusqlite"
++version = "0.40.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
++dependencies = [
++ "bitflags 2.13.0",
++ "fallible-iterator",
++ "fallible-streaming-iterator",
++ "hashlink",
++ "libsqlite3-sys",
++ "smallvec",
++ "sqlite-wasm-rs",
++]
++
+ [[package]]
+ name = "rustc-hash"
+ version = "2.1.2"
+@@ -5435,6 +5496,18 @@ dependencies = [
+  "der 0.8.0",
+ ]
+ 
++[[package]]
++name = "sqlite-wasm-rs"
++version = "0.5.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "dc3efc0da82635d7e1ced0053bbbfa8c7ab9645d0bf36ceb4f7127bb85315d75"
++dependencies = [
++ "cc",
++ "js-sys",
++ "rsqlite-vfs",
++ "wasm-bindgen",
++]
++
+ [[package]]
+ name = "ssh2"
+ version = "0.9.5"
+diff --git a/core/archipelago/Cargo.toml b/core/archipelago/Cargo.toml
+index ab26701..3bb09b2 100644
+--- a/core/archipelago/Cargo.toml
++++ b/core/archipelago/Cargo.toml
+@@ -52,8 +52,8 @@ archipelago-security = { path = "../security" }
+ archipelago-performance = { path = "../performance" }
+ 
+ 
+-# Database (optional for now - can use SQLite or skip)
+-# sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls"] }
++# Read-only inspection of the pinned Wildbloom checkout and allowance schemas.
++rusqlite = { version = "0.40.0", features = ["bundled"] }
+ 
+ # Authentication
+ bcrypt = "0.15"
+diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
+index 05b1903..c3f3780 100644
+--- a/core/archipelago/src/api/rpc/dispatcher.rs
++++ b/core/archipelago/src/api/rpc/dispatcher.rs
+@@ -66,6 +66,7 @@ impl RpcHandler {
+             "package.check-updates" => self.handle_package_check_updates(params).await,
+             "package.versions" => self.handle_package_versions(params).await,
+             "package.set-config" => self.clone().handle_package_set_config(params).await,
++            "wildbloom.storage.orders" => self.handle_wildbloom_orders(params).await,
+             "wildbloom.storage.get" => self.handle_wildbloom_get().await,
+             "wildbloom.storage.save" => self.handle_wildbloom_save(params).await,
+             "wildbloom.storage.apply" => self.clone().handle_wildbloom_apply(params).await,
+diff --git a/core/archipelago/src/api/rpc/wildbloom.rs b/core/archipelago/src/api/rpc/wildbloom.rs
+index 51d5d4f..116e788 100644
+--- a/core/archipelago/src/api/rpc/wildbloom.rs
++++ b/core/archipelago/src/api/rpc/wildbloom.rs
+@@ -158,6 +158,31 @@ fn check_revision(record: &Record, expected: u64) -> Result<()> {
+ }
+ 
+ impl RpcHandler {
++    pub(super) async fn handle_wildbloom_orders(&self, params: Option<Value>) -> Result<Value> {
++        use crate::settings::wildbloom_sales;
++        let request: wildbloom_sales::PageRequest =
++            serde_json::from_value(params.unwrap_or_else(|| json!({})))
++                .context("Invalid sales page request")?;
++        request.validate()?;
++        let record = storage::load(&self.config.data_dir)?;
++        let expected = record.active.as_ref().is_some_and(|a| a.checkout_started);
++        let root = self
++            .orchestrator
++            .as_ref()
++            .context("Wildbloom container management is unavailable")?
++            .wildbloom_settings_root()
++            .await?;
++        // Synchronous SQLite reads are bounded and never run on a Tokio worker.
++        // No ledger opener, schema migration, issuer transport or daemon restart.
++        tokio::task::spawn_blocking(move || wildbloom_sales::read(&root, expected, &request))
++            .await?
++            .map_err(|_| {
++                anyhow::anyhow!(
++                    "Sales records are unavailable. No payment or storage state was changed."
++                )
++            })
++    }
++
+     pub(super) async fn handle_wildbloom_get(&self) -> Result<Value> {
+         let record = storage::load(&self.config.data_dir)?;
+         let runtime = runtime().await.ok();
+@@ -400,6 +425,7 @@ mod tests {
+     fn storage_controls_always_require_dashboard_authentication() {
+         for method in [
+             "wildbloom.storage.get",
++            "wildbloom.storage.orders",
+             "wildbloom.storage.save",
+             "wildbloom.storage.apply",
+             "wildbloom.storage.resolve-moneyer",
+diff --git a/core/archipelago/src/settings/mod.rs b/core/archipelago/src/settings/mod.rs
+index 839995c..9630a64 100644
+--- a/core/archipelago/src/settings/mod.rs
++++ b/core/archipelago/src/settings/mod.rs
+@@ -11,3 +11,4 @@ pub mod transport;
+ pub mod bitcoin_storage;
+ 
+ pub mod wildbloom_storage;
++pub mod wildbloom_sales;
+diff --git a/core/archipelago/src/settings/wildbloom_sales.rs b/core/archipelago/src/settings/wildbloom_sales.rs
+new file mode 100644
+index 0000000..0f42fbe
+--- /dev/null
++++ b/core/archipelago/src/settings/wildbloom_sales.rs
+@@ -0,0 +1,493 @@
++//! Admin-only projection of the pinned checkout v1 and Shelter allowance schemas.
++//! Never opens Ledger/Store (which migrate and take writer locks), reads bearer
++//! columns, reconciles payments, or changes storage. WAL snapshots remain visible.
++use super::wildbloom_storage::MAX;
++use anyhow::{ensure, Context, Result};
++use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
++use serde::Deserialize;
++use serde_json::{json, Value};
++use std::{
++    path::Path,
++    time::{Duration, SystemTime, UNIX_EPOCH},
++};
++
++const PAGE_SIZE: usize = 50;
++const STATES: &[&str] = &[
++    "reserving",
++    "quoted",
++    "expired",
++    "invoice_pending",
++    "awaiting_payment",
++    "lnurl_pending",
++    "settled",
++    "active",
++    "refund_required",
++];
++const ATTENTION: &[&str] = &[
++    "reserving",
++    "invoice_pending",
++    "lnurl_pending",
++    "settled",
++    "refund_required",
++];
++
++#[derive(Default, Deserialize)]
++#[serde(default, deny_unknown_fields)]
++pub struct PageRequest {
++    pub after: String,
++    pub state: String,
++}
++impl PageRequest {
++    pub fn validate(&self) -> Result<()> {
++        ensure!(
++            self.after.is_empty() || id(&self.after),
++            "Invalid sales cursor"
++        );
++        ensure!(
++            self.state.is_empty()
++                || self.state == "attention"
++                || STATES.contains(&self.state.as_str()),
++            "Invalid sales filter"
++        );
++        Ok(())
++    }
++}
++fn id(value: &str) -> bool {
++    !value.is_empty()
++        && value.len() <= 128
++        && value
++            .bytes()
++            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
++}
++fn integer(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
++    let n: i64 = row.get(index)?;
++    if n < 0 || n as u64 > MAX {
++        return Err(rusqlite::Error::IntegralValueOutOfRange(index, n));
++    }
++    Ok(n as u64)
++}
++fn safe(value: u64) -> Result<u64> {
++    ensure!(value <= MAX, "Invalid sales number");
++    Ok(value)
++}
++fn plain(value: &str, max: usize) -> Result<()> {
++    ensure!(
++        !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control),
++        "Invalid sales text"
++    );
++    Ok(())
++}
++fn directory(path: &Path) -> Result<()> {
++    ensure!(
++        std::fs::symlink_metadata(path)?.is_dir(),
++        "Invalid sales directory"
++    );
++    Ok(())
++}
++fn open(path: &Path) -> Result<Connection> {
++    use std::os::unix::fs::PermissionsExt;
++    for suffix in ["", "-wal", "-shm"] {
++        let file = path.with_file_name(format!(
++            "{}{}",
++            path.file_name()
++                .context("Invalid database path")?
++                .to_str()
++                .context("Invalid database name")?,
++            suffix
++        ));
++        match std::fs::symlink_metadata(&file) {
++            Ok(meta) => ensure!(
++                meta.is_file() && meta.permissions().mode() & 0o077 == 0,
++                "Invalid private database"
++            ),
++            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !suffix.is_empty() => {}
++            Err(e) => return Err(e.into()),
++        }
++    }
++    // Resolve system directory aliases (e.g. macOS /var) after checking the
++    // private components; NOFOLLOW still protects the database itself.
++    let resolved = path
++        .parent()
++        .context("Invalid database directory")?
++        .canonicalize()?
++        .join(path.file_name().context("Invalid database name")?);
++    let db = Connection::open_with_flags(
++        resolved,
++        OpenFlags::SQLITE_OPEN_READ_ONLY
++            | OpenFlags::SQLITE_OPEN_NO_MUTEX
++            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
++    )?;
++    db.busy_timeout(Duration::from_millis(500))?;
++    db.execute_batch("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; BEGIN DEFERRED;")?;
++    Ok(db)
++}
++#[derive(Deserialize)]
++struct Offer {
++    id: String,
++    capacity_bytes: u64,
++    price_msat: u64,
++}
++#[derive(Deserialize)]
++struct Quote {
++    order_id: String,
++    signer_pubkey: String,
++    rail: String,
++    offer: Offer,
++    created_at: u64,
++    expires_at: u64,
++    renews: Option<String>,
++}
++#[derive(Deserialize)]
++struct Receipt {
++    allowance_id: String,
++}
++
++pub fn read(root: &Path, expected: bool, request: &PageRequest) -> Result<Value> {
++    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
++    read_at(root, expected, request, now)
++}
++fn read_at(root: &Path, expected: bool, request: &PageRequest, now: u64) -> Result<Value> {
++    request.validate()?;
++    directory(root)?;
++    let operator = root.join("operator");
++    let ledger = operator.join("checkout");
++    // Only a genuinely absent, never-enabled ledger is an empty state. Corrupt,
++    // unreadable or missing expected state must never look like zero sales.
++    match std::fs::symlink_metadata(&operator) {
++        Err(e) if e.kind() == std::io::ErrorKind::NotFound && !expected => {
++            return Ok(json!({"status":"not_started"}))
++        }
++        _ => directory(&operator)?,
++    }
++    match std::fs::symlink_metadata(&ledger) {
++        Err(e) if e.kind() == std::io::ErrorKind::NotFound && !expected => {
++            return Ok(json!({"status":"not_started"}))
++        }
++        _ => directory(&ledger)?,
++    }
++    let db = open(&ledger.join("checkout.sqlite3"))?;
++    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
++    ensure!(version == 1, "Unsupported checkout schema");
++    let store = open(&root.join("wildbloom.sqlite3"))?;
++    let mut total = 0u64;
++    let mut attention = 0u64;
++    let mut paid = 0u64;
++    let mut counts = db.prepare("SELECT state,COUNT(*) FROM orders GROUP BY state")?;
++    for row in counts.query_map([], |r| Ok((r.get::<_, String>(0)?, integer(r, 1)?)))? {
++        let (state, count) = row?;
++        ensure!(STATES.contains(&state.as_str()), "Unknown payment state");
++        total = safe(total.checked_add(count).context("Invalid order count")?)?;
++        if ATTENTION.contains(&state.as_str()) {
++            attention += count;
++        }
++        if state == "active" {
++            paid += count;
++        }
++    }
++    ensure!(total <= 10000, "Checkout order bound exceeded");
++    // Current allowances, not a sum of purchase/renewal receipts. The store owns
++    // these dates and updates a stable allowance when a customer renews.
++    let (customers, capacity): (u64, u64) = store.query_row(
++        "SELECT COUNT(*),COALESCE(SUM(capacity),0) FROM paid_allowances WHERE retains>?1",
++        [safe(now)? as i64],
++        |r| Ok((integer(r, 0)?, integer(r, 1)?)),
++    )?;
++    safe(customers)?;
++    safe(capacity)?;
++    let mut query = db.prepare("SELECT id,state,CASE WHEN length(quote)<=65536 THEN quote END,
++        CASE WHEN receipt IS NULL OR length(receipt)<=4096 THEN receipt ELSE '' END
++        FROM orders WHERE id>?1 AND (?2='' OR state=?2 OR (?2='attention' AND state IN
++        ('reserving','invoice_pending','lnurl_pending','settled','refund_required'))) ORDER BY id LIMIT ?3")?;
++    let mut rows = query.query(params![
++        request.after,
++        request.state,
++        (PAGE_SIZE + 1) as i64
++    ])?;
++    let mut orders = Vec::new();
++    let mut more = false;
++    while let Some(row) = rows.next()? {
++        if orders.len() == PAGE_SIZE {
++            more = true;
++            break;
++        }
++        let order_id: String = row.get(0)?;
++        let state: String = row.get(1)?;
++        let quote: Quote = serde_json::from_str(&row.get::<_, String>(2)?)?;
++        let receipt: Option<String> = row.get(3)?;
++        ensure!(
++            id(&order_id) && quote.order_id == order_id && STATES.contains(&state.as_str()),
++            "Invalid order"
++        );
++        ensure!(
++            quote.signer_pubkey.len() == 64
++                && quote.signer_pubkey.bytes().all(|b| b.is_ascii_hexdigit()),
++            "Invalid customer key"
++        );
++        ensure!(
++            ["lightning", "lnurlcash"].contains(&quote.rail.as_str()),
++            "Invalid payment rail"
++        );
++        plain(&quote.offer.id, 128)?;
++        for n in [
++            quote.created_at,
++            quote.expires_at,
++            quote.offer.capacity_bytes,
++            quote.offer.price_msat,
++        ] {
++            safe(n)?;
++        }
++        ensure!(
++            quote.renews.as_ref().is_none_or(|v| id(v)),
++            "Invalid renewal reference"
++        );
++        let allowance = if let Some(receipt) = receipt {
++            let receipt: Receipt = serde_json::from_str(&receipt)?;
++            ensure!(id(&receipt.allowance_id), "Invalid allowance reference");
++            let current = store
++                .query_row(
++                    "SELECT signer,capacity,starts,ends,retains FROM paid_allowances WHERE id=?1",
++                    [&receipt.allowance_id],
++                    |r| {
++                        Ok((
++                            r.get::<_, String>(0)?,
++                            integer(r, 1)?,
++                            integer(r, 2)?,
++                            integer(r, 3)?,
++                            integer(r, 4)?,
++                        ))
++                    },
++                )
++                .optional()?;
++            match current {
++                Some((signer, capacity, starts, ends, retains)) => {
++                    ensure!(
++                        signer == quote.signer_pubkey && starts <= ends && ends <= retains,
++                        "Invalid allowance"
++                    );
++                    for n in [capacity, starts, ends, retains] {
++                        safe(n)?;
++                    }
++                    Some(
++                        json!({"capacity_bytes":capacity,"starts_at":starts,"writes_until":ends,"retains_until":retains,
++                        "status": if now<starts {"scheduled"} else if now<ends {"active"} else if now<retains {"grace"} else {"expired"}}),
++                    )
++                }
++                None => None,
++            }
++        } else {
++            None
++        };
++        orders.push(
++            json!({"order_id":order_id,"state":state,"customer_pubkey":quote.signer_pubkey,
++            "rail":quote.rail,"offer_id":quote.offer.id,"price_msat":quote.offer.price_msat,
++            "ordered_capacity_bytes":quote.offer.capacity_bytes,"created_at":quote.created_at,
++            "quote_expires_at":quote.expires_at,"renews":quote.renews,"allowance":allowance}),
++        );
++    }
++    let next = if more {
++        orders.last().map(|v| v["order_id"].clone())
++    } else {
++        None
++    };
++    Ok(
++        json!({"status":"ready","checked_at":now,"summary":{"orders":total,"paid_orders":paid,
++        "needs_attention":attention,"retained_customers":customers,"allocated_bytes":capacity},"orders":orders,"next_after":next}),
++    )
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::os::unix::fs::PermissionsExt;
++    struct Fixture {
++        root: tempfile::TempDir,
++        ledger: Connection,
++        store: Connection,
++    }
++    impl Fixture {
++        fn new() -> Self {
++            let root = tempfile::tempdir().unwrap();
++            std::fs::create_dir_all(root.path().join("operator/checkout")).unwrap();
++            let ledger =
++                Connection::open(root.path().join("operator/checkout/checkout.sqlite3")).unwrap();
++            ledger.execute_batch("PRAGMA journal_mode=WAL; PRAGMA user_version=1; CREATE TABLE orders (id TEXT PRIMARY KEY,state TEXT,quote TEXT,receipt TEXT,invoice TEXT,rotation TEXT);").unwrap();
++            let store = Connection::open(root.path().join("wildbloom.sqlite3")).unwrap();
++            store.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE paid_allowances(id TEXT PRIMARY KEY,signer TEXT,capacity INTEGER,starts INTEGER,ends INTEGER,retains INTEGER);").unwrap();
++            for base in [
++                root.path().join("operator/checkout/checkout.sqlite3"),
++                root.path().join("wildbloom.sqlite3"),
++            ] {
++                for suffix in ["", "-wal", "-shm"] {
++                    let p = base.with_file_name(format!(
++                        "{}{suffix}",
++                        base.file_name().unwrap().to_str().unwrap()
++                    ));
++                    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600)).unwrap();
++                }
++            }
++            Self {
++                root,
++                ledger,
++                store,
++            }
++        }
++        fn order(&self, id: &str, state: &str, receipt: bool, renews: Option<&str>) {
++            let quote = json!({"order_id":id,"signer_pubkey":"ab".repeat(32),"rail":"lnurlcash",
++                "offer":{"id":"monthly","capacity_bytes":1024,"price_msat":500000},"created_at":10,"expires_at":20,"renews":renews,
++                "future_secret":"never-project-unknown-fields"});
++            let receipt = receipt.then(|| {
++                json!({"allowance_id":"allowance","writes_until":50,"retains_until":60}).to_string()
++            });
++            self.ledger
++                .execute(
++                    "INSERT INTO orders VALUES(?1,?2,?3,?4,'secret-invoice','secret-bearer-note')",
++                    params![id, state, quote.to_string(), receipt],
++                )
++                .unwrap();
++        }
++        fn allowance(&self) {
++            self.store
++                .execute(
++                    "INSERT INTO paid_allowances VALUES('allowance',?1,1024,10,200,300)",
++                    ["ab".repeat(32)],
++                )
++                .unwrap();
++        }
++        fn read(&self, request: PageRequest, now: u64) -> Value {
++            read_at(self.root.path(), true, &request, now).unwrap()
++        }
++    }
++    #[test]
++    fn sales_read_live_wal_and_project_no_payment_assets() {
++        let f = Fixture::new();
++        f.order("order-a", "active", true, None);
++        f.allowance();
++        let db = f.root.path().join("operator/checkout/checkout.sqlite3");
++        let before = std::fs::read(&db).unwrap();
++        let wal = db.with_file_name("checkout.sqlite3-wal");
++        let wal_before = std::fs::read(&wal).unwrap();
++        let value = f.read(PageRequest::default(), 100);
++        assert_eq!(value["orders"][0]["customer_pubkey"], "ab".repeat(32));
++        assert_eq!(value["orders"][0]["allowance"]["writes_until"], 200);
++        assert!(!value.to_string().contains("secret"));
++        assert!(!value.to_string().contains("invoice"));
++        assert_eq!(std::fs::read(db).unwrap(), before);
++        assert_eq!(std::fs::read(wal).unwrap(), wal_before);
++        let ro = open(&f.root.path().join("operator/checkout/checkout.sqlite3")).unwrap();
++        assert!(ro.execute("DELETE FROM orders", []).is_err());
++        assert_eq!(
++            f.ledger
++                .query_row("SELECT COUNT(*) FROM orders", [], |r| integer(r, 0))
++                .unwrap(),
++            1
++        );
++    }
++    #[test]
++    fn sales_renewals_share_current_allocation_and_expiry() {
++        let f = Fixture::new();
++        f.order("a", "active", true, None);
++        f.order("b", "active", true, Some("a"));
++        f.allowance();
++        let value = f.read(PageRequest::default(), 100);
++        assert_eq!(value["summary"]["paid_orders"], 2);
++        assert_eq!(value["summary"]["retained_customers"], 1);
++        assert_eq!(value["summary"]["allocated_bytes"], 1024);
++        assert_eq!(
++            value["orders"][0]["allowance"],
++            value["orders"][1]["allowance"]
++        );
++        let grace = f.read(PageRequest::default(), 200);
++        assert_eq!(grace["orders"][0]["allowance"]["status"], "grace");
++        let expired = f.read(PageRequest::default(), 300);
++        assert_eq!(expired["orders"][0]["allowance"]["status"], "expired");
++        assert_eq!(expired["summary"]["allocated_bytes"], 0);
++    }
++    #[test]
++    fn sales_pagination_and_attention_filter_are_bounded() {
++        let f = Fixture::new();
++        for n in 0..51 {
++            f.order(&format!("order-{n:03}"), "quoted", false, None);
++        }
++        f.order("pending", "lnurl_pending", false, None);
++        let first = f.read(PageRequest::default(), 100);
++        assert_eq!(first["orders"].as_array().unwrap().len(), 50);
++        assert_eq!(first["next_after"], "order-049");
++        let second = f.read(
++            PageRequest {
++                after: "order-049".into(),
++                ..Default::default()
++            },
++            100,
++        );
++        assert_eq!(second["orders"].as_array().unwrap().len(), 2);
++        assert!(second["next_after"].is_null());
++        let pending = f.read(
++            PageRequest {
++                state: "attention".into(),
++                ..Default::default()
++            },
++            100,
++        );
++        assert_eq!(pending["orders"].as_array().unwrap().len(), 1);
++        assert_eq!(pending["summary"]["needs_attention"], 1);
++        for bad in ["../path", "x' OR 1=1", "a/b"] {
++            assert!(PageRequest {
++                after: bad.into(),
++                ..Default::default()
++            }
++            .validate()
++            .is_err());
++        }
++        assert!(PageRequest {
++            state: "arbitrary".into(),
++            ..Default::default()
++        }
++        .validate()
++        .is_err());
++    }
++    #[test]
++    fn sales_missing_corrupt_or_future_state_is_not_zero_sales() {
++        let dir = tempfile::tempdir().unwrap();
++        assert_eq!(
++            read_at(dir.path(), false, &PageRequest::default(), 100).unwrap()["status"],
++            "not_started"
++        );
++        assert!(read_at(dir.path(), true, &PageRequest::default(), 100).is_err());
++        assert!(!dir.path().join("operator").exists());
++        let f = Fixture::new();
++        f.order("a", "active", false, None);
++        f.ledger
++            .execute("UPDATE orders SET quote='broken'", [])
++            .unwrap();
++        assert!(read_at(f.root.path(), true, &PageRequest::default(), 100).is_err());
++        f.ledger.execute_batch("PRAGMA user_version=2").unwrap();
++        assert!(read_at(f.root.path(), true, &PageRequest::default(), 100).is_err());
++    }
++    #[test]
++    fn sales_reject_symlinks_and_non_private_databases() {
++        let f = Fixture::new();
++        let db = f.root.path().join("operator/checkout/checkout.sqlite3");
++        std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o644)).unwrap();
++        assert!(open(&db).is_err());
++        let link = f.root.path().join("link");
++        std::os::unix::fs::symlink(&db, &link).unwrap();
++        assert!(open(&link).is_err());
++        let dirlink = f.root.path().join("dirlink");
++        std::os::unix::fs::symlink(f.root.path(), &dirlink).unwrap();
++        assert!(read_at(&dirlink, false, &PageRequest::default(), 100).is_err());
++    }
++    #[test]
++    fn sales_reject_mismatched_allowances_and_oversized_records() {
++        let f = Fixture::new();
++        f.order("a", "active", true, None);
++        f.allowance();
++        f.store
++            .execute("UPDATE paid_allowances SET signer='other'", [])
++            .unwrap();
++        assert!(read_at(f.root.path(), true, &PageRequest::default(), 100).is_err());
++        f.ledger
++            .execute("UPDATE orders SET quote=?1", ["x".repeat(65537)])
++            .unwrap();
++        assert!(read_at(f.root.path(), true, &PageRequest::default(), 100).is_err());
++    }
++}
+diff --git a/neode-ui/src/router/index.ts b/neode-ui/src/router/index.ts
+index b3623d0..e037218 100644
+--- a/neode-ui/src/router/index.ts
++++ b/neode-ui/src/router/index.ts
+@@ -235,6 +235,11 @@ const router = createRouter({
+           name: 'system-update',
+           component: () => import('../views/SystemUpdate.vue'),
+         },
++        {
++          path: 'settings/storage/sales',
++          name: 'storage-sales',
++          component: () => import('@/views/settings/StorageSales.vue'),
++        },
+         {
+           path: 'settings/storage',
+           name: 'storage-selling',
+diff --git a/neode-ui/src/views/settings/StorageSales.vue b/neode-ui/src/views/settings/StorageSales.vue
+new file mode 100644
+index 0000000..12b8fce
+--- /dev/null
++++ b/neode-ui/src/views/settings/StorageSales.vue
+@@ -0,0 +1,96 @@
++<script setup lang="ts">
++import { onBeforeUnmount, onMounted, ref } from 'vue'
++import { RouterLink } from 'vue-router'
++import { rpcClient } from '@/api/rpc-client'
++type Allowance = { capacity_bytes: number; starts_at: number; writes_until: number; retains_until: number; status: string }
++type Order = { order_id: string; state: string; customer_pubkey: string; rail: string; offer_id: string
++  price_msat: number; ordered_capacity_bytes: number; created_at: number; quote_expires_at: number; renews: string | null; allowance: Allowance | null }
++type Snapshot = { status: 'ready'; checked_at: number; summary: { orders: number; paid_orders: number; needs_attention: number; retained_customers: number; allocated_bytes: number }; orders: Order[]; next_after: string | null }
++type Result = Snapshot | { status: 'not_started' }
++const result = ref<Result | null>(null)
++const busy = ref(false), error = ref(''), filter = ref('')
++const cursors = ref(['']), page = ref(0)
++const controller = new AbortController()
++const size = (n: number) => n < 1024 ? `${n} B` : n < 2 ** 20 ? `${(n / 1024).toLocaleString(undefined, { maximumFractionDigits: 2 })} KiB`
++  : n < 2 ** 30 ? `${(n / 2 ** 20).toLocaleString(undefined, { maximumFractionDigits: 2 })} MiB` : `${(n / 2 ** 30).toLocaleString(undefined, { maximumFractionDigits: 2 })} GiB`
++const date = (seconds: number) => { const d = new Date(seconds * 1000); return Number.isFinite(d.getTime()) ? d.toLocaleString() : 'Unavailable' }
++const states: Record<string, string> = { reserving: 'Reservation pending', quoted: 'Unpaid quote', expired: 'Quote expired', invoice_pending: 'Invoice recovery needed', awaiting_payment: 'Awaiting payment', lnurl_pending: 'Payment outcome pending', settled: 'Paid · activation pending', active: 'Paid · allowance issued', refund_required: 'Refund review required' }
++const access: Record<string, string> = { scheduled: 'Term scheduled', active: 'Writes allowed', grace: 'Recovery grace', expired: 'Term expired' }
++function payment(order: Order) {
++  if (order.state === 'quoted' && result.value?.status === 'ready' && order.quote_expires_at <= result.value.checked_at) return 'Quote expired'
++  return states[order.state] || 'Unknown payment status'
++}
++async function load(target = 0, after = '') {
++  if (busy.value) return
++  busy.value = true; error.value = ''
++  try {
++    const response = await rpcClient.call<Result>({ method: 'wildbloom.storage.orders', params: { after, state: filter.value }, maxRetries: 1, signal: controller.signal })
++    if (controller.signal.aborted) return
++    result.value = response
++    if (target === 0) cursors.value = ['']
++    else cursors.value[target] = after
++    page.value = target
++  } catch {
++    if (!controller.signal.aborted) { result.value = null; error.value = 'Sales records are unavailable. Refresh to try again. No payments or storage settings were changed.' }
++  } finally { busy.value = false }
++}
++onMounted(() => load())
++onBeforeUnmount(() => controller.abort())
++</script>
++<template>
++  <div class="mx-auto max-w-4xl space-y-6 pb-8">
++    <RouterLink to="/dashboard/settings/storage" class="text-sm text-white/70 hover:text-white">← Storage &amp; selling</RouterLink>
++    <header class="flex flex-wrap items-start justify-between gap-4">
++      <div><h1 class="text-2xl font-semibold">Sales &amp; customers</h1><p class="mt-2 text-sm text-white/65">Your node’s private payment records and storage allowances.</p></div>
++      <button class="glass-button rounded-lg px-4 py-2 disabled:opacity-50" :disabled="busy" @click="load()">Refresh</button>
++    </header>
++    <p class="text-sm text-white/65">Viewing these records does not contact your payment issuer or change a payment. Refresh to read the latest local state.</p>
++    <p v-if="error" role="alert" class="rounded-lg border border-red-400/40 bg-red-500/10 p-4 text-red-200">{{ error }}</p>
++    <p v-if="busy" role="status">Loading sales records…</p>
++    <section v-if="result?.status === 'not_started'" class="glass-card p-6 space-y-3" aria-label="Selling not started">
++      <h2 class="text-lg font-semibold">No selling history yet</h2>
++      <p class="text-sm text-white/70">You can keep using your node for your own files. If you choose to sell, configure your offer in Storage &amp; selling.</p>
++    </section>
++    <template v-if="result?.status === 'ready'">
++      <section class="glass-card p-6 space-y-4" aria-label="Sales summary">
++        <dl class="grid grid-cols-2 gap-5 sm:grid-cols-4">
++          <div><dt class="text-sm text-white/60">Paid orders</dt><dd class="mt-1 text-xl">{{ result.summary.paid_orders.toLocaleString() }}</dd></div>
++          <div><dt class="text-sm text-white/60">Customers with retained space</dt><dd class="mt-1 text-xl">{{ result.summary.retained_customers.toLocaleString() }}</dd></div>
++          <div><dt class="text-sm text-white/60">Allocated storage</dt><dd class="mt-1 text-xl">{{ size(result.summary.allocated_bytes) }}</dd></div>
++          <div><dt class="text-sm text-white/60">Needs attention</dt><dd class="mt-1 text-xl">{{ result.summary.needs_attention.toLocaleString() }}</dd></div>
++        </dl>
++        <p class="text-xs text-white/60">Allocated storage includes recovery grace and counts each current allowance once. It is promised capacity, not bytes uploaded. Paid orders include renewals.</p>
++        <p class="text-xs text-white/60">Read {{ date(result.checked_at) }} · {{ result.summary.orders.toLocaleString() }} total orders</p>
++      </section>
++      <div class="flex flex-wrap items-center justify-between gap-3">
++        <div><label for="sales-filter" class="mr-3 text-sm">Payment status</label>
++          <select id="sales-filter" v-model="filter" :disabled="busy" class="rounded-lg border border-white/20 bg-[#181b23] p-2" @change="load()">
++            <option value="">All orders</option><option value="attention">Needs attention</option><option value="active">Paid · allowance issued</option><option value="awaiting_payment">Awaiting payment</option><option value="quoted">Unpaid quotes</option><option value="expired">Recorded expired quotes</option>
++          </select>
++        </div><p class="text-xs text-white/60">Page {{ page + 1 }} · up to 50 orders, sorted by order ID</p>
++      </div>
++      <p v-if="filter === 'attention'" class="rounded-lg bg-amber-400/10 p-4 text-sm text-amber-100">These records need operator review. A pending payment may already have been received. This view does not retry payments or issue refunds.</p>
++      <p v-if="!result.orders.length" role="status" class="glass-card p-6">{{ result.summary.orders ? 'No orders match this filter.' : 'No customer orders yet.' }}</p>
++      <section v-for="order in result.orders" :key="order.order_id" class="glass-card p-5 space-y-4" :aria-label="`Order ${order.order_id}`">
++        <div class="flex flex-wrap justify-between gap-3">
++          <div><h2 class="font-semibold">{{ order.renews ? 'Renewal' : 'Storage purchase' }} · {{ (order.price_msat / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 }) }} sats</h2><p class="mt-1 text-sm text-white/65">{{ size(order.ordered_capacity_bytes) }} ordered · {{ order.rail === 'lnurlcash' ? 'LNURLcash' : 'Lightning' }}</p></div>
++          <strong class="text-sm">{{ payment(order) }}</strong>
++        </div>
++        <dl class="grid gap-4 text-sm sm:grid-cols-3">
++          <div><dt class="text-white/60">Order created</dt><dd class="mt-1">{{ date(order.created_at) }}</dd></div>
++          <template v-if="order.allowance"><div><dt class="text-white/60">Current write expiry</dt><dd class="mt-1">{{ date(order.allowance.writes_until) }}</dd></div><div><dt class="text-white/60">Current recovery deadline</dt><dd class="mt-1">{{ date(order.allowance.retains_until) }}</dd></div></template>
++          <div v-else><dt class="text-white/60">Quote expiry</dt><dd class="mt-1">{{ date(order.quote_expires_at) }}</dd></div>
++        </dl>
++        <p v-if="order.allowance" class="text-sm text-white/70">{{ access[order.allowance.status] || 'Allowance status unavailable' }} · {{ size(order.allowance.capacity_bytes) }} current allowance. Renewals share this allowance and its latest dates.</p>
++        <p v-else class="text-sm text-white/65">{{ order.state === 'active' ? 'The payment record shows activation, but its current allowance is unavailable.' : 'No activated allowance is recorded for this order.' }}</p>
++        <details class="border-t border-white/10 pt-3 text-sm"><summary class="cursor-pointer text-white/70">Order and customer references</summary>
++          <dl class="mt-3 space-y-3"><div><dt class="text-white/60">Order ID</dt><dd class="break-all font-mono text-xs mt-1">{{ order.order_id }}</dd></div><div><dt class="text-white/60">Customer public key</dt><dd class="break-all font-mono text-xs mt-1">{{ order.customer_pubkey }}</dd></div><div><dt class="text-white/60">Offer</dt><dd class="break-all mt-1">{{ order.offer_id }}</dd></div><div v-if="order.renews"><dt class="text-white/60">Renews</dt><dd class="break-all font-mono text-xs mt-1">{{ order.renews }}</dd></div></dl>
++        </details>
++      </section>
++      <nav class="flex justify-between gap-3" aria-label="Sales pages">
++        <button class="glass-button rounded-lg px-4 py-2 disabled:opacity-40" :disabled="busy || page === 0" @click="load(page - 1, cursors[page - 1])">Previous page</button>
++        <button class="glass-button rounded-lg px-4 py-2 disabled:opacity-40" :disabled="busy || !result.next_after" @click="load(page + 1, result.next_after || '')">Next page</button>
++      </nav>
++    </template>
++  </div>
++</template>
+diff --git a/neode-ui/src/views/settings/StorageSelling.vue b/neode-ui/src/views/settings/StorageSelling.vue
+index 901c8f5..f549506 100644
+--- a/neode-ui/src/views/settings/StorageSelling.vue
++++ b/neode-ui/src/views/settings/StorageSelling.vue
+@@ -128,6 +128,7 @@ onMounted(load)
+         <p class="mt-2 text-sm text-white/65">Your Wildbloom node, your capacity and your prices.</p></div>
+       <button class="glass-button px-4 py-2 rounded-lg" :disabled="busy" @click="load">Reload status</button>
+     </header>
++    <RouterLink to="/dashboard/settings/storage/sales" class="inline-block text-sm underline underline-offset-4">View sales &amp; customers</RouterLink>
+     <p v-if="error" role="alert" class="rounded-lg border border-red-400/40 bg-red-500/10 p-4 text-red-200">{{ error }}</p>
+     <p v-if="message" role="status" class="rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-4 text-emerald-100">{{ message }}</p>
+     <p v-if="!status && busy" role="status">Loading storage settings…</p>
+diff --git a/neode-ui/src/views/settings/__tests__/StorageSales.test.ts b/neode-ui/src/views/settings/__tests__/StorageSales.test.ts
+new file mode 100644
+index 0000000..b6bd01d
+--- /dev/null
++++ b/neode-ui/src/views/settings/__tests__/StorageSales.test.ts
+@@ -0,0 +1,47 @@
++import { flushPromises, mount } from '@vue/test-utils'
++import { beforeEach, describe, expect, it, vi } from 'vitest'
++vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
++import { rpcClient } from '@/api/rpc-client'
++import StorageSales from '../StorageSales.vue'
++const rpc = vi.mocked(rpcClient.call)
++const data = () => ({ status: 'ready', checked_at: 100, summary: { orders: 2, paid_orders: 2, needs_attention: 0, retained_customers: 1, allocated_bytes: 1024 }, orders: [{ order_id: 'order-a', state: 'active', customer_pubkey: 'ab'.repeat(32), rail: 'lnurlcash', offer_id: 'monthly', price_msat: 500000, ordered_capacity_bytes: 1024, created_at: 10, quote_expires_at: 20, renews: null, allowance: { capacity_bytes: 1024, starts_at: 10, writes_until: 200, retains_until: 300, status: 'active' } }], next_after: null as string | null })
++async function page() { const w = mount(StorageSales, { global: { stubs: { RouterLink: true } } }); await flushPromises(); return w }
++describe('Private storage sales', () => {
++  beforeEach(() => { rpc.mockReset(); rpc.mockResolvedValue(data()) })
++  it('only reads orders and distinguishes purchases from current allocation', async () => {
++    const w = await page()
++    expect(rpc.mock.calls.map(([o]) => o.method)).toEqual(['wildbloom.storage.orders'])
++    expect(w.text()).toContain('Paid · allowance issued'); expect(w.text()).toContain('Writes allowed')
++    expect(w.text()).toContain('Current write expiry'); expect(w.text()).toContain('counts each current allowance once')
++    expect(w.findAll('input').length).toBe(0)
++  })
++  it('shows never-enabled selling separately from empty order history', async () => {
++    rpc.mockResolvedValueOnce({ status: 'not_started' }); const w = await page()
++    expect(w.text()).toContain('No selling history yet'); expect(w.find('[aria-label="Sales summary"]').exists()).toBe(false)
++  })
++  it('does not present a failed read as zero customers or retain stale figures', async () => {
++    const w = await page(); rpc.mockRejectedValueOnce(new Error('private database path'))
++    await w.findAll('button').find(b => b.text() === 'Refresh')!.trigger('click'); await flushPromises()
++    expect(w.get('[role="alert"]').text()).toContain('Sales records are unavailable')
++    expect(w.text()).not.toContain('private database path'); expect(w.find('[aria-label="Sales summary"]').exists()).toBe(false)
++    expect(w.text()).not.toContain('No customer orders')
++  })
++  it('paginates by opaque cursor and resets on filter change', async () => {
++    rpc.mockResolvedValueOnce({ ...data(), next_after: 'order-a' }); const w = await page()
++    await w.findAll('button').find(b => b.text() === 'Next page')!.trigger('click'); await flushPromises()
++    expect(rpc).toHaveBeenLastCalledWith(expect.objectContaining({ params: { after: 'order-a', state: '' } }))
++    await w.get('#sales-filter').setValue('attention'); await flushPromises()
++    expect(rpc).toHaveBeenLastCalledWith(expect.objectContaining({ params: { after: '', state: 'attention' } }))
++    expect(w.text()).toContain('A pending payment may already have been received'); expect(w.text()).toContain('Page 1')
++  })
++  it('separates payment outcome from expired storage and renders text safely', async () => {
++    const value = data(); value.orders[0]!.allowance.status = 'expired'; value.orders[0]!.offer_id = '<img src=x onerror=alert(1)>'
++    rpc.mockResolvedValueOnce(value); const w = await page()
++    expect(w.text()).toContain('Paid · allowance issued'); expect(w.text()).toContain('Term expired')
++    expect(w.find('img').exists()).toBe(false); expect(w.text()).toContain('<img src=x onerror=alert(1)>')
++  })
++  it('aborts a pending read when the page unmounts', async () => {
++    const w = await page(); const signal = rpc.mock.calls[0]![0].signal!
++    w.unmount(); expect(signal.aborted).toBe(true)
++  })
++})
+-- 
+2.54.0 (Apple Git-157)
+

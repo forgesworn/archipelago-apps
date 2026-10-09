@@ -20,10 +20,20 @@ let state = { revision: 0, settings, active: null, applied: false, has_draft: fa
   disk: { free_bytes: 29*GiB, total_bytes: 38*GiB, headroom_bytes: 5*GiB },
   origin: 'https://demo.forgesworn.dev:3742', can_apply: true, external_configuration: false };
 const calls = [];
+let salesUnavailable = false;
+const now = Math.floor(Date.now()/1000);
+const allowance = { capacity_bytes: 5*GiB, starts_at: now-86400, writes_until: now+86400, retains_until: now+8*86400, status: 'active' };
+const sales = { status: 'ready', checked_at: now, summary: { orders: 3, paid_orders: 2, needs_attention: 1, retained_customers: 1, allocated_bytes: 5*GiB }, next_after: null,
+  orders: ['purchase','renewal','pending'].map((id,i) => ({ order_id: id+'-'.repeat(80), state: i===2?'lnurl_pending':'active', customer_pubkey: 'ab'.repeat(32), rail: 'lnurlcash', offer_id: 'storage-month', price_msat: 500000, ordered_capacity_bytes: 5*GiB, created_at: now-100, quote_expires_at: now+500, renews: i===1?'purchase':null, allowance: i===2?null:allowance })) };
+
 await page.route('**/rpc/v1', async route => {
   const request = route.request().postDataJSON(); calls.push(request.method);
   let result;
   if (request.method === 'wildbloom.storage.get') result = state;
+  else if (request.method === 'wildbloom.storage.orders') {
+    if (salesUnavailable) return route.fulfill({ json: { error: { code: -32000, message: 'Unavailable' } } });
+    result = request.params.state === 'attention' ? { ...sales, orders: [sales.orders[2]] } : sales;
+  }
   else if (request.method === 'wildbloom.storage.save') {
     assert.equal(request.params.revision, state.revision);
     state = { ...state, revision: state.revision+1, settings: request.params.settings, has_draft: true };
@@ -58,6 +68,24 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: '.cache/storage-selling-mobile.png', fullPage: true });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'No mobile horizontal overflow');
+  await page.setViewportSize({ width: 1280, height: 950 });
+  await page.goto('http://127.0.0.1:15173/storage-preview.html?sales');
+  await page.getByRole('heading', { name: 'Sales & customers' }).waitFor();
+  await page.locator('section strong').filter({ hasText: /^Paid · allowance issued$/ }).first().waitFor();
+  assert.equal(await page.getByText('Current write expiry', { exact: true }).count(), 2);
+  await page.screenshot({ path: '.cache/storage-sales-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('details summary').first().click();
+  await page.screenshot({ path: '.cache/storage-sales-mobile.png', fullPage: true });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Sales references fit mobile');
+  await page.getByLabel('Payment status', { exact: true }).selectOption('attention');
+  await page.getByText('A pending payment may already have been received.', { exact: false }).waitFor();
+  assert.equal(await page.getByText('Payment outcome pending', { exact: true }).count(), 1);
+  assert.equal(await page.locator('section strong').filter({ hasText: /^Paid · allowance issued$/ }).count(), 0);
+  salesUnavailable = true;
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'Sales records are unavailable' }).waitFor();
+  assert.equal(await page.getByLabel('Sales summary', { exact: true }).count(), 0, 'Failed read never shows stale or zero sales');
   assert.deepEqual(failures, []);
-  console.log('Browser acceptance passed: desktop/mobile, explicit draft/apply, operator overrides including zero, no issuer calls.');
+  console.log('Browser acceptance passed: desktop/mobile, explicit draft/apply, operator overrides including zero, no issuer calls; private sales, renewal dates, pending payments and failed reads.');
 } finally { await browser.close(); }
