@@ -132,6 +132,7 @@ jobs:
           check auth::tests:: 15
           check public_host 7
           check wildbloom 13
+          check manifest_metadata_str_tests:: 2
       - name: Dashboard profile on packaged node
         if: steps.plan.outputs.skip != 'true'
         run: |

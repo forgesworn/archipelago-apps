@@ -1,0 +1,121 @@
+From 9f2376c2f4d6eab9239a0ad12c3869b913388db4 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 10:43:10 +0100
+Subject: [PATCH] fix: show an installed app's declared author and licence
+
+Every installed app reported author "Archipelago" and licence "MIT",
+whatever its manifest declared, so a third-party app's details named the
+node OS as its author. Read both from the manifest's metadata block, as the
+icon already is, falling back to the old values when a manifest omits them.
+---
+ .../src/container/docker_packages.rs          | 61 ++++++++++++++++---
+ 1 file changed, 52 insertions(+), 9 deletions(-)
+
+diff --git a/core/archipelago/src/container/docker_packages.rs b/core/archipelago/src/container/docker_packages.rs
+index 13c8642..2bb9e9e 100644
+--- a/core/archipelago/src/container/docker_packages.rs
++++ b/core/archipelago/src/container/docker_packages.rs
+@@ -158,12 +158,16 @@ impl DockerPackageScanner {
+ 
+             // Get metadata for this app
+             let metadata = get_app_metadata(&app_id);
+-            // Manifest-owned metadata (icon) wins over the static table: the
+-            // manifest is what the catalog signed and what the App Store shows,
+-            // so it is also what an installed tile must render.
+-            let manifest_icon = real_manifest_metadata(&app_id)
+-                .and_then(|m| m.get("icon").and_then(|v| v.as_str()).map(str::to_string))
+-                .filter(|s| !s.trim().is_empty());
++            // Manifest-owned metadata (icon, author, licence) wins over the
++            // static table: the manifest is what the catalog signed and what
++            // the App Store shows, so it is also what an installed app must
++            // render.
++            let manifest_meta = real_manifest_metadata(&app_id);
++            let manifest_icon = manifest_metadata_str(manifest_meta.as_ref(), "icon");
++            let author = manifest_metadata_str(manifest_meta.as_ref(), "author")
++                .unwrap_or_else(|| "Archipelago".to_string());
++            let license = manifest_metadata_str(manifest_meta.as_ref(), "license")
++                .unwrap_or_else(|| "MIT".to_string());
+ 
+             // Resolve UI address: separate UI containers > static map > dynamic ports
+             let lan_address = if app_id == "netbird" {
+@@ -218,7 +222,7 @@ impl DockerPackageScanner {
+                     None
+                 },
+                 static_files: StaticFiles {
+-                    license: "MIT".to_string(),
++                    license: license.clone(),
+                     instructions: metadata.description.clone(),
+                     icon: manifest_icon.unwrap_or_else(|| metadata.icon.clone()),
+                 },
+@@ -231,13 +235,13 @@ impl DockerPackageScanner {
+                         long: metadata.description.clone(),
+                     },
+                     release_notes: "Docker container".to_string(),
+-                    license: "MIT".to_string(),
++                    license,
+                     wrapper_repo: metadata.repo.clone(),
+                     upstream_repo: metadata.repo.clone(),
+                     support_site: metadata.repo.clone(),
+                     marketing_site: metadata.repo.clone(),
+                     donation_url: None,
+-                    author: Some("Archipelago".to_string()),
++                    author: Some(author),
+                     website: lan_address.clone(),
+                     tier: Some(metadata.tier.to_string()),
+                     interfaces: {
+@@ -624,6 +628,16 @@ fn is_transient_podman_helper(app_id: &str, ports: &[String]) -> bool {
+         && right.chars().all(|c| c.is_ascii_lowercase())
+ }
+ 
++/// A non-blank string field of a manifest `metadata` block.
++fn manifest_metadata_str(meta: Option<&serde_json::Value>, key: &str) -> Option<String> {
++    meta?
++        .get(key)?
++        .as_str()
++        .map(str::trim)
++        .filter(|s| !s.is_empty())
++        .map(str::to_string)
++}
++
+ /// Raw `metadata` block of an installed app's real manifest — catalog overlay
+ /// first (origin-wins), disk manifest as fallback. Kept as raw JSON because
+ /// the typed `AppManifest` deliberately does not model `metadata`, yet its
+@@ -1252,6 +1266,35 @@ mod launch_url_port_tests {
+     }
+ }
+ 
++#[cfg(test)]
++mod manifest_metadata_str_tests {
++    use super::manifest_metadata_str;
++
++    #[test]
++    fn reads_the_declared_author_and_licence() {
++        // Regression: every installed app reported author "Archipelago" and
++        // licence "MIT" whatever its manifest declared.
++        let meta = serde_json::json!({ "author": "ForgeSworn", "license": "AGPL-3.0" });
++        assert_eq!(
++            manifest_metadata_str(Some(&meta), "author").as_deref(),
++            Some("ForgeSworn")
++        );
++        assert_eq!(
++            manifest_metadata_str(Some(&meta), "license").as_deref(),
++            Some("AGPL-3.0")
++        );
++    }
++
++    #[test]
++    fn missing_blank_or_non_string_fields_fall_through() {
++        let meta = serde_json::json!({ "author": "  ", "license": 3 });
++        assert_eq!(manifest_metadata_str(Some(&meta), "author"), None);
++        assert_eq!(manifest_metadata_str(Some(&meta), "license"), None);
++        assert_eq!(manifest_metadata_str(Some(&meta), "icon"), None);
++        assert_eq!(manifest_metadata_str(None, "author"), None);
++    }
++}
++
+ #[cfg(test)]
+ mod tor_service_name_tests {
+     use super::tor_service_name;
+-- 
+2.53.0
+
