@@ -343,6 +343,12 @@ the manifest's `metadata` block for the icon (`real_manifest_metadata`).
 Patch `0016` reads `author` and `license` from it too, keeping the old values
 as fallbacks.
 
+Upstream main has since read the licence from the manifest (`49703d7e`,
+6 Oct), leaving it empty when undeclared rather than claiming MIT; author is
+still hard-coded there. The author fix was rebuilt for upstream on top of
+that (`apply_manifest_value` reads `metadata.author`) and goes as an ngit
+proposal. At the next `ARCHY_REF` bump past `49703d7e`, drop `0016`.
+
 ## Encrypted message and mesh contact stores can be read as plaintext (archy `7abd04a`, v1.9.0-alpha)
 
 `storage_crypto` writes `nonce ‖ ciphertext` with a random 12-byte nonce,
@@ -358,3 +364,7 @@ first-byte rule, so it fails about once in 128 runs (it failed our CI on
 9 Oct). Patch `0017` adds `storage_crypto::open_stored`, which tries the
 key first and accepts plaintext only if it also parses as JSON, so the
 on-disk format is unchanged. Both stores now load through it.
+
+Upstream main fixed this independently (`053f03be`, 5 Oct): `is_plaintext_json`
+now accepts a file only if the whole of it parses as JSON. Not proposed;
+drop `0017` at the next `ARCHY_REF` bump past `053f03be`.
