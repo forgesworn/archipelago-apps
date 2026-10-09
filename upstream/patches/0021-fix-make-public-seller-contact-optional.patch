@@ -1,0 +1,58 @@
+From c8042e41c4d583a0be3b9ec4eaa4bbec8327fa9e Mon Sep 17 00:00:00 2001
+From: archipelago-apps <ci@invalid>
+Date: Fri, 9 Oct 2026 16:02:45 +0100
+Subject: [PATCH] fix: make public seller contact optional
+
+---
+ core/archipelago/src/settings/wildbloom_storage.rs           | 2 +-
+ neode-ui/src/views/settings/StorageSelling.vue               | 4 ++--
+ neode-ui/src/views/settings/__tests__/StorageSelling.test.ts | 3 +++
+ 3 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/core/archipelago/src/settings/wildbloom_storage.rs b/core/archipelago/src/settings/wildbloom_storage.rs
+index a8cf9ce..5f4588b 100644
+--- a/core/archipelago/src/settings/wildbloom_storage.rs
++++ b/core/archipelago/src/settings/wildbloom_storage.rs
+@@ -88,7 +88,7 @@ impl Settings {
+     pub fn validate_receiver(&self) -> Result<()> {
+         ensure!(self.moneyer_terms_accepted && !self.refund_policy.trim().is_empty()
+             && !self.refund_policy.starts_with("REPLACE") && !self.moneyer_ips.is_empty(),
+-            "Wildbloom selling requires issuer addresses, acceptance of Moneyer terms, and your contact/refund terms");
++            "Wildbloom selling requires issuer addresses, acceptance of Moneyer terms, and published sale/refund terms");
+         Ok(())
+     }
+ }
+diff --git a/neode-ui/src/views/settings/StorageSelling.vue b/neode-ui/src/views/settings/StorageSelling.vue
+index f549506..688b0a7 100644
+--- a/neode-ui/src/views/settings/StorageSelling.vue
++++ b/neode-ui/src/views/settings/StorageSelling.vue
+@@ -165,10 +165,10 @@ onMounted(load)
+ 
+           <div class="border-t border-white/10 pt-6 space-y-4">
+             <h2 class="text-lg font-semibold">Optional selling</h2>
+-            <p class="text-sm text-white/65">You can use your node for your own files without selling storage. Personal storage needs no customer contact or refund terms. If you choose to sell, set your own seller name, customer contact and refund terms.</p>
++            <p class="text-sm text-white/65">You can use your node for your own files without selling storage. Personal storage needs no sale terms. If you choose to sell, set your seller name and state the conditions for fulfilment and full refunds. A public contact address is optional.</p>
+             <p class="text-sm text-white/65">Accept LNURLcash issued by moneyer.dev. Payments are received by your node. Review <a href="https://moneyer.dev/terms" target="_blank" rel="noopener noreferrer" class="underline">Moneyer’s terms</a> before enabling sales.</p>
+             <div><label for="seller-name" class="block text-sm mb-2">Seller name</label><input id="seller-name" v-model="form.seller_name" maxlength="128" required class="storage-input" @input="review = false" /></div>
+-            <div><label for="refund-policy" class="block text-sm mb-2">Contact and refund terms</label><textarea id="refund-policy" v-model="form.refund_policy" rows="3" maxlength="2048" class="storage-input" placeholder="When selling: how customers contact you, and when you offer a refund" @input="review = false" /><p class="mt-2 text-xs text-white/60">Needed before enabling sales and published with your offer. A support address, Nostr public key or support page can be used; personal contact details are not required. Use a single paragraph.</p></div>
++            <div><label for="refund-policy" class="block text-sm mb-2">Sale and refund terms</label><textarea id="refund-policy" v-model="form.refund_policy" rows="3" maxlength="2048" class="storage-input" placeholder="When you provide or refund the purchased storage allowance" @input="review = false" /><p class="mt-2 text-xs text-white/60">Needed before enabling sales and published with your offer. Describe fulfilment and full-refund conditions. You may say how buyers reach you, but no email, Nostr key, URL or personal details are required. Use a single paragraph.</p></div>
+             <div><label for="customer-apps" class="block text-sm mb-2">Other customer app origins</label><textarea id="customer-apps" v-model="customerApps" rows="2" class="storage-input" placeholder="https://customer-app.example" @input="review = false" /><p class="mt-2 text-xs text-white/60">Your packaged Wildbloom app is already allowed. To accept customers using another web app, add its exact HTTPS origin, one per line, without a path. Only add apps you choose to support.</p></div>
+             <details class="rounded-lg border border-white/15 p-4">
+               <summary class="cursor-pointer text-sm font-medium">Moneyer connection</summary>
+diff --git a/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts b/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts
+index 0841b77..e92571a 100644
+--- a/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts
++++ b/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts
+@@ -27,6 +27,9 @@ describe('Storage & selling', () => {
+     const w = await page()
+     expect((w.get('#quota_bytes').element as HTMLInputElement).value).toBe('10')
+     expect(w.text()).toContain('Sales off')
++    expect(w.text()).toContain('A public contact address is optional')
++    expect(w.text()).toContain('no email, Nostr key, URL or personal details are required')
++    expect(w.text()).not.toContain('A support address')
+     expect(button(w, 'Review and apply').attributes('disabled')).toBeDefined()
+     expect(rpc.mock.calls.map(([o]) => o.method)).toEqual(['wildbloom.storage.get'])
+   })
+-- 
+2.54.0 (Apple Git-157)
+
