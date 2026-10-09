@@ -2,7 +2,7 @@
 
 The patched Archipelago dashboard adds **Settings → Storage & selling** at
 `/dashboard/settings/storage`. Requires matching backend and frontend
-`v1.9.0-alpha-p6` assets and Wildbloom Node `0.3.5-2ea211e-2`, installed using
+`v1.9.0-alpha-p7` assets and Wildbloom Node `0.3.5-bee5383-2`, installed using
 the packaged rootless Quadlet and `/var/lib/archipelago/wildbloom-node` volume.
 This is a targeted test-node package, not a new upstream OTA or ISO.
 
@@ -101,6 +101,7 @@ CI repeats these checks alongside the existing backend suite and release build.
 The [acceptance record](acceptance-own-node-sales.md) separately documents live
 Moneyer settlement, paired restore and a recipient-confirmed manual refund, plus
 the customer browser journey against the published Archipelago images with
-synthetic receivers, including renewal at the paid-capacity ceiling. Real renewal and automated
-refunds remain unverified. Public sales stay off until an operator configures and
+synthetic receivers, including renewal at the paid-capacity ceiling and bounded
+automatic-refund status. Real-money renewal and automatic refund acceptance are
+recorded separately when completed. Public sales stay off until an operator configures and
 deliberately enables them; successful tests do not enable sales.

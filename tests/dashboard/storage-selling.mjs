@@ -23,8 +23,14 @@ const calls = [];
 let salesUnavailable = false;
 const now = Math.floor(Date.now()/1000);
 const allowance = { capacity_bytes: 5*GiB, starts_at: now-86400, writes_until: now+86400, retains_until: now+8*86400, status: 'active' };
-const sales = { status: 'ready', checked_at: now, summary: { orders: 3, paid_orders: 2, needs_attention: 1, retained_customers: 1, allocated_bytes: 5*GiB }, next_after: null,
-  orders: ['purchase','renewal','pending'].map((id,i) => ({ order_id: id+'-'.repeat(80), state: i===2?'lnurl_pending':'active', customer_pubkey: 'ab'.repeat(32), rail: 'lnurlcash', offer_id: 'storage-month', price_msat: 500000, ordered_capacity_bytes: 5*GiB, created_at: now-100, quote_expires_at: now+500, renews: i===1?'purchase':null, allowance: i===2?null:allowance })) };
+const sales = { status: 'ready', checked_at: now, summary: { orders: 5, paid_orders: 2, needs_attention: 2, retained_customers: 1, allocated_bytes: 5*GiB }, next_after: null,
+  orders: ['purchase','renewal','pending'].map((id,i) => ({ order_id: id+'-'.repeat(80), state: i===2?'lnurl_pending':'active', customer_pubkey: 'ab'.repeat(32), rail: 'lnurlcash', offer_id: 'storage-month', price_msat: 500000, ordered_capacity_bytes: 5*GiB, created_at: now-100, quote_expires_at: now+500, renews: i===1?'purchase':null, allowance: i===2?null:allowance, refund_to: null, automatic_refund_available: false, refund: null })) };
+sales.orders.push(
+  { ...sales.orders[2], order_id: 'automatic-'+ '-'.repeat(80), state: 'refund_required', refund_to: 'customer@example.com', automatic_refund_available: true,
+    refund: { source: 'automatic', status: 'pending', amount_msat: 500000, payment_hash: 'ef'.repeat(32), recorded_at: null } },
+  { ...sales.orders[2], order_id: 'refunded-'+ '-'.repeat(80), state: 'refunded', refund_to: 'customer@example.com', automatic_refund_available: false,
+    refund: { source: 'automatic', status: 'completed', amount_msat: 500000, payment_hash: 'ab'.repeat(32), recorded_at: now } },
+);
 
 await page.route('**/rpc/v1', async route => {
   const request = route.request().postDataJSON(); calls.push(request.method);
@@ -32,14 +38,14 @@ await page.route('**/rpc/v1', async route => {
   if (request.method === 'wildbloom.storage.get') result = state;
   else if (request.method === 'wildbloom.storage.orders') {
     if (salesUnavailable) return route.fulfill({ json: { error: { code: -32000, message: 'Unavailable' } } });
-    result = request.params.state === 'attention' ? { ...sales, orders: [sales.orders[2]] } : sales;
+    result = request.params.state === 'attention' ? { ...sales, orders: [sales.orders[2], sales.orders[3]] } : sales;
   }
   else if (request.method === 'wildbloom.storage.record-refund') {
     assert.equal(request.params.confirm_received, true);
     const order = sales.orders.find(o => o.order_id === request.params.order_id);
     assert.equal(order.price_msat, request.params.amount_msat);
     assert.equal(request.params.payment_hash, 'cd'.repeat(32));
-    order.refund = { amount_msat: order.price_msat, payment_hash: request.params.payment_hash, recorded_at: now };
+    order.refund = { source: 'manual', status: 'completed', amount_msat: order.price_msat, payment_hash: request.params.payment_hash, recorded_at: now };
     result = { status: 'recorded' };
   }
   else if (request.method === 'wildbloom.storage.save') {
@@ -81,6 +87,9 @@ try {
   await page.getByRole('heading', { name: 'Sales & customers' }).waitFor();
   await page.locator('section strong').filter({ hasText: /^Paid · allowance issued$/ }).first().waitFor();
   assert.equal(await page.getByText('Current write expiry', { exact: true }).count(), 2);
+  await page.getByText('Send or resume the bound full refund', { exact: true }).click();
+  await page.locator('pre').filter({ hasText: 'recover-wildbloom-payment refund automatic-' }).waitFor();
+  assert.equal(await page.getByText('Private refund destination', { exact: true }).count(), 2);
   await page.screenshot({ path: '.cache/storage-sales-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('details summary').first().click();
@@ -93,11 +102,13 @@ try {
   await page.screenshot({ path: '.cache/storage-refund-mobile.png', fullPage: true });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Refund form fits mobile');
   await page.getByRole('button', { name: 'Save refund record', exact: true }).click();
-  await page.getByRole('heading', { name: 'Full refund recorded by operator', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Full refund completed', exact: true }).first().waitFor();
   assert.equal(await page.getByText('Writes allowed', { exact: false }).count(), 2, 'Refund record preserves allowances');
   await page.getByLabel('Payment status', { exact: true }).selectOption('attention');
   await page.getByText('A pending payment may already have been received.', { exact: false }).waitFor();
   assert.equal(await page.getByText('Payment outcome pending', { exact: true }).count(), 1);
+  assert.equal(await page.getByText('Refund review required', { exact: true }).count(), 1);
+  await page.locator('section strong').filter({ hasText: /^Paid · allowance issued$/ }).first().waitFor({ state: 'detached' });
   assert.equal(await page.locator('section strong').filter({ hasText: /^Paid · allowance issued$/ }).count(), 0);
   await page.getByText('Recover this payment', { exact: true }).click();
   await page.locator('pre').filter({ hasText: 'recover-wildbloom-payment reconcile pending-' }).waitFor();

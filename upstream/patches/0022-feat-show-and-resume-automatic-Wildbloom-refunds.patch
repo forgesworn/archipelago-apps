@@ -1,0 +1,376 @@
+From 69999137df65b37b112b0b56095d3f2f1a7b527d Mon Sep 17 00:00:00 2001
+From: archipelago-apps <ci@invalid>
+Date: Fri, 9 Oct 2026 23:33:07 +0100
+Subject: [PATCH] feat: show and resume automatic Wildbloom refunds
+
+---
+ core/archipelago/src/api/rpc/wildbloom.rs     |   4 +-
+ .../src/container/prod_orchestrator.rs        |   2 +-
+ .../src/settings/wildbloom_refunds.rs         |   2 +-
+ .../src/settings/wildbloom_sales.rs           | 134 ++++++++++++++++--
+ neode-ui/src/views/settings/StorageSales.vue  |  28 ++--
+ .../settings/__tests__/StorageSales.test.ts   |  15 ++
+ 6 files changed, 164 insertions(+), 21 deletions(-)
+
+diff --git a/core/archipelago/src/api/rpc/wildbloom.rs b/core/archipelago/src/api/rpc/wildbloom.rs
+index 385f19a..a5cfa6c 100644
+--- a/core/archipelago/src/api/rpc/wildbloom.rs
++++ b/core/archipelago/src/api/rpc/wildbloom.rs
+@@ -256,7 +256,7 @@ impl RpcHandler {
+             json!({"revision": record.revision, "settings": settings, "active": record.active,
+             "has_draft": record.draft.is_some(), "applied": applied, "runtime": runtime, "external_configuration": external,
+             "can_apply": root.is_some() && disk.is_some() && !external && self.config.public_host.is_some()
+-                && runtime.as_ref().is_some_and(|r| r.image == "ghcr.io/forgesworn/wildbloom-node:0.3.5-2ea211e-2"),
++                && runtime.as_ref().is_some_and(|r| r.image == "ghcr.io/forgesworn/wildbloom-node:0.3.5-bee5383-2"),
+             "origin": self.config.public_host.as_ref().map(|h| format!("https://{h}:3742")),
+             "disk": disk.map(|(free,total)| json!({"free_bytes":free,"total_bytes":total,"headroom_bytes":(5*GIB).max(total/20)}))}),
+         )
+@@ -337,7 +337,7 @@ impl RpcHandler {
+             .await
+             .context("Wildbloom start the node and wait for healthy storage before applying")?;
+         ensure!(
+-            current.image == "ghcr.io/forgesworn/wildbloom-node:0.3.5-2ea211e-2",
++            current.image == "ghcr.io/forgesworn/wildbloom-node:0.3.5-bee5383-2",
+             "Wildbloom installed image is not compatible with dashboard settings"
+         );
+         ensure!(!external_configuration(&record, &current, root.join("operator/checkout").exists()),
+diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
+index b1cdf4a..71340d6 100644
+--- a/core/archipelago/src/container/prod_orchestrator.rs
++++ b/core/archipelago/src/container/prod_orchestrator.rs
+@@ -5054,7 +5054,7 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
+         );
+         anyhow::ensure!(
+             lm.manifest.app.container.image.as_deref()
+-                == Some("ghcr.io/forgesworn/wildbloom-node:0.3.5-2ea211e-2"),
++                == Some("ghcr.io/forgesworn/wildbloom-node:0.3.5-bee5383-2"),
+             "Wildbloom dashboard settings require a compatible node package"
+         );
+         let volume = lm
+diff --git a/core/archipelago/src/settings/wildbloom_refunds.rs b/core/archipelago/src/settings/wildbloom_refunds.rs
+index 7d02a2d..4efeeb6 100644
+--- a/core/archipelago/src/settings/wildbloom_refunds.rs
++++ b/core/archipelago/src/settings/wildbloom_refunds.rs
+@@ -93,7 +93,7 @@ pub fn record(root: &Path, request: Request) -> Result<Refund> {
+     sales::directory(&dir.join("checkout"))?;
+     let db = sales::open(&dir.join("checkout/checkout.sqlite3"))?;
+     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+-    ensure!(version == 1, "Unsupported checkout schema");
++    ensure!([1, 2].contains(&version), "Unsupported checkout schema");
+     let (state, quote): (String, String) = db
+         .query_row(
+             "SELECT state,CASE WHEN length(quote)<=65536 THEN quote END FROM orders WHERE id=?1",
+diff --git a/core/archipelago/src/settings/wildbloom_sales.rs b/core/archipelago/src/settings/wildbloom_sales.rs
+index c3065df..6e9043a 100644
+--- a/core/archipelago/src/settings/wildbloom_sales.rs
++++ b/core/archipelago/src/settings/wildbloom_sales.rs
+@@ -1,4 +1,4 @@
+-//! Admin-only projection of the pinned checkout v1 and Shelter allowance schemas.
++//! Admin-only projection of the pinned checkout v1/v2 and Shelter allowance schemas.
+ //! Never opens Ledger/Store (which migrate and take writer locks), reads bearer
+ //! columns, reconciles payments, or changes storage. WAL snapshots remain visible.
+ use super::wildbloom_storage::MAX;
+@@ -22,6 +22,7 @@ const STATES: &[&str] = &[
+     "settled",
+     "active",
+     "refund_required",
++    "refunded",
+ ];
+ const ATTENTION: &[&str] = &[
+     "reserving",
+@@ -136,11 +137,20 @@ struct Quote {
+     created_at: u64,
+     expires_at: u64,
+     renews: Option<String>,
++    #[serde(default)]
++    refund_to: Option<String>,
+ }
+ #[derive(Deserialize)]
+ struct Receipt {
+     allowance_id: String,
+ }
++#[derive(Deserialize)]
++struct CheckoutRefund {
++    status: String,
++    amount_msat: u64,
++    payment_hash: String,
++    refunded_at: Option<u64>,
++}
+ 
+ pub fn read(root: &Path, expected: bool, request: &PageRequest) -> Result<Value> {
+     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+@@ -167,7 +177,7 @@ fn read_at(root: &Path, expected: bool, request: &PageRequest, now: u64) -> Resu
+     }
+     let db = open(&ledger.join("checkout.sqlite3"))?;
+     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+-    ensure!(version == 1, "Unsupported checkout schema");
++    ensure!([1, 2].contains(&version), "Unsupported checkout schema");
+     let store = open(&root.join("wildbloom.sqlite3"))?;
+     let refunds = super::wildbloom_refunds::read(root)?;
+     for refund in refunds.values() {
+@@ -178,7 +188,7 @@ fn read_at(root: &Path, expected: bool, request: &PageRequest, now: u64) -> Resu
+         )?;
+         let q: Quote = serde_json::from_str(&quote)?;
+         ensure!(
+-            ["active", "refund_required"].contains(&state.as_str())
++            ["active", "refund_required", "refunded"].contains(&state.as_str())
+                 && q.order_id == refund.order_id
+                 && q.offer.price_msat == refund.amount_msat,
+             "Refund does not match checkout history"
+@@ -209,10 +219,16 @@ fn read_at(root: &Path, expected: bool, request: &PageRequest, now: u64) -> Resu
+     )?;
+     safe(customers)?;
+     safe(capacity)?;
+-    let mut query = db.prepare("SELECT id,state,CASE WHEN length(quote)<=65536 THEN quote END,
+-        CASE WHEN receipt IS NULL OR length(receipt)<=4096 THEN receipt ELSE '' END
++    let refund_column = if version == 2 {
++        "CASE WHEN refund IS NULL OR length(refund)<=4096 THEN refund ELSE '' END"
++    } else {
++        "NULL"
++    };
++    let sql = format!("SELECT id,state,CASE WHEN length(quote)<=65536 THEN quote END,
++        CASE WHEN receipt IS NULL OR length(receipt)<=4096 THEN receipt ELSE '' END,{refund_column}
+         FROM orders WHERE id>?1 AND (?2='' OR state=?2 OR (?2='attention' AND state IN
+-        ('reserving','invoice_pending','lnurl_pending','settled','refund_required'))) ORDER BY id LIMIT ?3")?;
++        ('reserving','invoice_pending','lnurl_pending','settled','refund_required'))) ORDER BY id LIMIT ?3");
++    let mut query = db.prepare(&sql)?;
+     let mut rows = query.query(params![
+         request.after,
+         request.state,
+@@ -229,6 +245,7 @@ fn read_at(root: &Path, expected: bool, request: &PageRequest, now: u64) -> Resu
+         let state: String = row.get(1)?;
+         let quote: Quote = serde_json::from_str(&row.get::<_, String>(2)?)?;
+         let receipt: Option<String> = row.get(3)?;
++        let checkout_refund: Option<String> = row.get(4)?;
+         ensure!(
+             id(&order_id) && quote.order_id == order_id && STATES.contains(&state.as_str()),
+             "Invalid order"
+@@ -255,6 +272,19 @@ fn read_at(root: &Path, expected: bool, request: &PageRequest, now: u64) -> Resu
+             quote.renews.as_ref().is_none_or(|v| id(v)),
+             "Invalid renewal reference"
+         );
++        ensure!(
++            quote.refund_to.as_ref().is_none_or(|value| {
++                value.len() <= 320
++                    && value.split_once('@').is_some_and(|(name, host)| {
++                        !name.is_empty()
++                            && name.len() <= 64
++                            && !name.chars().any(char::is_whitespace)
++                            && host.contains('.')
++                            && !host.chars().any(char::is_whitespace)
++                    })
++            }),
++            "Invalid refund destination"
++        );
+         let allowance = if let Some(receipt) = receipt {
+             let receipt: Receipt = serde_json::from_str(&receipt)?;
+             ensure!(id(&receipt.allowance_id), "Invalid allowance reference");
+@@ -292,12 +322,47 @@ fn read_at(root: &Path, expected: bool, request: &PageRequest, now: u64) -> Resu
+         } else {
+             None
+         };
++        let automatic_refund = checkout_refund
++            .map(|value| serde_json::from_str::<CheckoutRefund>(&value))
++            .transpose()?;
++        let automatic_refund = automatic_refund
++            .map(|refund| {
++                ensure!(
++                    ["pending", "completed"].contains(&refund.status.as_str())
++                        && refund.amount_msat == quote.offer.price_msat
++                        && refund.payment_hash.len() == 64
++                        && refund.payment_hash.bytes().all(|b| b.is_ascii_hexdigit())
++                        && ((refund.status == "completed") == refund.refunded_at.is_some())
++                        && ((state == "refunded") == (refund.status == "completed")),
++                    "Invalid automatic refund"
++                );
++                if let Some(at) = refund.refunded_at {
++                    safe(at)?;
++                }
++                Ok::<_, anyhow::Error>(json!({"source":"automatic","status":refund.status,
++                    "amount_msat":refund.amount_msat,"payment_hash":refund.payment_hash,
++                    "recorded_at":refund.refunded_at}))
++            })
++            .transpose()?;
++        ensure!(
++            state != "refunded" || automatic_refund.is_some(),
++            "Refunded order has no receipt"
++        );
++        let manual_refund = refunds.get(&order_id).map(|refund| json!({"source":"manual",
++            "status":"completed","amount_msat":refund.amount_msat,"payment_hash":refund.payment_hash,
++            "recorded_at":refund.recorded_at}));
++        ensure!(
++            automatic_refund.is_none() || manual_refund.is_none(),
++            "Duplicate refund records"
++        );
+         orders.push(
+             json!({"order_id":order_id,"state":state,"customer_pubkey":quote.signer_pubkey,
+             "rail":quote.rail,"offer_id":quote.offer.id,"price_msat":quote.offer.price_msat,
+             "ordered_capacity_bytes":quote.offer.capacity_bytes,"created_at":quote.created_at,
+             "quote_expires_at":quote.expires_at,"renews":quote.renews,"allowance":allowance,
+-            "refund":refunds.get(&order_id)}),
++            "refund_to":quote.refund_to,"automatic_refund_available":state=="refund_required"
++                && quote.rail=="lnurlcash" && quote.refund_to.is_some(),
++            "refund":automatic_refund.or(manual_refund)}),
+         );
+     }
+     let next = if more {
+@@ -476,10 +541,63 @@ mod tests {
+             .execute("UPDATE orders SET quote='broken'", [])
+             .unwrap();
+         assert!(read_at(f.root.path(), true, &PageRequest::default(), 100).is_err());
+-        f.ledger.execute_batch("PRAGMA user_version=2").unwrap();
++        f.ledger.execute_batch("PRAGMA user_version=3").unwrap();
+         assert!(read_at(f.root.path(), true, &PageRequest::default(), 100).is_err());
+     }
+     #[test]
++    fn schema_two_projects_bounded_automatic_refund_status_without_assets() {
++        let f = Fixture::new();
++        f.order("automatic", "refund_required", false, None);
++        let quote: String = f
++            .ledger
++            .query_row("SELECT quote FROM orders WHERE id='automatic'", [], |r| {
++                r.get(0)
++            })
++            .unwrap();
++        let mut quote: Value = serde_json::from_str(&quote).unwrap();
++        quote["refund_to"] = json!("customer@example.com");
++        f.ledger
++            .execute(
++                "UPDATE orders SET quote=?1 WHERE id='automatic'",
++                [quote.to_string()],
++            )
++            .unwrap();
++        f.ledger
++            .execute_batch("ALTER TABLE orders ADD COLUMN refund TEXT; PRAGMA user_version=2")
++            .unwrap();
++        f.ledger
++            .execute(
++                "UPDATE orders SET refund=?1 WHERE id='automatic'",
++                [json!({
++                    "status":"pending","amount_msat":500000,"payment_hash":"cd".repeat(32),
++                    "refunded_at":null,"private_invoice":"never-project-this"
++                })
++                .to_string()],
++            )
++            .unwrap();
++        let pending = f.read(PageRequest::default(), 100);
++        assert_eq!(pending["orders"][0]["refund"]["status"], "pending");
++        assert_eq!(pending["orders"][0]["automatic_refund_available"], true);
++        assert_eq!(pending["summary"]["needs_attention"], 1);
++        assert!(!pending.to_string().contains("private_invoice"));
++        f.ledger
++            .execute(
++                "UPDATE orders SET state='refunded',refund=?1 WHERE id='automatic'",
++                [json!({
++                    "status":"completed","amount_msat":500000,"payment_hash":"cd".repeat(32),
++                    "refunded_at":150,"private_invoice":"never-project-this"
++                })
++                .to_string()],
++            )
++            .unwrap();
++        let completed = f.read(PageRequest::default(), 200);
++        assert_eq!(completed["orders"][0]["state"], "refunded");
++        assert_eq!(completed["orders"][0]["refund"]["source"], "automatic");
++        assert_eq!(completed["orders"][0]["refund"]["recorded_at"], 150);
++        assert_eq!(completed["summary"]["needs_attention"], 0);
++        assert_eq!(completed["summary"]["paid_orders"], 0);
++    }
++    #[test]
+     fn sales_reject_symlinks_and_non_private_databases() {
+         let f = Fixture::new();
+         let db = f.root.path().join("operator/checkout/checkout.sqlite3");
+diff --git a/neode-ui/src/views/settings/StorageSales.vue b/neode-ui/src/views/settings/StorageSales.vue
+index bd3865f..2539594 100644
+--- a/neode-ui/src/views/settings/StorageSales.vue
++++ b/neode-ui/src/views/settings/StorageSales.vue
+@@ -5,7 +5,9 @@ import { rpcClient } from '@/api/rpc-client'
+ import StorageRefund from './StorageRefund.vue'
+ type Allowance = { capacity_bytes: number; starts_at: number; writes_until: number; retains_until: number; status: string }
+ type Order = { order_id: string; state: string; customer_pubkey: string; rail: string; offer_id: string
+-  price_msat: number; ordered_capacity_bytes: number; created_at: number; quote_expires_at: number; renews: string | null; allowance: Allowance | null; refund?: { amount_msat: number; payment_hash: string; recorded_at: number } | null }
++  price_msat: number; ordered_capacity_bytes: number; created_at: number; quote_expires_at: number; renews: string | null; allowance: Allowance | null
++  refund_to: string | null; automatic_refund_available: boolean
++  refund?: { source: 'automatic' | 'manual'; status: 'pending' | 'completed'; amount_msat: number; payment_hash: string; recorded_at: number | null } | null }
+ type Snapshot = { status: 'ready'; checked_at: number; summary: { orders: number; paid_orders: number; needs_attention: number; retained_customers: number; allocated_bytes: number }; orders: Order[]; next_after: string | null }
+ type Result = Snapshot | { status: 'not_started' }
+ const result = ref<Result | null>(null)
+@@ -15,7 +17,8 @@ const controller = new AbortController()
+ const size = (n: number) => n < 1024 ? `${n} B` : n < 2 ** 20 ? `${(n / 1024).toLocaleString(undefined, { maximumFractionDigits: 2 })} KiB`
+   : n < 2 ** 30 ? `${(n / 2 ** 20).toLocaleString(undefined, { maximumFractionDigits: 2 })} MiB` : `${(n / 2 ** 30).toLocaleString(undefined, { maximumFractionDigits: 2 })} GiB`
+ const date = (seconds: number) => { const d = new Date(seconds * 1000); return Number.isFinite(d.getTime()) ? d.toLocaleString() : 'Unavailable' }
+-const states: Record<string, string> = { reserving: 'Reservation pending', quoted: 'Unpaid quote', expired: 'Quote expired', invoice_pending: 'Invoice recovery needed', awaiting_payment: 'Awaiting payment', lnurl_pending: 'Payment outcome pending', settled: 'Paid · activation pending', active: 'Paid · allowance issued', refund_required: 'Refund review required' }
++const refundDate = (seconds: number | null) => seconds === null ? 'Unavailable' : date(seconds)
++const states: Record<string, string> = { reserving: 'Reservation pending', quoted: 'Unpaid quote', expired: 'Quote expired', invoice_pending: 'Invoice recovery needed', awaiting_payment: 'Awaiting payment', lnurl_pending: 'Payment outcome pending', settled: 'Paid · activation pending', active: 'Paid · allowance issued', refund_required: 'Refund review required', refunded: 'Full refund completed' }
+ const access: Record<string, string> = { scheduled: 'Term scheduled', active: 'Writes allowed', grace: 'Recovery grace', expired: 'Term expired' }
+ function payment(order: Order) {
+   if (order.state === 'quoted' && result.value?.status === 'ready' && order.quote_expires_at <= result.value.checked_at) return 'Quote expired'
+@@ -66,11 +69,11 @@ onBeforeUnmount(() => controller.abort())
+       <div class="flex flex-wrap items-center justify-between gap-3">
+         <div><label for="sales-filter" class="mr-3 text-sm">Payment status</label>
+           <select id="sales-filter" v-model="filter" :disabled="busy" class="rounded-lg border border-white/20 bg-[#181b23] p-2" @change="load()">
+-            <option value="">All orders</option><option value="attention">Needs attention</option><option value="active">Paid · allowance issued</option><option value="awaiting_payment">Awaiting payment</option><option value="quoted">Unpaid quotes</option><option value="expired">Recorded expired quotes</option>
++            <option value="">All orders</option><option value="attention">Needs attention</option><option value="active">Paid · allowance issued</option><option value="refunded">Full refunds</option><option value="awaiting_payment">Awaiting payment</option><option value="quoted">Unpaid quotes</option><option value="expired">Recorded expired quotes</option>
+           </select>
+         </div><p class="text-xs text-white/60">Page {{ page + 1 }} · up to 50 orders, sorted by order ID</p>
+       </div>
+-      <p v-if="filter === 'attention'" class="rounded-lg bg-amber-400/10 p-4 text-sm text-amber-100">These records need operator review. A pending payment may already have been received. Use the local operator recovery command for uncertain payments. Recording a refund does not send money.</p>
++      <p v-if="filter === 'attention'" class="rounded-lg bg-amber-400/10 p-4 text-sm text-amber-100">These records need operator review. A pending payment may already have been received. Use the local recovery command for uncertain payments and the refund command only for a reviewed refund-required order.</p>
+       <p v-if="!result.orders.length" role="status" class="glass-card p-6">{{ result.summary.orders ? 'No orders match this filter.' : 'No customer orders yet.' }}</p>
+       <section v-for="order in result.orders" :key="order.order_id" class="glass-card p-5 space-y-4" :aria-label="`Order ${order.order_id}`">
+         <div class="flex flex-wrap justify-between gap-3">
+@@ -85,14 +88,21 @@ onBeforeUnmount(() => controller.abort())
+         <p v-if="order.allowance" class="text-sm text-white/70">{{ access[order.allowance.status] || 'Allowance status unavailable' }} · {{ size(order.allowance.capacity_bytes) }} current allowance. Renewals share this allowance and its latest dates.</p>
+         <p v-else class="text-sm text-white/65">{{ order.state === 'active' ? 'The payment record shows activation, but its current allowance is unavailable.' : 'No activated allowance is recorded for this order.' }}</p>
+         <details class="border-t border-white/10 pt-3 text-sm"><summary class="cursor-pointer text-white/70">Order and customer references</summary>
+-          <dl class="mt-3 space-y-3"><div><dt class="text-white/60">Order ID</dt><dd class="break-all font-mono text-xs mt-1">{{ order.order_id }}</dd></div><div><dt class="text-white/60">Customer public key</dt><dd class="break-all font-mono text-xs mt-1">{{ order.customer_pubkey }}</dd></div><div><dt class="text-white/60">Offer</dt><dd class="break-all mt-1">{{ order.offer_id }}</dd></div><div v-if="order.renews"><dt class="text-white/60">Renews</dt><dd class="break-all font-mono text-xs mt-1">{{ order.renews }}</dd></div></dl>
++          <dl class="mt-3 space-y-3"><div><dt class="text-white/60">Order ID</dt><dd class="break-all font-mono text-xs mt-1">{{ order.order_id }}</dd></div><div><dt class="text-white/60">Customer public key</dt><dd class="break-all font-mono text-xs mt-1">{{ order.customer_pubkey }}</dd></div><div><dt class="text-white/60">Offer</dt><dd class="break-all mt-1">{{ order.offer_id }}</dd></div><div v-if="order.renews"><dt class="text-white/60">Renews</dt><dd class="break-all font-mono text-xs mt-1">{{ order.renews }}</dd></div><div v-if="order.refund_to"><dt class="text-white/60">Private refund destination</dt><dd class="break-all mt-1">{{ order.refund_to }}</dd></div></dl>
+         </details>
+-        <div v-if="order.refund" class="rounded-lg border border-emerald-400/20 p-4 text-sm space-y-2">
+-          <h3 class="font-semibold">Full refund recorded by operator</h3>
+-          <p>{{ (order.refund.amount_msat / 1000).toLocaleString() }} sats · {{ date(order.refund.recorded_at) }}. Receipt was confirmed by the operator; this dashboard has not independently verified it. Existing storage rights remain unchanged.</p>
++        <div v-if="order.refund" class="rounded-lg border p-4 text-sm space-y-2" :class="order.refund.status === 'completed' ? 'border-emerald-400/20' : 'border-amber-400/30 bg-amber-400/5'">
++          <h3 class="font-semibold">{{ order.refund.status === 'completed' ? 'Full refund completed' : 'Full refund pending' }}</h3>
++          <p v-if="order.refund.status === 'pending'">{{ (order.refund.amount_msat / 1000).toLocaleString() }} sats. The exact invoice and LNURLcash melt are private and durable. Run the same refund command again to check settlement; it will not create another invoice.</p>
++          <p v-else-if="order.refund.source === 'automatic'">{{ (order.refund.amount_msat / 1000).toLocaleString() }} sats · {{ refundDate(order.refund.recorded_at) }}. The node matched settlement evidence for its journalled refund. No customer address, invoice or bearer note is shown here.</p>
++          <p v-else>{{ (order.refund.amount_msat / 1000).toLocaleString() }} sats · {{ refundDate(order.refund.recorded_at) }}. Receipt was confirmed by the operator; this dashboard has not independently verified it. Existing storage rights remain unchanged.</p>
+           <details><summary class="cursor-pointer">Refund payment reference</summary><p class="break-all font-mono text-xs mt-2">{{ order.refund.payment_hash }}</p></details>
+         </div>
+-        <StorageRefund v-else-if="['active', 'refund_required'].includes(order.state)" :key="order.order_id" :order-id="order.order_id" :price-msat="order.price_msat" @recorded="load(page, cursors[page])" />
++        <StorageRefund v-else-if="order.state === 'active' || (order.state === 'refund_required' && !order.automatic_refund_available)" :key="order.order_id" :order-id="order.order_id" :price-msat="order.price_msat" @recorded="load(page, cursors[page])" />
++        <details v-if="order.automatic_refund_available && order.refund?.status !== 'completed'" class="border-t border-white/10 pt-3 text-sm">
++          <summary class="cursor-pointer">Send or resume the bound full refund</summary>
++          <p class="mt-3 text-white/70">Review the private refund destination above. This briefly stops storage, verifies a full backup, then creates or resumes one exact LNURLcash refund. A retry reuses the journalled invoice and cannot change the destination.</p>
++          <pre class="mt-3 whitespace-pre-wrap break-all rounded-lg bg-black/20 p-3 text-xs">/usr/local/bin/recover-wildbloom-payment refund {{ order.order_id }} --confirm-refund --confirm-restart</pre>
++        </details>
+         <details v-if="['lnurl_pending', 'settled', 'awaiting_payment', 'invoice_pending'].includes(order.state)" class="border-t border-white/10 pt-3 text-sm">
+           <summary class="cursor-pointer">Recover this payment</summary>
+           <p class="mt-3 text-white/70">Run the installed recovery tool as the node’s archipelago service user. It briefly stops storage, verifies a full backup and reuses the original operation. A pending payment may already have arrived; do not ask the customer to pay again.</p>
+diff --git a/neode-ui/src/views/settings/__tests__/StorageSales.test.ts b/neode-ui/src/views/settings/__tests__/StorageSales.test.ts
+index b6bd01d..bcd5602 100644
+--- a/neode-ui/src/views/settings/__tests__/StorageSales.test.ts
++++ b/neode-ui/src/views/settings/__tests__/StorageSales.test.ts
+@@ -40,6 +40,21 @@ describe('Private storage sales', () => {
+     expect(w.text()).toContain('Paid · allowance issued'); expect(w.text()).toContain('Term expired')
+     expect(w.find('img').exists()).toBe(false); expect(w.text()).toContain('<img src=x onerror=alert(1)>')
+   })
++  it('shows a private automatic refund destination, resumable command and completion', async () => {
++    const pending: any = data(); Object.assign(pending.orders[0], { state: 'refund_required', allowance: null,
++      refund_to: 'customer@example.com', automatic_refund_available: true,
++      refund: { source: 'automatic', status: 'pending', amount_msat: 500000, payment_hash: 'cd'.repeat(32), recorded_at: null } })
++    pending.summary.needs_attention = 1; rpc.mockResolvedValueOnce(pending); const w = await page()
++    expect(w.text()).toContain('Full refund pending'); expect(w.text()).toContain('customer@example.com')
++    expect(w.text()).toContain('recover-wildbloom-payment refund order-a --confirm-refund --confirm-restart')
++    expect(w.text()).not.toContain('Record completed refund')
++    const completed: any = data(); Object.assign(completed.orders[0], { state: 'refunded', allowance: null,
++      refund_to: 'customer@example.com', automatic_refund_available: false,
++      refund: { source: 'automatic', status: 'completed', amount_msat: 500000, payment_hash: 'ef'.repeat(32), recorded_at: 150 } })
++    rpc.mockResolvedValueOnce(completed); await w.findAll('button').find(b => b.text() === 'Refresh')!.trigger('click'); await flushPromises()
++    expect(w.text()).toContain('Full refund completed'); expect(w.text()).toContain('matched settlement evidence')
++    expect(w.text()).not.toContain('--confirm-refund')
++  })
+   it('aborts a pending read when the page unmounts', async () => {
+     const w = await page(); const signal = rpc.mock.calls[0]![0].signal!
+     w.unmount(); expect(signal.aborted).toBe(true)
+-- 
+2.54.0 (Apple Git-157)
+

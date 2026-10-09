@@ -2,8 +2,8 @@
 
 Open **Settings → Storage & selling → View sales & customers** at
 `/dashboard/settings/storage/sales`. The view is included in the patched
-`v1.9.0-alpha-p4` backend and frontend. It reads the existing packaged Node
-`0.3.5-2ea211e-2`; no Node image change or sales enablement is needed.
+`v1.9.0-alpha-p7` backend and frontend. It reads checkout schema 1 or 2 from the
+packaged Node `0.3.5-bee5383-2`; sales remain an explicit operator choice.
 
 The summary separates historical activated orders from current customer
 allowances. Renewals count as orders but share an allowance, so allocated
@@ -21,9 +21,11 @@ dashboard; no customer data is published to Nostr or sent to the issuer.
 **Needs attention** includes incomplete reservations, uncertain invoice/note
 outcomes, payments awaiting activation and refund-required records. It is a
 review queue, not a claim that those payments failed. Refreshing this page never
-retries or checks a payment with the issuer. The original read-only release left refunds and payment recovery
-separate operator operations; this release adds no spending controls. An
-out-of-band manual refund is not automatically recorded in checkout history.
+retries or checks a payment with the issuer. A quote-bound refund shows its
+private destination and pending/completed bounded receipt. The exact local
+operator command is shown for eligible `refund_required` orders; the browser
+itself does not spend. An out-of-band manual refund is not automatically recorded
+in checkout history.
 
 ## Read boundary
 
@@ -44,7 +46,8 @@ pages, validated fields and a short lock timeout. It does not open the Node's
 writer/migration code or take its exclusive ledger lock. Active WAL records
 remain visible while the daemon runs. Only order metadata and current allowance
 columns are read; invoices, preimages, bearer notes, rotation records and
-receiving secrets are never projected into the response. Private file modes,
+receiving secrets are never projected into the response. Automatic refund
+invoices, mutation URLs and bearer assets are also excluded. Private file modes,
 non-symlink paths and the checkout schema version are checked.
 
 Never-enabled selling has its own empty state. An expected ledger that is
@@ -69,4 +72,5 @@ it is never displayed as zero customers. Failed refreshes clear stale figures.
   fields and no additional receiving mutation. This is synthetic acceptance,
   not a real-money refund or issuer-recovery test.
 
-The subsequent [refund and recovery workflow](storage-payment-recovery.md) adds private operator refund records and an explicit local recovery tool. The original checkout state remains visible.
+The [refund and recovery workflow](storage-payment-recovery.md) documents bound
+automatic refunds, private manual records and the explicit local recovery tool.
