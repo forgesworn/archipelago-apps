@@ -127,3 +127,16 @@ MP4 MIME type and partial-content response used for seeking. This is a
 browser-only refresh. The storage daemon, identities and signer provider keep
 their existing versions. The real app and Archipelago walkthrough is separate
 work; the illustrated film is not a live storage demonstration.
+
+## Private quote retry fix
+
+Browser image `0.0.1-1d2a7c3-2` creates a fresh checkout request after each
+successful private quote. Repeating the quote flow therefore creates a new order
+instead of reopening an expired order from an earlier attempt. The same request
+identifier is still retained while an outcome is unknown, so retrying a timed-out
+request remains idempotent.
+
+The upstream acceptance deliberately aborts one quote request at the network
+boundary and verifies that consecutive explicit quote attempts use different
+request identifiers. This is a browser-only update; the Wildbloom Node image,
+checkout database, stored blobs, identities and signer provider remain unchanged.
