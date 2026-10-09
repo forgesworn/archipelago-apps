@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""One explicit recovery of an existing payment on the packaged rootless node.
+"""One explicit recovery or bound refund on the packaged rootless node.
 
-No invoice creation, new notes, spending, reset, restore, or arbitrary destinations.
+Recovery creates no invoice, note or spend. Refund creates one exact invoice and
+spends only the retained note already bound to that order and customer address.
 Run as the archipelago service user. Output intentionally excludes backend errors.
 """
 import argparse
@@ -23,7 +24,7 @@ import uuid
 
 ROOT = Path('/var/lib/archipelago/wildbloom-node')
 SETTINGS = Path('/var/lib/archipelago/settings/wildbloom-storage/settings.json')
-IMAGE = 'ghcr.io/forgesworn/wildbloom-node:0.3.5-2ea211e-2'
+IMAGE = 'ghcr.io/forgesworn/wildbloom-node:0.3.5-bee5383-2'
 SERVICE = 'wildbloom-node.service'
 CONTAINER = 'wildbloom-payment-recovery'
 MAX = 9_007_199_254_740_991
@@ -93,7 +94,7 @@ def read_order(root, order):
     with contextlib.closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as db:
         db.execute('PRAGMA query_only=ON')
         db.execute('PRAGMA trusted_schema=OFF')
-        require(db.execute('PRAGMA user_version').fetchone()[0] == 1, 'Unsupported checkout schema.')
+        require(db.execute('PRAGMA user_version').fetchone()[0] in (1, 2), 'Unsupported checkout schema.')
         row = db.execute('SELECT state,CASE WHEN length(quote)<=65536 THEN quote END FROM orders WHERE id=?',
                          (order,)).fetchone()
         require(row is not None and row[1] is not None, 'Order unavailable.')
@@ -106,6 +107,10 @@ def eligible(action, state, quote):
     if action == 'recover-invoice':
         require(state == 'invoice_pending' and quote['rail'] == 'lightning',
                 'Original-invoice recovery requires a pending Lightning invoice.')
+    elif action == 'refund':
+        require(state == 'refund_required' and quote['rail'] == 'lnurlcash'
+                and isinstance(quote.get('refund_to'), str) and '@' in quote['refund_to'],
+                'Automatic refund requires a refund-required LNURLcash order with a bound destination.')
     else:
         require(state in ('awaiting_payment', 'lnurl_pending', 'settled'),
                 'This order has no recoverable payment operation. Reservation retries are not permitted here.')
@@ -184,6 +189,12 @@ def recover(root, settings, action, order, execute=run, make_backup=backup):
     require(re.fullmatch(r'[A-Za-z0-9_-]{1,128}', order), 'Invalid order ID.')
     state, quote = read_order(root, order)
     eligible(action, state, quote)
+    if action == 'refund':
+        manual = root / 'operator/refunds.json'
+        if manual.exists() or manual.is_symlink():
+            records = json.loads(private_file(manual, 4_000_000)).get('refunds', [])
+            require(not any(r.get('order_id') == order for r in records if isinstance(r, dict)),
+                    'A completed manual refund is already recorded for this order.')
     image, profile = configuration(root, settings, execute)
     execute(['systemctl', '--user', 'is-active', '--quiet', SERVICE])
     require(execute(['systemctl', '--user', 'show', '--property=LoadState', '--value', SERVICE]).strip() == 'loaded',
@@ -228,14 +239,17 @@ def recover(root, settings, action, order, execute=run, make_backup=backup):
             save(journal, value)
             value['status'] = 'running'
             save(journal, value)
-            execute(['podman', 'run', '--rm', '--pull=never', '--name', CONTAINER,
+            operator = ['podman', 'run', '--rm', '--pull=never', '--name', CONTAINER,
                 '--network=slirp4netns', '--timeout=60', '--volume', f'{root}:/data:rw',
                 '--entrypoint', '/usr/local/bin/checkout-operator', image,
                 '--state', '/data/operator/checkout', action, order,
-                '--profile', f'/data/operator/recovery/{profile_path.name}'], timeout=90)
+                '--profile', f'/data/operator/recovery/{profile_path.name}']
+            if action == 'refund':
+                operator.append('--confirm-destination')
+            execute(operator, timeout=90)
             # Read the durable result, never trust backend text or expose it.
             final, _ = read_order(root, order)
-            require(final in ('awaiting_payment', 'lnurl_pending', 'settled', 'active', 'refund_required'),
+            require(final in ('awaiting_payment', 'lnurl_pending', 'settled', 'active', 'refund_required', 'refunded'),
                     'Unexpected durable result; inspect local state.')
             outcome = final
             value.update(status='completed', order_state=final)
@@ -279,11 +293,14 @@ def recover(root, settings, action, order, execute=run, make_backup=backup):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['reconcile', 'recover-invoice'])
+    parser.add_argument('action', choices=['reconcile', 'recover-invoice', 'refund'])
     parser.add_argument('order')
     parser.add_argument('--confirm-restart', action='store_true', help='Allow a storage outage while a full offline backup is verified')
+    parser.add_argument('--confirm-refund', action='store_true', help='Confirm the bound customer destination before spending the retained note')
     args = parser.parse_args()
     require(args.confirm_restart, 'Recovery requires --confirm-restart for the offline backup and node restart.')
+    require(args.action != 'refund' or args.confirm_refund,
+            'Refund requires --confirm-refund after reviewing the bound customer destination.')
     require(sys.platform == 'linux' and os.geteuid() != 0, 'Run as the archipelago service user on the node.')
     os.umask(0o077)
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
@@ -301,5 +318,5 @@ if __name__ == '__main__':
         print(str(error), file=sys.stderr)
         sys.exit(1)
     except (Exception, KeyboardInterrupt):
-        print('Recovery did not complete. Inspect the local recovery journal and node service before retrying. No new payment was created.', file=sys.stderr)
+        print('Operation did not complete. Inspect the local recovery journal and node service before retrying. Do not start a different payment or refund.', file=sys.stderr)
         sys.exit(1)

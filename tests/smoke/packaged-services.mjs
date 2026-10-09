@@ -479,6 +479,7 @@ try {
   await page.click("#checkout-offers");
   await wait(page, "Offers loaded");
   await page.selectOption("#checkout-rail", "lnurlcash");
+  await page.fill("#checkout-refund-to", "buyer@example.com");
   await page.fill("#checkout-renews", reference.order_id);
   await page.locator("#checkout-renews").dispatchEvent("change");
   await action(page, "#checkout-quote");
@@ -504,6 +505,8 @@ try {
   assert.equal(inventory.summary.allocated_bytes, 1024 * 1024);
   const activated = inventory.orders.filter(order => order.state === "active");
   assert.equal(activated.length, 2);
+  assert.equal(activated.filter(order => order.refund_to === "buyer@example.com").length, 1,
+    "LNURLcash renewal keeps its private bound refund destination");
   // The daemon journals before reserving capacity. The four refused buyers'
   // requests remain reserving; viewing them must not turn them into purchases.
   assert.equal(inventory.orders.filter(order => order.state === "reserving").length, 4);
@@ -541,6 +544,7 @@ try {
         build,
         checks: [
           "dashboard read-only sales projection of the live packaged ledger and renewed allowance",
+          "private bound refund destination on the LNURLcash renewal",
           "idempotent private operator refund record on packaged orders without receiving I/O or allowance changes",
           "published images resolved and run by digest",
           "packaged own-node default before checkout and after reload",

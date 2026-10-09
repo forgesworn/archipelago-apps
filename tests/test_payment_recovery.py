@@ -34,12 +34,13 @@ class RecoveryTests(unittest.TestCase):
         self.fail_recovery = False
         self.fail_restart = False
         self.backed_up = False
-    def order(self, state):
+    def order(self, state, refund_to=None, version=1):
         with sqlite3.connect(self.db) as db:
-            db.execute('PRAGMA user_version=1')
+            db.execute(f'PRAGMA user_version={version}')
             db.execute('CREATE TABLE IF NOT EXISTS orders(id TEXT, state TEXT, quote TEXT)')
             db.execute('DELETE FROM orders')
-            db.execute('INSERT INTO orders VALUES(?,?,?)', ('order-a',state,json.dumps({'order_id':'order-a','rail':'lnurlcash'})))
+            db.execute('INSERT INTO orders VALUES(?,?,?)', ('order-a',state,json.dumps({'order_id':'order-a','rail':'lnurlcash',
+                'refund_to':refund_to})))
         self.db.chmod(0o600)
     def execute(self, args, **kwargs):
         self.calls.append(args)
@@ -65,6 +66,10 @@ class RecoveryTests(unittest.TestCase):
             self.assertIn('--pull=never',args)
             self.assertIn('ab'*32,args)
             if self.fail_recovery: raise TimeoutError('secret mutation URL must not be exposed')
+            if 'refund' in args:
+                self.assertIn('--confirm-destination', args)
+                self.order('refunded','customer@example.com',2)
+                return '{"state":"refunded"}'
             self.order('active')
             return '"active"'
         return ''
@@ -107,6 +112,19 @@ class RecoveryTests(unittest.TestCase):
             self.order(state)
             with self.assertRaises(r.Refused): self.recover()
         self.assertEqual(self.calls,[])
+    def test_bound_refund_uses_schema_two_exact_operator_command_and_refuses_manual_duplicate(self):
+        self.order('refund_required','customer@example.com',2)
+        result = r.recover(self.root,self.settings,'refund','order-a',self.execute,self.backup)
+        self.assertEqual(result['order_state'],'refunded')
+        command = next(c for c in self.calls if c[:2] == ['podman','run'])
+        self.assertIn('refund', command); self.assertIn('--confirm-destination', command)
+        self.assertNotIn('customer@example.com', command)
+        self.calls=[]; self.running=True; self.backed_up=False
+        self.order('refund_required','customer@example.com',2)
+        r.save(self.root/'operator/refunds.json', {'version':1,'refunds':[{'order_id':'order-a'}]})
+        with self.assertRaisesRegex(r.Refused,'manual refund'): r.recover(
+            self.root,self.settings,'refund','order-a',self.execute,self.backup)
+        self.assertEqual(self.calls,[])
     def test_backup_failure_never_contacts_receiver_and_restarts(self):
         def fail(*args): raise r.Refused('backup failed')
         with self.assertRaises(r.Refused):
@@ -123,6 +141,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stderr, '')
         self.assertIn('--confirm-restart', result.stdout)
+        self.assertIn('--confirm-refund', result.stdout)
     def test_backup_refuses_symlinks(self):
         (self.root/'leak').symlink_to(self.settings)
         with self.assertRaises(r.Refused): self.recover()

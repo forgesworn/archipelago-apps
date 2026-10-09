@@ -22,6 +22,8 @@ rusqlite = { version = "=0.40.2", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["sync"] }
 reqwest = { version = "0.12", default-features = false }
+[dev-dependencies]
+tempfile = "3"
 TOML
 cat > "$fixture/src/main.rs" <<'RS'
 #[allow(dead_code)]
