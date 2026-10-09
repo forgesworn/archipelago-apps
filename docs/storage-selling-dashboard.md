@@ -17,6 +17,9 @@ This is a targeted test-node package, not a new upstream OTA or ISO.
    term, recovery grace, delivery allowance, seller name and contact/refund terms.
    Every offered value is editable; zero reserve and zero grace are supported.
    Delivery remains operator-managed, not an enforced bandwidth meter.
+   Add exact HTTPS origins under **Other customer app origins** to accept
+   customers using a separately hosted Wildbloom web app. Your own packaged
+   app stays allowed; wildcards, credentials and URL paths are refused.
 3. For selling, open **Moneyer connection** and explicitly resolve its public IP
    addresses, or enter verified public IPs. This one action makes a DNS lookup;
    reading and saving settings never contacts an issuer. The issuer host,
@@ -70,7 +73,7 @@ picked up by the normal app reconciliation/restart path.
 
 Local checks on 9 October 2026:
 
-- Twelve native Rust tests: defaults and zero values, disk headroom and existing
+- Thirteen native Rust tests: defaults and zero values, disk headroom and existing
   promises, receiver validation, private persistence, immutable profiles,
   pause semantics, stale revisions, admin/CSRF requirements, and actual
   orchestrator environment resolution (drafts inert, owner authorisation kept).

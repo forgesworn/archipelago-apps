@@ -52,6 +52,14 @@ try {
   await ready();
   const offers = await (await fetch(base + '/checkout/v1/offers')).json();
   assert.match(JSON.stringify(offers), /moneyer-dev/);
+  const customerOrigin = parsedProfile.browser_origins.at(-1);
+  const preflight = await fetch(base + '/checkout/v1/orders', { method: 'OPTIONS', headers: {
+    origin: customerOrigin, 'access-control-request-method': 'POST',
+    'access-control-request-headers': 'authorization,content-type',
+  } });
+  assert.equal(preflight.headers.get('access-control-allow-origin'), customerOrigin, 'Chosen customer app can use checkout');
+  const unknownOrigin = await fetch(base + '/checkout/v1/offers', { headers: { origin: 'https://unselected.example' } });
+  assert.equal(unknownOrigin.headers.get('access-control-allow-origin'), null, 'Unselected customer origins stay blocked');
   async function quote(key, requestId) {
     const path = '/checkout/v1/orders';
     const body = JSON.stringify({ request_id: requestId, offer_id: settings.offer_id, rail: 'lnurlcash', issuer_id: 'moneyer-dev', renews: null });

@@ -21,6 +21,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync"] }
 uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.11", default-features = false }
 TOML
 cp "$archy/core/archipelago/src/settings/wildbloom_storage.rs" "$fixture/src/storage.rs"
 printf 'mod storage;\n' > "$fixture/src/main.rs"

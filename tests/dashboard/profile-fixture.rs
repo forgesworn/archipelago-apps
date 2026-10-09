@@ -9,6 +9,7 @@ fn main() {
     settings.sales_enabled = true;
     settings.moneyer_terms_accepted = true;
     settings.moneyer_ips = vec!["1.1.1.1".parse::<IpAddr>().unwrap()];
+    settings.additional_browser_origins = vec!["https://customer-app.example".into()];
     settings.refund_policy = "Synthetic local acceptance only; no real payment.".into();
     settings.validate().unwrap();
     settings.validate_receiver().unwrap();

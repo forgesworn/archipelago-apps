@@ -1,4 +1,4 @@
-From 2b1c5dc0ee6c78bbf8b68600fa17749740151781 Mon Sep 17 00:00:00 2001
+From a5df1d2c7e0383190ae53b3a46056a0054c6b2c5 Mon Sep 17 00:00:00 2001
 From: ForgeSworn <dev@forgesworn.dev>
 Date: Fri, 9 Oct 2026 07:58:51 +0100
 Subject: [PATCH] feat: configure Wildbloom storage and selling from Settings
@@ -7,16 +7,16 @@ Subject: [PATCH] feat: configure Wildbloom storage and selling from Settings
  core/archipelago/src/api/rpc/dispatcher.rs    |   4 +
  core/archipelago/src/api/rpc/middleware.rs    |   1 +
  core/archipelago/src/api/rpc/mod.rs           |  13 +
- core/archipelago/src/api/rpc/wildbloom.rs     | 415 ++++++++++++++++
- .../src/container/prod_orchestrator.rs        |  84 ++++
+ core/archipelago/src/api/rpc/wildbloom.rs     | 415 +++++++++++++++
+ .../src/container/prod_orchestrator.rs        |  84 +++
  core/archipelago/src/container/traits.rs      |   6 +
  core/archipelago/src/settings/mod.rs          |   2 +
- .../src/settings/wildbloom_storage.rs         | 443 ++++++++++++++++++
+ .../src/settings/wildbloom_storage.rs         | 491 ++++++++++++++++++
  neode-ui/src/router/index.ts                  |   5 +
  neode-ui/src/views/Settings.vue               |   6 +
- .../src/views/settings/StorageSelling.vue     | 206 ++++++++
- .../settings/__tests__/StorageSelling.test.ts | 100 ++++
- 12 files changed, 1285 insertions(+)
+ .../src/views/settings/StorageSelling.vue     | 210 ++++++++
+ .../settings/__tests__/StorageSelling.test.ts | 101 ++++
+ 12 files changed, 1338 insertions(+)
  create mode 100644 core/archipelago/src/api/rpc/wildbloom.rs
  create mode 100644 core/archipelago/src/settings/wildbloom_storage.rs
  create mode 100644 neode-ui/src/views/settings/StorageSelling.vue
@@ -639,10 +639,10 @@ index 8ffaf64..839995c 100644
 +pub mod wildbloom_storage;
 diff --git a/core/archipelago/src/settings/wildbloom_storage.rs b/core/archipelago/src/settings/wildbloom_storage.rs
 new file mode 100644
-index 0000000..5eabb5c
+index 0000000..adab532
 --- /dev/null
 +++ b/core/archipelago/src/settings/wildbloom_storage.rs
-@@ -0,0 +1,443 @@
+@@ -0,0 +1,491 @@
 +//! Private operator settings. Drafts never affect the daemon; only an explicit
 +//! apply publishes a new immutable profile, reusing the same receiving ledger.
 +use anyhow::{ensure, Context, Result};
@@ -669,6 +669,7 @@ index 0000000..5eabb5c
 +    pub seller_name: String,
 +    pub refund_policy: String,
 +    pub moneyer_ips: Vec<IpAddr>,
++    pub additional_browser_origins: Vec<String>,
 +    pub moneyer_terms_accepted: bool,
 +    pub sales_enabled: bool,
 +}
@@ -687,6 +688,7 @@ index 0000000..5eabb5c
 +            seller_name: "My Archipelago node".into(),
 +            refund_policy: String::new(),
 +            moneyer_ips: vec![],
++            additional_browser_origins: vec![],
 +            moneyer_terms_accepted: false,
 +            sales_enabled: false,
 +        }
@@ -718,6 +720,9 @@ index 0000000..5eabb5c
 +        );
 +        plain(&self.seller_name, 128, false)?;
 +        plain(&self.refund_policy, 2048, true)?;
++        ensure!(self.additional_browser_origins.len() <= 15
++            && self.additional_browser_origins.iter().all(|value| browser_origin(value)),
++            "Wildbloom customer apps need exact HTTPS origins without paths (at most 15 additional apps)");
 +        ensure!(
 +            self.moneyer_ips.len() <= 16 && self.moneyer_ips.iter().all(public_ip),
 +            "Wildbloom issuer addresses must be public IPs (at most 16)"
@@ -731,6 +736,20 @@ index 0000000..5eabb5c
 +            "Wildbloom selling requires issuer addresses, acceptance of Moneyer terms, and your contact/refund terms");
 +        Ok(())
 +    }
++}
++
++fn browser_origin(value: &str) -> bool {
++    reqwest::Url::parse(value).is_ok_and(|url| {
++        value.len() <= 2048
++            && url.scheme() == "https"
++            && url.username().is_empty()
++            && url.password().is_none()
++            && url.query().is_none()
++            && url.fragment().is_none()
++            && url.port() != Some(0)
++            && url.host_str().is_some_and(|h| !h.ends_with(".onion"))
++            && url.origin().ascii_serialization() == value
++    })
 +}
 +
 +fn plain(value: &str, limit: usize, empty: bool) -> Result<()> {
@@ -886,6 +905,12 @@ index 0000000..5eabb5c
 +
 +pub fn profile(a: &Active) -> Value {
 +    let s = &a.settings;
++    let mut browsers = vec![a.origin.replace(":3742", ":3743")];
++    for origin in &s.additional_browser_origins {
++        if !browsers.contains(origin) {
++            browsers.push(origin.clone());
++        }
++    }
 +    let ips: Vec<String> = s
 +        .moneyer_ips
 +        .iter()
@@ -908,7 +933,7 @@ index 0000000..5eabb5c
 +        // Zero blocks every new reservation while existing quotes, receiving
 +        // recovery and activated allowances continue against the same ledger.
 +        "max_paid_bytes": if s.sales_enabled { s.quota_bytes - s.owner_reserved_bytes } else { 0 },
-+        "browser_origins": [a.origin.replace(":3742", ":3743")], "phoenixd": null,
++        "browser_origins": browsers, "phoenixd": null,
 +        "notes": (["https://moneyer.dev/w", "https://moneyer.dev/w/cb"].map(|endpoint| json!({
 +            "endpoint": endpoint, "destination": {"origin": "https://moneyer.dev/", "addresses": ips, "allow_loopback_http": false}})))
 +    })
@@ -964,6 +989,29 @@ index 0000000..5eabb5c
 +#[cfg(test)]
 +mod tests {
 +    use super::*;
++    #[test]
++    fn customer_apps_are_explicit_exact_origins_and_keep_the_own_app() {
++        let mut a = active();
++        a.settings.additional_browser_origins = vec!["https://customer-app.example".into()];
++        a.settings.validate().unwrap();
++        assert_eq!(
++            profile(&a)["browser_origins"],
++            json!(["https://node.example:3743", "https://customer-app.example"])
++        );
++        for value in [
++            "*",
++            "http://app.example",
++            "https://app.example/path",
++            "https://user@app.example",
++            "https://app.example?x",
++            "https://app.example#x",
++            "https://app.example:0",
++            "https://app.onion",
++        ] {
++            a.settings.additional_browser_origins = vec![value.into()];
++            assert!(a.settings.validate().is_err(), "{value}");
++        }
++    }
 +    fn active() -> Active {
 +        let mut settings = Settings::defaults(200 * GIB);
 +        settings.moneyer_ips = vec!["1.1.1.1".parse().unwrap()];
@@ -1126,10 +1174,10 @@ index 9a1c0cd..b3fda27 100644
      <SystemSection />
 diff --git a/neode-ui/src/views/settings/StorageSelling.vue b/neode-ui/src/views/settings/StorageSelling.vue
 new file mode 100644
-index 0000000..cba3249
+index 0000000..d0d1762
 --- /dev/null
 +++ b/neode-ui/src/views/settings/StorageSelling.vue
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,210 @@
 +<script setup lang="ts">
 +import { computed, onMounted, ref } from 'vue'
 +import { RouterLink } from 'vue-router'
@@ -1139,7 +1187,7 @@ index 0000000..cba3249
 +  quota_bytes: number; owner_reserved_bytes: number; max_blob_bytes: number
 +  offer_capacity_bytes: number; price_sats: number; duration_seconds: number
 +  grace_seconds: number; delivery_bytes: number; seller_name: string
-+  refund_policy: string; moneyer_ips: string[]; moneyer_terms_accepted: boolean; sales_enabled: boolean
++  refund_policy: string; moneyer_ips: string[]; additional_browser_origins: string[]; moneyer_terms_accepted: boolean; sales_enabled: boolean
 +}
 +type Active = { revision: number; checkout_started: boolean; settings: Settings }
 +type Status = {
@@ -1164,13 +1212,14 @@ index 0000000..cba3249
 +const form = ref<Settings | null>(null)
 +const amounts = ref<Partial<Record<NumberKey, number>>>({})
 +const pins = ref('')
++const customerApps = ref('')
 +const busy = ref(false)
 +const error = ref('')
 +const message = ref('')
 +const review = ref(false)
 +const confirmed = ref(false)
 +const loadedForm = ref('')
-+const currentForm = computed(() => JSON.stringify({ form: form.value, amounts: amounts.value, pins: pins.value }))
++const currentForm = computed(() => JSON.stringify({ form: form.value, amounts: amounts.value, pins: pins.value, customerApps: customerApps.value }))
 +const dirty = computed(() => currentForm.value !== loadedForm.value)
 +const saleCapacity = computed(() => Math.max(0, Number(amounts.value.quota_bytes) - Number(amounts.value.owner_reserved_bytes)))
 +const usableQuota = computed(() => status.value?.disk && status.value.runtime
@@ -1191,6 +1240,7 @@ index 0000000..cba3249
 +  form.value = structuredClone(data.settings)
 +  amounts.value = Object.fromEntries(fields.map(f => [f.key, data.settings[f.key] / f.scale]))
 +  pins.value = data.settings.moneyer_ips.join('\n')
++  customerApps.value = data.settings.additional_browser_origins.join('\n')
 +  loadedForm.value = currentForm.value
 +  review.value = false; confirmed.value = false
 +}
@@ -1211,6 +1261,7 @@ index 0000000..cba3249
 +    result[f.key] = value
 +  }
 +  result.moneyer_ips = [...new Set(pins.value.split(/[\s,]+/).filter(Boolean))]
++  result.additional_browser_origins = [...new Set(customerApps.value.split(/[\s,]+/).filter(Boolean))]
 +  return result
 +}
 +async function save() {
@@ -1296,6 +1347,7 @@ index 0000000..cba3249
 +            <p class="text-sm text-white/65">Accept LNURLcash issued by moneyer.dev. Payments are received by your node. Review <a href="https://moneyer.dev" target="_blank" rel="noopener noreferrer" class="underline">Moneyer’s terms</a> before enabling sales.</p>
 +            <div><label for="seller-name" class="block text-sm mb-2">Seller name</label><input id="seller-name" v-model="form.seller_name" maxlength="128" required class="storage-input" @input="review = false" /></div>
 +            <div><label for="refund-policy" class="block text-sm mb-2">Contact and refund terms</label><textarea id="refund-policy" v-model="form.refund_policy" rows="3" maxlength="2048" class="storage-input" placeholder="How customers contact you, and when you offer a refund" @input="review = false" /><p class="mt-2 text-xs text-white/60">Published with your offer. Use a single paragraph.</p></div>
++            <div><label for="customer-apps" class="block text-sm mb-2">Other customer app origins</label><textarea id="customer-apps" v-model="customerApps" rows="2" class="storage-input" placeholder="https://customer-app.example" @input="review = false" /><p class="mt-2 text-xs text-white/60">Your packaged Wildbloom app is already allowed. To accept customers using another web app, add its exact HTTPS origin, one per line, without a path. Only add apps you choose to support.</p></div>
 +            <details class="rounded-lg border border-white/15 p-4">
 +              <summary class="cursor-pointer text-sm font-medium">Moneyer connection</summary>
 +              <p class="my-3 text-xs text-white/60">Only “Resolve Moneyer addresses” makes a DNS lookup. Loading or saving this page never contacts Moneyer. Saved addresses stay pinned until you change them.</p>
@@ -1338,10 +1390,10 @@ index 0000000..cba3249
 +</style>
 diff --git a/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts b/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts
 new file mode 100644
-index 0000000..57339aa
+index 0000000..0841b77
 --- /dev/null
 +++ b/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,101 @@
 +import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 +import { beforeEach, describe, expect, it, vi } from 'vitest'
 +vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
@@ -1358,7 +1410,7 @@ index 0000000..57339aa
 +  settings: { quota_bytes: 10 * GiB, owner_reserved_bytes: 5 * GiB, max_blob_bytes: GiB,
 +    offer_capacity_bytes: 5 * GiB, price_sats: 500, duration_seconds: 30 * 86400,
 +    grace_seconds: 7 * 86400, delivery_bytes: 100 * GiB, seller_name: 'My node',
-+    refund_policy: '', moneyer_ips: [] as string[], moneyer_terms_accepted: false, sales_enabled: false },
++    refund_policy: '', moneyer_ips: [] as string[], additional_browser_origins: [] as string[], moneyer_terms_accepted: false, sales_enabled: false },
 +})
 +function button(w: VueWrapper, text: string) { return w.findAll('button').find(b => b.text() === text)! }
 +async function page() {
@@ -1379,10 +1431,11 @@ index 0000000..57339aa
 +    await w.get('#price_sats').setValue(123)
 +    await w.get('#owner_reserved_bytes').setValue(0)
 +    await w.get('#grace_seconds').setValue(0)
++    await w.get('#customer-apps').setValue('https://customer-app.example')
 +    rpc.mockResolvedValueOnce({ revision: 1 })
 +    await w.get('form').trigger('submit'); await flushPromises()
 +    expect(rpc).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'wildbloom.storage.save',
-+      params: { revision: 0, settings: expect.objectContaining({ price_sats: 123, owner_reserved_bytes: 0, grace_seconds: 0, sales_enabled: false }) } }))
++      params: { revision: 0, settings: expect.objectContaining({ price_sats: 123, owner_reserved_bytes: 0, grace_seconds: 0, sales_enabled: false, additional_browser_origins: ['https://customer-app.example'] }) } }))
 +    expect(w.text()).toContain('Draft saved. Your running node has not changed.')
 +    expect(button(w, 'Review and apply').attributes('disabled')).toBeUndefined()
 +    expect(rpc.mock.calls.some(([o]) => o.method === 'wildbloom.storage.apply')).toBe(false)

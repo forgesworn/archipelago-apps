@@ -14,7 +14,7 @@ page.on('pageerror', e => failures.push(e.message));
 const settings = { quota_bytes: 10*GiB, owner_reserved_bytes: 5*GiB, max_blob_bytes: GiB,
   offer_capacity_bytes: 5*GiB, price_sats: 500, duration_seconds: 30*86400, grace_seconds: 7*86400,
   delivery_bytes: 100*GiB, seller_name: 'My Archipelago node', refund_policy: '', moneyer_ips: [],
-  moneyer_terms_accepted: false, sales_enabled: false };
+  additional_browser_origins: [], moneyer_terms_accepted: false, sales_enabled: false };
 let state = { revision: 0, settings, active: null, applied: false, has_draft: false,
   runtime: { quota_bytes: 10*GiB, used_bytes: 0, committed_bytes: 0, settings_revision: null, checkout_started: false },
   disk: { free_bytes: 29*GiB, total_bytes: 38*GiB, headroom_bytes: 5*GiB },
