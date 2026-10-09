@@ -13,7 +13,13 @@ This is a targeted test-node package, not a new upstream OTA or ISO.
    a suggested reserve of half that quota (up to 100 GiB) and an offer of up to
    10 GiB that fits the remaining capacity. With no running node the draft
    suggestions are 200 GiB total and 100 GiB reserved, and applying is blocked.
-2. Choose total quota, owner reserve, file size limit, customer capacity, price,
+2. Selling is optional. Before checkout has been enabled, you can use your node
+   for your own files and save or apply storage settings with contact/refund
+   terms blank and sales off. Each
+   operator supplies their own seller details if they later enable sales;
+   a support address, Nostr public key or support page can be used rather than
+   personal contact details. No specific operator identity is preconfigured.
+   Choose total quota, owner reserve, file size limit, customer capacity, price,
    term, recovery grace, delivery allowance, seller name and contact/refund terms.
    Every offered value is editable; zero reserve and zero grace are supported.
    Delivery remains operator-managed, not an enforced bandwidth meter.
