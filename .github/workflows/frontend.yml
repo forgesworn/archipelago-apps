@@ -13,6 +13,8 @@ on:
       - scripts/lib/patches.bash
       - scripts/frontend-release-plan.sh
       - .github/workflows/frontend.yml
+      - tests/dashboard/**
+      - scripts/test-storage-settings-browser.sh
   workflow_dispatch:
 # One run at a time per ref: two runs must not both find no release and publish.
 concurrency:
@@ -45,6 +47,15 @@ jobs:
       - name: Build frontend
         if: steps.plan.outputs.skip != 'true'
         run: scripts/build-frontend.sh .cache/archy-frontend
+      - name: Storage settings UI tests
+        if: steps.plan.outputs.skip != 'true'
+        working-directory: .cache/archy-frontend/neode-ui
+        run: npm test -- --run src/views/settings/__tests__/StorageSelling.test.ts src/views/__tests__/settings.test.ts src/router/__tests__/routes.test.ts
+      - name: Storage settings browser acceptance
+        if: steps.plan.outputs.skip != 'true'
+        run: |
+          cd .cache/archy-frontend/neode-ui && npx playwright install --with-deps chromium
+          cd ../../.. && scripts/test-storage-settings-browser.sh .cache/archy-frontend
       - name: Publish release asset
         if: steps.plan.outputs.skip != 'true' && github.ref == 'refs/heads/main'
         env: { GH_TOKEN: "${{ github.token }}" }

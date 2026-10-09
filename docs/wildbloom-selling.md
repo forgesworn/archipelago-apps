@@ -17,6 +17,12 @@ Use its destination field to select your node explicitly.
 
 ## Prepare a Moneyer offer
 
+The patched dashboard now provides **Settings → Storage & selling** for the
+supported packaged node. See the [dashboard guide](storage-selling-dashboard.md)
+for editable defaults, capacity checks, private drafts, applying and pausing.
+The CLI below remains available for manual provisioning; the dashboard will
+not overwrite an existing manually provisioned checkout profile.
+
 `scripts/configure-wildbloom-sales.py` prepares the private checkout profile and
 an operator-specific Node manifest. It never deploys, sends notes, starts a
 payment, opens public guest writes, or overwrites an existing configuration.
