@@ -16,6 +16,8 @@ For existing installations, see the [Wildbloom upgrade guide](docs/wildbloom-upg
 The browser defaults to your own node. For optional Moneyer LNURLcash sales,
 capacity reserved for yourself and private configuration, see
 [own storage and selling](docs/wildbloom-selling.md).
+Configure it in **Settings → Storage & selling** with the matching patched
+dashboard/backend: see the [dashboard guide](docs/storage-selling-dashboard.md).
 
 The patches also let a node identity keep its key in a NIP-46 remote signer
 (a hardware signer such as Heartwood, or a phone app): see

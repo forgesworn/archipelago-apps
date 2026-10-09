@@ -1,0 +1,1395 @@
+From 726c2ce8aa957ad37ec8ee2873517f79db3df129 Mon Sep 17 00:00:00 2001
+From: ForgeSworn <dev@forgesworn.dev>
+Date: Fri, 9 Oct 2026 07:58:51 +0100
+Subject: [PATCH] feat: configure Wildbloom storage and selling from Settings
+
+---
+ core/archipelago/src/api/rpc/dispatcher.rs    |   4 +
+ core/archipelago/src/api/rpc/middleware.rs    |   1 +
+ core/archipelago/src/api/rpc/mod.rs           |  13 +
+ core/archipelago/src/api/rpc/wildbloom.rs     | 363 ++++++++++++++
+ .../src/container/prod_orchestrator.rs        |  84 ++++
+ core/archipelago/src/container/traits.rs      |   6 +
+ core/archipelago/src/settings/mod.rs          |   2 +
+ .../src/settings/wildbloom_storage.rs         | 443 ++++++++++++++++++
+ neode-ui/src/router/index.ts                  |   5 +
+ neode-ui/src/views/Settings.vue               |   6 +
+ .../src/views/settings/StorageSelling.vue     | 206 ++++++++
+ .../settings/__tests__/StorageSelling.test.ts | 100 ++++
+ 12 files changed, 1233 insertions(+)
+ create mode 100644 core/archipelago/src/api/rpc/wildbloom.rs
+ create mode 100644 core/archipelago/src/settings/wildbloom_storage.rs
+ create mode 100644 neode-ui/src/views/settings/StorageSelling.vue
+ create mode 100644 neode-ui/src/views/settings/__tests__/StorageSelling.test.ts
+
+diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
+index 0eb4114..05b1903 100644
+--- a/core/archipelago/src/api/rpc/dispatcher.rs
++++ b/core/archipelago/src/api/rpc/dispatcher.rs
+@@ -66,6 +66,10 @@ impl RpcHandler {
+             "package.check-updates" => self.handle_package_check_updates(params).await,
+             "package.versions" => self.handle_package_versions(params).await,
+             "package.set-config" => self.clone().handle_package_set_config(params).await,
++            "wildbloom.storage.get" => self.handle_wildbloom_get().await,
++            "wildbloom.storage.save" => self.handle_wildbloom_save(params).await,
++            "wildbloom.storage.apply" => self.clone().handle_wildbloom_apply(params).await,
++            "wildbloom.storage.resolve-moneyer" => self.handle_wildbloom_resolve().await,
+             "package.credentials" => self.handle_package_credentials(params).await,
+             "app.filebrowser-token" => self.handle_filebrowser_token().await,
+ 
+diff --git a/core/archipelago/src/api/rpc/middleware.rs b/core/archipelago/src/api/rpc/middleware.rs
+index 641f548..96eb252 100644
+--- a/core/archipelago/src/api/rpc/middleware.rs
++++ b/core/archipelago/src/api/rpc/middleware.rs
+@@ -56,6 +56,7 @@ pub(super) const CACHEABLE_METHODS: &[&str] = &["system.stats", "federation.list
+ pub(super) fn sanitize_error_message(msg: &str) -> String {
+     // Allow known validation errors through (these are user-actionable)
+     let user_facing_prefixes = [
++        "Wildbloom ",
+         "Invalid",
+         "Missing",
+         "Not found",
+diff --git a/core/archipelago/src/api/rpc/mod.rs b/core/archipelago/src/api/rpc/mod.rs
+index 48e6a63..3203761 100644
+--- a/core/archipelago/src/api/rpc/mod.rs
++++ b/core/archipelago/src/api/rpc/mod.rs
+@@ -19,6 +19,7 @@ mod identity;
+ mod interfaces;
+ pub(crate) mod lnd;
+ mod marketplace;
++mod wildbloom;
+ // pub(crate): 13-10's `assistant::backends::select_backend` reuses
+ // `mesh::assistant::detect_ollama()` (D-04) rather than re-probing —
+ // matches the existing `pub(crate) mod bitcoin_relay;`/`pub(crate) mod
+@@ -351,6 +352,18 @@ impl RpcHandler {
+ 
+         debug!("RPC method: {}", rpc_req.method);
+ 
++        // Installed apps share host cookies. Capacity and selling controls
++        // belong to the dashboard, never a high-port app iframe or other site.
++        if rpc_req.method.starts_with("wildbloom.storage.")
++            && !wildbloom::origin_allowed(&parts.headers, self.config.dev_mode)
++        {
++            return Ok(self.error_response(
++                403,
++                "Wildbloom storage settings are only available from the dashboard",
++                StatusCode::FORBIDDEN,
++            ));
++        }
++
+         if matches!(
+             rpc_req.method.as_str(),
+             "node.nostr-sign" | "identity.nostr-sign"
+diff --git a/core/archipelago/src/api/rpc/wildbloom.rs b/core/archipelago/src/api/rpc/wildbloom.rs
+new file mode 100644
+index 0000000..4c5dfcb
+--- /dev/null
++++ b/core/archipelago/src/api/rpc/wildbloom.rs
+@@ -0,0 +1,363 @@
++//! Authenticated dashboard controls for the packaged, rootless Wildbloom node.
++use super::RpcHandler;
++use crate::settings::wildbloom_storage::{self as storage, Active, Record, Settings, GIB, MAX};
++use anyhow::{ensure, Context, Result};
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++use std::{path::Path, sync::Arc, time::Duration};
++
++pub(super) fn origin_allowed(headers: &hyper::HeaderMap, dev_mode: bool) -> bool {
++    super::signer_login::signer_prompt_origin_allowed(headers, dev_mode)
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Save {
++    revision: u64,
++    settings: Settings,
++}
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct Apply {
++    revision: u64,
++    confirm_restart: bool,
++}
++
++#[derive(Serialize)]
++struct Runtime {
++    image: String,
++    quota_bytes: u64,
++    used_bytes: u64,
++    committed_bytes: u64,
++    max_blob_bytes: u64,
++    settings_revision: Option<u64>,
++    checkout_started: bool,
++}
++
++fn number(v: &Value, key: &str) -> Result<u64> {
++    v.get(key)
++        .and_then(Value::as_u64)
++        .filter(|v| *v <= MAX)
++        .ok_or_else(|| anyhow::anyhow!("Wildbloom storage status is incomplete"))
++}
++
++async fn runtime() -> Result<Runtime> {
++    let mut command = tokio::process::Command::new("podman");
++    command
++        .args([
++            "inspect",
++            "wildbloom-node",
++            "--format",
++            "{\"env\":{{json .Config.Env}},\"image\":{{json .ImageName}}}",
++        ])
++        .kill_on_drop(true);
++    let output = tokio::time::timeout(Duration::from_secs(5), command.output()).await??;
++    ensure!(
++        output.status.success(),
++        "Wildbloom node is not installed or cannot be inspected"
++    );
++    let inspected: Value = serde_json::from_slice(&output.stdout)?;
++    let env: Vec<String> = serde_json::from_value(inspected["env"].clone())?;
++    let image = inspected["image"]
++        .as_str()
++        .context("Wildbloom image is unavailable")?
++        .to_string();
++    let value = |key: &str| env.iter().find_map(|e| e.strip_prefix(key));
++    let client = reqwest::Client::builder()
++        .no_proxy()
++        .redirect(reqwest::redirect::Policy::none())
++        .timeout(Duration::from_secs(3))
++        .build()?;
++    let response = client
++        .get("http://127.0.0.1:3742/healthz")
++        .send()
++        .await?
++        .error_for_status()?;
++    let bytes = response.bytes().await?;
++    ensure!(bytes.len() <= 8192, "Wildbloom storage status is too large");
++    let health: Value = serde_json::from_slice(&bytes)?;
++    ensure!(health["status"] == "ok", "Wildbloom node is not healthy");
++    let s = &health["storage"];
++    Ok(Runtime {
++        image,
++        quota_bytes: number(s, "quota_bytes")?,
++        used_bytes: number(s, "bytes")?,
++        committed_bytes: number(s, "committed_bytes")?,
++        max_blob_bytes: value("WILDBLOOM_MAX_BLOB_BYTES=")
++            .map(str::parse)
++            .transpose()?
++            .unwrap_or(GIB),
++        settings_revision: value("WILDBLOOM_ARCHIPELAGO_SETTINGS_REVISION=")
++            .map(str::parse)
++            .transpose()?,
++        checkout_started: value("WILDBLOOM_CHECKOUT_PROFILE=").is_some(),
++    })
++}
++
++fn disk_values(stdout: &str) -> Result<(u64, u64)> {
++    let parts: Vec<_> = stdout
++        .lines()
++        .last()
++        .unwrap_or("")
++        .split_whitespace()
++        .collect();
++    ensure!(parts.len() >= 6, "Wildbloom disk capacity is unavailable");
++    let total = parts[1].parse::<u64>()?.checked_mul(1024);
++    let free = parts[3].parse::<u64>()?.checked_mul(1024);
++    match (free, total) {
++        (Some(free), Some(total)) if total > 0 && free <= total => Ok((free, total)),
++        _ => anyhow::bail!("Wildbloom disk capacity is unavailable"),
++    }
++}
++
++async fn disk(root: &Path) -> Result<(u64, u64)> {
++    let mut command = tokio::process::Command::new("df");
++    command
++        .arg("-Pk")
++        .arg(root)
++        .env("LC_ALL", "C")
++        .kill_on_drop(true);
++    let out = tokio::time::timeout(Duration::from_secs(5), command.output()).await??;
++    ensure!(
++        out.status.success(),
++        "Wildbloom disk capacity is unavailable"
++    );
++    disk_values(&String::from_utf8_lossy(&out.stdout))
++}
++
++fn check_revision(record: &Record, expected: u64) -> Result<()> {
++    ensure!(
++        record.revision == expected,
++        "Wildbloom settings changed in another session. Reload before saving"
++    );
++    ensure!(
++        record.revision < MAX,
++        "Wildbloom settings revision is exhausted"
++    );
++    Ok(())
++}
++
++impl RpcHandler {
++    pub(super) async fn handle_wildbloom_get(&self) -> Result<Value> {
++        let record = storage::load(&self.config.data_dir)?;
++        let runtime = runtime().await.ok();
++        let root = match &self.orchestrator {
++            Some(o) => o.wildbloom_settings_root().await.ok(),
++            None => None,
++        };
++        let disk = match &root {
++            Some(root) => disk(root).await.ok(),
++            None => None,
++        };
++        let mut defaults =
++            Settings::defaults(runtime.as_ref().map(|r| r.quota_bytes).unwrap_or(200 * GIB));
++        if let Some(r) = &runtime {
++            defaults.max_blob_bytes = r.max_blob_bytes;
++        }
++        let settings = record
++            .draft
++            .clone()
++            .or_else(|| record.active.as_ref().map(|a| a.settings.clone()))
++            .unwrap_or(defaults);
++        let external = runtime
++            .as_ref()
++            .is_some_and(|r| r.checkout_started && record.active.is_none());
++        let applied = record.active.as_ref().is_some_and(|a| {
++            runtime.as_ref().is_some_and(|r| {
++                r.settings_revision == Some(a.revision)
++                    && r.quota_bytes == a.settings.quota_bytes
++                    && r.max_blob_bytes == a.settings.max_blob_bytes
++                    && r.checkout_started == a.checkout_started
++            })
++        });
++        Ok(
++            json!({"revision": record.revision, "settings": settings, "active": record.active,
++            "has_draft": record.draft.is_some(), "applied": applied, "runtime": runtime, "external_configuration": external,
++            "can_apply": root.is_some() && disk.is_some() && !external && self.config.public_host.is_some()
++                && runtime.as_ref().is_some_and(|r| r.image == "ghcr.io/forgesworn/wildbloom-node:0.3.5-2ea211e-2"),
++            "origin": self.config.public_host.as_ref().map(|h| format!("https://{h}:3742")),
++            "disk": disk.map(|(free,total)| json!({"free_bytes":free,"total_bytes":total,"headroom_bytes":(5*GIB).max(total/20)}))}),
++        )
++    }
++
++    pub(super) async fn handle_wildbloom_save(&self, params: Option<Value>) -> Result<Value> {
++        let request: Save = serde_json::from_value(params.context("Missing Wildbloom settings")?)
++            .context("Invalid Wildbloom settings")?;
++        request.settings.validate()?;
++        let _guard = storage::LOCK.lock().await;
++        let mut record = storage::load(&self.config.data_dir)?;
++        check_revision(&record, request.revision)?;
++        record.revision += 1;
++        record.draft = Some(request.settings);
++        storage::save(&self.config.data_dir, &record)?;
++        Ok(json!({"revision":record.revision}))
++    }
++
++    pub(super) async fn handle_wildbloom_resolve(&self) -> Result<Value> {
++        // Only this explicit action contacts DNS. Loading/saving a form never
++        // discovers or calls the payment issuer. No arbitrary hostname input.
++        let addresses = tokio::time::timeout(
++            Duration::from_secs(5),
++            tokio::net::lookup_host(("moneyer.dev", 443)),
++        )
++        .await??;
++        let mut ips: Vec<_> = addresses
++            .map(|a| a.ip())
++            .filter(storage::public_ip)
++            .collect();
++        ips.sort();
++        ips.dedup();
++        ensure!(
++            !ips.is_empty() && ips.len() <= 16,
++            "Wildbloom could not resolve public Moneyer addresses"
++        );
++        Ok(json!({"addresses":ips}))
++    }
++
++    pub(super) async fn handle_wildbloom_apply(
++        self: Arc<Self>,
++        params: Option<Value>,
++    ) -> Result<Value> {
++        let request: Apply =
++            serde_json::from_value(params.context("Missing Wildbloom apply request")?)
++                .context("Invalid Wildbloom apply request")?;
++        ensure!(
++            request.confirm_restart,
++            "Wildbloom apply requires confirmation of the node restart"
++        );
++        // A request disconnect must not cancel between publishing desired
++        // settings and restarting. The detached task completes and a reload
++        // compares the running revision with the desired revision.
++        tokio::spawn(async move { self.apply_wildbloom(request.revision).await }).await?
++    }
++
++    async fn apply_wildbloom(&self, revision: u64) -> Result<Value> {
++        let _guard = storage::LOCK.lock().await;
++        let mut record = storage::load(&self.config.data_dir)?;
++        check_revision(&record, revision)?;
++        let settings = record
++            .draft
++            .clone()
++            .context("Wildbloom save a draft before applying")?;
++        settings.validate()?;
++        let host = self
++            .config
++            .public_host
++            .as_ref()
++            .context("Wildbloom requires a configured public hostname")?;
++        let origin = format!("https://{host}:3742");
++        let orch = self
++            .orchestrator
++            .as_ref()
++            .context("Wildbloom container management is unavailable")?;
++        let root = orch.wildbloom_settings_root().await?;
++        let current = runtime()
++            .await
++            .context("Wildbloom start the node and wait for healthy storage before applying")?;
++        ensure!(
++            current.image == "ghcr.io/forgesworn/wildbloom-node:0.3.5-2ea211e-2",
++            "Wildbloom installed image is not compatible with dashboard settings"
++        );
++        ensure!(!current.checkout_started || record.active.is_some(),
++            "Wildbloom existing external sales configuration must be migrated before dashboard changes");
++        if let Some(a) = &record.active {
++            ensure!(
++                !a.checkout_started || a.origin == origin,
++                "Wildbloom public hostname cannot change while payment recovery may be outstanding"
++            );
++        }
++        let (free, total) = disk(&root).await?;
++        storage::validate_capacity(
++            &settings,
++            free,
++            total,
++            current.used_bytes,
++            current.committed_bytes,
++            record.active.as_ref(),
++        )?;
++        let started =
++            settings.sales_enabled || record.active.as_ref().is_some_and(|a| a.checkout_started);
++        if started {
++            settings.validate_receiver()?;
++        }
++        let active = Active {
++            revision: record.revision + 1,
++            origin,
++            checkout_started: started,
++            settings,
++        };
++        storage::prepare_profile(&root, &active)?;
++        record.revision = active.revision;
++        record.active = Some(active.clone());
++        storage::save(&self.config.data_dir, &record)?;
++        // The normal Quadlet restart regenerates only this app's unit. No
++        // image update, uninstallation, volume removal or ledger replacement.
++        if orch.restart("wildbloom-node").await.is_err() {
++            return Ok(json!({"status":"pending","revision":record.revision,
++                "message":"Settings saved, but the node restart failed. Check the app and retry Apply."}));
++        }
++        for _ in 0..10 {
++            if let Ok(r) = runtime().await {
++                if r.settings_revision == Some(active.revision)
++                    && r.quota_bytes == active.settings.quota_bytes
++                    && r.max_blob_bytes == active.settings.max_blob_bytes
++                    && r.checkout_started == active.checkout_started
++                {
++                    return Ok(json!({"status":"applied","revision":record.revision}));
++                }
++            }
++            tokio::time::sleep(Duration::from_millis(500)).await;
++        }
++        Ok(json!({"status":"pending","revision":record.revision,
++            "message":"Settings saved; the running configuration has not been verified. Reload status before retrying."}))
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn app_ports_and_other_sites_cannot_manage_storage_with_shared_cookies() {
++        let mut headers = hyper::HeaderMap::new();
++        headers.insert("host", "node.example".parse().unwrap());
++        for origin in ["https://node.example:3743", "https://other.example", "null"] {
++            headers.insert("origin", origin.parse().unwrap());
++            assert!(!origin_allowed(&headers, false));
++        }
++        headers.insert("origin", "https://node.example".parse().unwrap());
++        assert!(origin_allowed(&headers, false));
++        headers.remove("origin");
++        assert!(origin_allowed(&headers, false)); // Authenticated CLI still needs CSRF.
++    }
++    #[test]
++    fn disk_probe_uses_available_blocks_not_total_minus_used() {
++        assert_eq!(disk_values("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/a 100 20 70 22% /data\n").unwrap(), (70*1024,100*1024));
++        assert!(disk_values("unavailable").is_err());
++        assert!(disk_values("x 0 0 0 0% /").is_err());
++    }
++    #[test]
++    fn stale_tabs_cannot_replace_a_newer_draft() {
++        let record = Record {
++            revision: 2,
++            ..Default::default()
++        };
++        assert!(check_revision(&record, 1).is_err());
++        check_revision(&record, 2).unwrap();
++    }
++    #[test]
++    fn storage_controls_always_require_dashboard_authentication() {
++        for method in [
++            "wildbloom.storage.get",
++            "wildbloom.storage.save",
++            "wildbloom.storage.apply",
++            "wildbloom.storage.resolve-moneyer",
++        ] {
++            assert!(!super::super::middleware::UNAUTHENTICATED_METHODS.contains(&method));
++            assert!(!super::super::middleware::CACHEABLE_METHODS.contains(&method));
++            assert!(!crate::auth::UserRole::Viewer.can_access(method));
++            assert!(!crate::auth::UserRole::AppUser.can_access(method));
++            assert!(crate::auth::UserRole::Admin.can_access(method));
++            assert!(!super::super::csrf_exempt_method(method));
++        }
++    }
++}
+diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
+index 1337440..b1cdf4a 100644
+--- a/core/archipelago/src/container/prod_orchestrator.rs
++++ b/core/archipelago/src/container/prod_orchestrator.rs
+@@ -4022,6 +4022,12 @@ impl ProdContainerOrchestrator {
+         }
+         let mut env = manifest.app.environment.clone();
+         env.extend(manifest.app.container.resolve_derived_env(&facts));
++        if manifest.app.id == "wildbloom-node" {
++            if let Some(active) = crate::settings::wildbloom_storage::load(&self.data_dir)?.active {
++                crate::settings::wildbloom_storage::apply_environment(&mut env, &active);
++            }
++        }
++
+         if matches!(manifest.app.id.as_str(), "bitcoin-core" | "bitcoin-knots") {
+             let storage = crate::settings::bitcoin_storage::load(&self.data_dir).await?;
+             env.retain(|entry| !entry.starts_with("BITCOIN_PRUNE="));
+@@ -5039,6 +5045,37 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
+         }
+     }
+ 
++    async fn wildbloom_settings_root(&self) -> Result<PathBuf> {
++        let lm = self.loaded("wildbloom-node").await?;
++        anyhow::ensure!(
++            compute_container_name(&lm.manifest) == "wildbloom-node"
++                && self.quadlet_unit_exists("wildbloom-node").await?,
++            "Wildbloom dashboard settings require the packaged Quadlet node"
++        );
++        anyhow::ensure!(
++            lm.manifest.app.container.image.as_deref()
++                == Some("ghcr.io/forgesworn/wildbloom-node:0.3.5-2ea211e-2"),
++            "Wildbloom dashboard settings require a compatible node package"
++        );
++        let volume = lm
++            .manifest
++            .app
++            .volumes
++            .iter()
++            .find(|v| v.target == "/data")
++            .ok_or_else(|| anyhow::anyhow!("Wildbloom data volume is unavailable"))?;
++        anyhow::ensure!(
++            volume.volume_type == "bind" && volume.source == "/var/lib/archipelago/wildbloom-node",
++            "Wildbloom dashboard settings require the packaged data volume"
++        );
++        let root = PathBuf::from(&volume.source);
++        anyhow::ensure!(
++            tokio::fs::symlink_metadata(&root).await?.is_dir(),
++            "Wildbloom data directory is unavailable"
++        );
++        Ok(root)
++    }
++
+     async fn restart(&self, app_id: &str) -> Result<()> {
+         if let Some(members) = self.mempool_umbrella_members(app_id).await {
+             tracing::info!(
+@@ -6155,6 +6192,53 @@ app:
+         assert_eq!(resolve_stop_grace_secs(&m, "some-unknown-app"), 30);
+     }
+ 
++    #[tokio::test]
++    async fn wildbloom_draft_is_inert_and_active_settings_preserve_owner_authorisation() {
++        use crate::settings::wildbloom_storage::{self as storage, Active, Record, Settings, GIB};
++        let runtime = Arc::new(MockRuntime::default());
++        let orch = orch_with(runtime).await;
++        let mut manifest = pull_manifest("wildbloom-node", "foo:1");
++        manifest.app.environment = vec!["WILDBLOOM_ALLOW_PUBKEYS=owner".into()];
++        let settings = Settings::defaults(10 * GIB);
++        let mut record = Record {
++            revision: 1,
++            draft: Some(settings.clone()),
++            active: None,
++        };
++        storage::save(&orch.data_dir, &record).unwrap();
++        let mut draft = manifest.clone();
++        orch.resolve_dynamic_env(&mut draft).await.unwrap();
++        assert_eq!(draft.app.environment, manifest.app.environment);
++        record.active = Some(Active {
++            revision: 2,
++            origin: "https://node.example:3742".into(),
++            checkout_started: false,
++            settings,
++        });
++        storage::save(&orch.data_dir, &record).unwrap();
++        orch.resolve_dynamic_env(&mut manifest).await.unwrap();
++        assert!(manifest
++            .app
++            .environment
++            .contains(&"WILDBLOOM_ALLOW_PUBKEYS=owner".into()));
++        assert!(manifest
++            .app
++            .environment
++            .contains(&format!("WILDBLOOM_QUOTA_BYTES={}", 10 * GIB)));
++        assert!(!manifest
++            .app
++            .environment
++            .iter()
++            .any(|e| e.starts_with("WILDBLOOM_CHECKOUT_PROFILE=")));
++        let mut unrelated = pull_manifest("other-app", "foo:1");
++        orch.resolve_dynamic_env(&mut unrelated).await.unwrap();
++        assert!(!unrelated
++            .app
++            .environment
++            .iter()
++            .any(|e| e.starts_with("WILDBLOOM_")));
++    }
++
+     async fn orch_with(runtime: Arc<MockRuntime>) -> ProdContainerOrchestrator {
+         let mut orch = ProdContainerOrchestrator::with_runtime(
+             runtime,
+diff --git a/core/archipelago/src/container/traits.rs b/core/archipelago/src/container/traits.rs
+index 1a71a0a..355b6a5 100644
+--- a/core/archipelago/src/container/traits.rs
++++ b/core/archipelago/src/container/traits.rs
+@@ -45,6 +45,12 @@ pub trait ContainerOrchestrator: Send + Sync {
+         Ok(0)
+     }
+ 
++    /// Private data root for the explicitly supported Wildbloom package.
++    /// Refuses other runtimes instead of claiming a plain restart applies env.
++    async fn wildbloom_settings_root(&self) -> Result<std::path::PathBuf> {
++        anyhow::bail!("Wildbloom dashboard settings require the packaged Quadlet node")
++    }
++
+     /// Start an already-created container.
+     async fn start(&self, app_id: &str) -> Result<()>;
+ 
+diff --git a/core/archipelago/src/settings/mod.rs b/core/archipelago/src/settings/mod.rs
+index 8ffaf64..839995c 100644
+--- a/core/archipelago/src/settings/mod.rs
++++ b/core/archipelago/src/settings/mod.rs
+@@ -9,3 +9,5 @@ pub mod session_policy;
+ pub mod transport;
+ 
+ pub mod bitcoin_storage;
++
++pub mod wildbloom_storage;
+diff --git a/core/archipelago/src/settings/wildbloom_storage.rs b/core/archipelago/src/settings/wildbloom_storage.rs
+new file mode 100644
+index 0000000..5eabb5c
+--- /dev/null
++++ b/core/archipelago/src/settings/wildbloom_storage.rs
+@@ -0,0 +1,443 @@
++//! Private operator settings. Drafts never affect the daemon; only an explicit
++//! apply publishes a new immutable profile, reusing the same receiving ledger.
++use anyhow::{ensure, Context, Result};
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++use std::{net::IpAddr, path::Path};
++
++pub const GIB: u64 = 1 << 30;
++pub const MAX: u64 = 9_007_199_254_740_991;
++pub const MONEYER_KEY: &str = "0218865ec3352afb85695bd1b6089323f802ecbf3ae2103bf8fd4d3e6fb571f0e4";
++pub static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
++
++#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
++#[serde(deny_unknown_fields)]
++pub struct Settings {
++    pub quota_bytes: u64,
++    pub owner_reserved_bytes: u64,
++    pub max_blob_bytes: u64,
++    pub offer_capacity_bytes: u64,
++    pub price_sats: u64,
++    pub duration_seconds: u64,
++    pub grace_seconds: u64,
++    pub delivery_bytes: u64,
++    pub seller_name: String,
++    pub refund_policy: String,
++    pub moneyer_ips: Vec<IpAddr>,
++    pub moneyer_terms_accepted: bool,
++    pub sales_enabled: bool,
++}
++
++impl Settings {
++    pub fn defaults(quota: u64) -> Self {
++        Self {
++            quota_bytes: quota,
++            owner_reserved_bytes: (quota / 2).min(100 * GIB),
++            max_blob_bytes: GIB.min(quota),
++            offer_capacity_bytes: (10 * GIB).min(quota - (quota / 2).min(100 * GIB)),
++            price_sats: 500,
++            duration_seconds: 30 * 86400,
++            grace_seconds: 7 * 86400,
++            delivery_bytes: 100 * GIB,
++            seller_name: "My Archipelago node".into(),
++            refund_policy: String::new(),
++            moneyer_ips: vec![],
++            moneyer_terms_accepted: false,
++            sales_enabled: false,
++        }
++    }
++
++    pub fn validate(&self) -> Result<()> {
++        for value in [
++            self.quota_bytes,
++            self.max_blob_bytes,
++            self.offer_capacity_bytes,
++            self.price_sats,
++            self.duration_seconds,
++            self.delivery_bytes,
++        ] {
++            ensure!(
++                (1..=MAX).contains(&value),
++                "Wildbloom values must be positive safe integers"
++            );
++        }
++        ensure!(
++            self.price_sats <= MAX / 1000 && self.grace_seconds <= MAX,
++            "Wildbloom price or grace period is too large"
++        );
++        ensure!(
++            self.owner_reserved_bytes < self.quota_bytes
++                && self.offer_capacity_bytes <= self.quota_bytes - self.owner_reserved_bytes
++                && self.max_blob_bytes <= self.quota_bytes,
++            "Wildbloom offer must fit quota minus owner reserve; file limit must fit quota"
++        );
++        plain(&self.seller_name, 128, false)?;
++        plain(&self.refund_policy, 2048, true)?;
++        ensure!(
++            self.moneyer_ips.len() <= 16 && self.moneyer_ips.iter().all(public_ip),
++            "Wildbloom issuer addresses must be public IPs (at most 16)"
++        );
++        Ok(())
++    }
++
++    pub fn validate_receiver(&self) -> Result<()> {
++        ensure!(self.moneyer_terms_accepted && !self.refund_policy.trim().is_empty()
++            && !self.refund_policy.starts_with("REPLACE") && !self.moneyer_ips.is_empty(),
++            "Wildbloom selling requires issuer addresses, acceptance of Moneyer terms, and your contact/refund terms");
++        Ok(())
++    }
++}
++
++fn plain(value: &str, limit: usize, empty: bool) -> Result<()> {
++    ensure!(
++        (empty || !value.trim().is_empty())
++            && value.len() <= limit
++            && !value.chars().any(char::is_control),
++        "Wildbloom text is missing, too long, or contains control characters"
++    );
++    Ok(())
++}
++
++// Explicitly reject non-routable and translation ranges. DNS results are pins,
++// never URLs; the receiver still verifies TLS for moneyer.dev.
++pub fn public_ip(ip: &IpAddr) -> bool {
++    match ip {
++        IpAddr::V4(ip) => {
++            let [a, b, c, _] = ip.octets();
++            !ip.is_private()
++                && !ip.is_loopback()
++                && !ip.is_link_local()
++                && !ip.is_broadcast()
++                && !ip.is_documentation()
++                && !ip.is_multicast()
++                && a != 0
++                && a < 240
++                && !(a == 100 && (64..=127).contains(&b))
++                && !(a == 192 && b == 0)
++                && !(a == 198 && (b == 18 || b == 19))
++                && !(a == 192 && b == 88 && c == 99)
++        }
++        IpAddr::V6(ip) => {
++            let s = ip.segments();
++            // Current global unicast only. Excludes mapped IPv4, NAT64,
++            // link/site-local, multicast, ULA and protocol/documentation blocks.
++            s[0] & 0xe000 == 0x2000
++                && s[0] != 0x2002
++                && !(s[0] == 0x2001 && (s[1] < 0x200 || s[1] == 0xdb8))
++                && !(s[0] == 0x3fff && s[1] < 0x1000)
++        }
++    }
++}
++
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct Active {
++    pub revision: u64,
++    pub origin: String,
++    pub checkout_started: bool,
++    pub settings: Settings,
++}
++
++#[derive(Clone, Default, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub struct Record {
++    pub revision: u64,
++    pub draft: Option<Settings>,
++    pub active: Option<Active>,
++}
++
++pub fn path(data: &Path) -> std::path::PathBuf {
++    data.join("settings/wildbloom-storage/settings.json")
++}
++
++pub fn load(data: &Path) -> Result<Record> {
++    let path = path(data);
++    match std::fs::symlink_metadata(&path) {
++        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Record::default()),
++        Err(e) => Err(e.into()),
++        Ok(meta) => {
++            ensure!(
++                meta.is_file() && meta.len() <= 65536,
++                "Wildbloom settings file is invalid"
++            );
++            let record: Record = serde_json::from_slice(&std::fs::read(path)?).context(
++                "Wildbloom settings cannot be read; existing configuration was preserved",
++            )?;
++            if let Some(s) = &record.draft {
++                s.validate()?;
++            }
++            if let Some(a) = &record.active {
++                a.settings.validate()?;
++            }
++            Ok(record)
++        }
++    }
++}
++
++pub fn private_dir(dir: &Path) -> Result<()> {
++    use std::os::unix::fs::PermissionsExt;
++    if !dir.exists() {
++        std::fs::create_dir(dir)?;
++    }
++    let meta = std::fs::symlink_metadata(dir)?;
++    ensure!(
++        meta.is_dir() && !meta.file_type().is_symlink(),
++        "Wildbloom private directory is invalid"
++    );
++    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
++    Ok(())
++}
++
++pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
++    use std::io::Write;
++    use std::os::unix::fs::OpenOptionsExt;
++    let mut file = std::fs::OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .mode(0o600)
++        .open(path)?;
++    file.write_all(bytes)?;
++    file.sync_all()?;
++    Ok(())
++}
++
++pub fn save(data: &Path, record: &Record) -> Result<()> {
++    let parent = data.join("settings");
++    std::fs::create_dir_all(&parent)?;
++    let dir = parent.join("wildbloom-storage");
++    private_dir(&dir)?;
++    let temp = dir.join(format!("{}.tmp", uuid::Uuid::new_v4()));
++    write_private(&temp, &serde_json::to_vec(record)?)?;
++    std::fs::rename(&temp, path(data))?;
++    std::fs::File::open(dir)?.sync_all()?;
++    Ok(())
++}
++
++pub fn validate_capacity(
++    s: &Settings,
++    free: u64,
++    total: u64,
++    used: u64,
++    committed: u64,
++    previous: Option<&Active>,
++) -> Result<()> {
++    let headroom = (5 * GIB).max(total / 20);
++    ensure!(
++        s.quota_bytes >= committed,
++        "Wildbloom quota cannot be below committed storage"
++    );
++    ensure!(
++        s.quota_bytes <= free.saturating_add(used).saturating_sub(headroom),
++        "Wildbloom quota exceeds usable disk space; leave at least 5 GiB or 5% free for the node"
++    );
++    if let Some(a) = previous.filter(|a| a.checkout_started) {
++        ensure!(s.quota_bytes >= a.settings.quota_bytes,
++            "Wildbloom quota cannot shrink after selling begins; existing customer promises must be preserved");
++        ensure!(s.owner_reserved_bytes <= a.settings.owner_reserved_bytes,
++            "Wildbloom owner reserve cannot increase after selling begins; existing customer promises must be preserved");
++    }
++    Ok(())
++}
++
++pub fn profile(a: &Active) -> Value {
++    let s = &a.settings;
++    let ips: Vec<String> = s
++        .moneyer_ips
++        .iter()
++        .map(|ip| std::net::SocketAddr::new(*ip, 443).to_string())
++        .collect();
++    json!({
++        "checkout": {"origin": format!("{}/", a.origin), "seller_id": "my-archipelago",
++            "seller_name": s.seller_name, "network": "bitcoin", "quote_seconds": 600,
++            "allow_loopback_http": false, "tor_only": false,
++            "offers": [{"id": "storage-month", "revision": a.revision,
++                "capacity_bytes": s.offer_capacity_bytes, "duration_seconds": s.duration_seconds,
++                "grace_seconds": s.grace_seconds, "price_msat": s.price_sats * 1000,
++                "delivery_bytes": s.delivery_bytes,
++                "delivery_policy": "Operator-managed delivery; no automatic bandwidth meter",
++                "retention_policy": format!("{} seconds of writes and {} further seconds for recovery", s.duration_seconds, s.grace_seconds),
++                "refund_policy": s.refund_policy}],
++            "issuers": [{"id": "moneyer-dev", "note_endpoint": "https://moneyer.dev/w",
++                "callback": "https://moneyer.dev/w/cb", "mint_pubkey": MONEYER_KEY}]},
++        "state": "/data/operator/checkout",
++        // Zero blocks every new reservation while existing quotes, receiving
++        // recovery and activated allowances continue against the same ledger.
++        "max_paid_bytes": if s.sales_enabled { s.quota_bytes - s.owner_reserved_bytes } else { 0 },
++        "browser_origins": [a.origin.replace(":3742", ":3743")], "phoenixd": null,
++        "notes": (["https://moneyer.dev/w", "https://moneyer.dev/w/cb"].map(|endpoint| json!({
++            "endpoint": endpoint, "destination": {"origin": "https://moneyer.dev/", "addresses": ips, "allow_loopback_http": false}})))
++    })
++}
++
++pub fn profile_name(revision: u64) -> String {
++    format!("dashboard-profile-{revision}.json")
++}
++
++pub fn prepare_profile(root: &Path, a: &Active) -> Result<()> {
++    if !a.checkout_started {
++        return Ok(());
++    }
++    let dir = root.join("operator");
++    private_dir(&dir)?;
++    let path = dir.join(profile_name(a.revision));
++    let bytes = serde_json::to_vec(&profile(a))?;
++    if path.exists() {
++        ensure!(
++            std::fs::symlink_metadata(&path)?.is_file() && std::fs::read(&path)? == bytes,
++            "Wildbloom immutable profile already exists with different contents"
++        );
++    } else {
++        write_private(&path, &bytes)?;
++    }
++    std::fs::File::open(dir)?.sync_all()?;
++    Ok(())
++}
++
++pub fn apply_environment(env: &mut Vec<String>, a: &Active) {
++    let keys = [
++        "WILDBLOOM_QUOTA_BYTES=",
++        "WILDBLOOM_MAX_BLOB_BYTES=",
++        "WILDBLOOM_PUBLIC_URL=",
++        "WILDBLOOM_CHECKOUT_PROFILE=",
++        "WILDBLOOM_ARCHIPELAGO_SETTINGS_REVISION=",
++    ];
++    env.retain(|e| !keys.iter().any(|k| e.starts_with(k)));
++    env.extend([
++        format!("WILDBLOOM_QUOTA_BYTES={}", a.settings.quota_bytes),
++        format!("WILDBLOOM_MAX_BLOB_BYTES={}", a.settings.max_blob_bytes),
++        format!("WILDBLOOM_PUBLIC_URL={}", a.origin),
++        format!("WILDBLOOM_ARCHIPELAGO_SETTINGS_REVISION={}", a.revision),
++    ]);
++    if a.checkout_started {
++        env.push(format!(
++            "WILDBLOOM_CHECKOUT_PROFILE=/data/operator/{}",
++            profile_name(a.revision)
++        ));
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn active() -> Active {
++        let mut settings = Settings::defaults(200 * GIB);
++        settings.moneyer_ips = vec!["1.1.1.1".parse().unwrap()];
++        settings.refund_policy = "Contact the operator for refunds".into();
++        settings.moneyer_terms_accepted = true;
++        settings.sales_enabled = true;
++        Active {
++            revision: 2,
++            origin: "https://node.example:3742".into(),
++            checkout_started: true,
++            settings,
++        }
++    }
++    #[test]
++    fn defaults_use_current_quota_and_preserve_zero_choices() {
++        let mut s = Settings::defaults(10 * GIB);
++        assert_eq!(s.owner_reserved_bytes, 5 * GIB);
++        assert_eq!(s.offer_capacity_bytes, 5 * GIB);
++        assert!(!s.sales_enabled);
++        s.owner_reserved_bytes = 0;
++        s.grace_seconds = 0;
++        s.validate().unwrap();
++        s.offer_capacity_bytes = 11 * GIB;
++        assert!(s.validate().is_err());
++    }
++    #[test]
++    fn capacity_protects_disk_and_existing_promises() {
++        let a = active();
++        let mut s = a.settings.clone();
++        assert!(validate_capacity(&s, 30 * GIB, 38 * GIB, 0, 0, None).is_err());
++        validate_capacity(&s, 300 * GIB, 400 * GIB, 0, 0, Some(&a)).unwrap();
++        s.quota_bytes -= GIB;
++        assert!(validate_capacity(&s, 300 * GIB, 400 * GIB, 0, 0, Some(&a)).is_err());
++        s = a.settings.clone();
++        s.owner_reserved_bytes += GIB;
++        assert!(validate_capacity(&s, 300 * GIB, 400 * GIB, 0, 0, Some(&a)).is_err());
++    }
++    #[test]
++    fn pause_keeps_receiver_and_ledger_but_refuses_new_capacity() {
++        let mut a = active();
++        let before = profile(&a);
++        a.settings.sales_enabled = false;
++        let after = profile(&a);
++        assert_eq!(after["max_paid_bytes"], 0);
++        assert_eq!(before["state"], after["state"]);
++        assert_eq!(before["checkout"], after["checkout"]);
++        let mut env = vec![
++            "WILDBLOOM_ALLOW_PUBKEYS=owner".into(),
++            "WILDBLOOM_QUOTA_BYTES=1".into(),
++        ];
++        apply_environment(&mut env, &a);
++        assert!(env.contains(&"WILDBLOOM_ALLOW_PUBKEYS=owner".into()));
++        assert!(env
++            .iter()
++            .any(|e| e.starts_with("WILDBLOOM_CHECKOUT_PROFILE=")));
++        assert_eq!(
++            env.iter()
++                .filter(|e| e.starts_with("WILDBLOOM_QUOTA_BYTES="))
++                .count(),
++            1
++        );
++    }
++    #[test]
++    fn receiver_rejects_private_pins_and_incomplete_terms() {
++        let mut s = active().settings;
++        for ip in [
++            "127.0.0.1",
++            "10.1.1.1",
++            "100.64.0.1",
++            "169.254.169.254",
++            "192.0.2.1",
++            "::1",
++            "::ffff:127.0.0.1",
++            "64:ff9b::1",
++            "2001:db8::1",
++            "fc00::1",
++        ] {
++            s.moneyer_ips = vec![ip.parse().unwrap()];
++            assert!(s.validate().is_err(), "{ip}");
++        }
++        s.moneyer_ips = vec![];
++        assert!(s.validate_receiver().is_err());
++        s.moneyer_ips = vec!["1.1.1.1".parse().unwrap()];
++        s.validate_receiver().unwrap();
++        s.refund_policy.clear();
++        assert!(s.validate_receiver().is_err());
++    }
++    #[test]
++    fn drafts_are_private_and_corruption_is_never_defaulted() {
++        use std::os::unix::fs::PermissionsExt;
++        let dir = tempfile::tempdir().unwrap();
++        let record = Record {
++            revision: 1,
++            draft: Some(Settings::defaults(10 * GIB)),
++            active: None,
++        };
++        save(dir.path(), &record).unwrap();
++        assert!(load(dir.path()).unwrap().active.is_none());
++        assert_eq!(
++            std::fs::metadata(path(dir.path()))
++                .unwrap()
++                .permissions()
++                .mode()
++                & 0o777,
++            0o600
++        );
++        std::fs::write(path(dir.path()), b"broken").unwrap();
++        assert!(load(dir.path()).is_err());
++    }
++    #[test]
++    fn profiles_are_immutable_and_do_not_reset_receiving_state() {
++        let dir = tempfile::tempdir().unwrap();
++        let mut a = active();
++        prepare_profile(dir.path(), &a).unwrap();
++        prepare_profile(dir.path(), &a).unwrap();
++        a.settings.price_sats += 1;
++        assert!(prepare_profile(dir.path(), &a).is_err());
++        a.revision += 1;
++        prepare_profile(dir.path(), &a).unwrap();
++        assert!(!dir.path().join("operator/checkout").exists());
++    }
++}
+diff --git a/neode-ui/src/router/index.ts b/neode-ui/src/router/index.ts
+index adca8ea..b3623d0 100644
+--- a/neode-ui/src/router/index.ts
++++ b/neode-ui/src/router/index.ts
+@@ -235,6 +235,11 @@ const router = createRouter({
+           name: 'system-update',
+           component: () => import('../views/SystemUpdate.vue'),
+         },
++        {
++          path: 'settings/storage',
++          name: 'storage-selling',
++          component: () => import('@/views/settings/StorageSelling.vue'),
++        },
+         {
+           path: 'settings/registries',
+           name: 'app-registries',
+diff --git a/neode-ui/src/views/Settings.vue b/neode-ui/src/views/Settings.vue
+index 9a1c0cd..b3fda27 100644
+--- a/neode-ui/src/views/Settings.vue
++++ b/neode-ui/src/views/Settings.vue
+@@ -1,4 +1,5 @@
+ <script setup lang="ts">
++import { RouterLink } from 'vue-router'
+ import AccountSection from '@/views/settings/AccountSection.vue'
+ import SystemUpdatesSection from '@/views/settings/SystemUpdatesSection.vue'
+ import AppRegistriesSection from '@/views/settings/AppRegistriesSection.vue'
+@@ -8,6 +9,11 @@ import SystemSection from '@/views/settings/SystemSection.vue'
+ <template>
+   <div class="pb-6">
+     <AccountSection />
++    <section class="glass-card px-6 py-6 mb-6 flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center">
++      <div><h2 class="text-xl font-semibold">Storage &amp; selling</h2>
++        <p class="text-sm text-white/60 mt-1">Set your Wildbloom capacity, reserve space for yourself, and choose what to charge.</p></div>
++      <RouterLink to="/dashboard/settings/storage" class="glass-button px-4 py-2 rounded-lg text-sm text-center">Manage storage</RouterLink>
++    </section>
+     <SystemUpdatesSection />
+     <AppRegistriesSection />
+     <SystemSection />
+diff --git a/neode-ui/src/views/settings/StorageSelling.vue b/neode-ui/src/views/settings/StorageSelling.vue
+new file mode 100644
+index 0000000..cba3249
+--- /dev/null
++++ b/neode-ui/src/views/settings/StorageSelling.vue
+@@ -0,0 +1,206 @@
++<script setup lang="ts">
++import { computed, onMounted, ref } from 'vue'
++import { RouterLink } from 'vue-router'
++import { rpcClient } from '@/api/rpc-client'
++
++type Settings = {
++  quota_bytes: number; owner_reserved_bytes: number; max_blob_bytes: number
++  offer_capacity_bytes: number; price_sats: number; duration_seconds: number
++  grace_seconds: number; delivery_bytes: number; seller_name: string
++  refund_policy: string; moneyer_ips: string[]; moneyer_terms_accepted: boolean; sales_enabled: boolean
++}
++type Active = { revision: number; checkout_started: boolean; settings: Settings }
++type Status = {
++  revision: number; settings: Settings; active: Active | null; applied: boolean
++  runtime: { quota_bytes: number; used_bytes: number; committed_bytes: number; settings_revision: number | null; checkout_started: boolean } | null
++  disk: { free_bytes: number; total_bytes: number; headroom_bytes: number } | null
++  has_draft: boolean; can_apply: boolean; external_configuration: boolean; origin: string | null
++}
++type NumberKey = 'quota_bytes' | 'owner_reserved_bytes' | 'max_blob_bytes' | 'offer_capacity_bytes' | 'price_sats' | 'duration_seconds' | 'grace_seconds' | 'delivery_bytes'
++const GiB = 2 ** 30
++const fields: { key: NumberKey; label: string; scale: number; min: number; help?: string }[] = [
++  { key: 'quota_bytes', label: 'Total storage quota (GiB)', scale: GiB, min: 1 / GiB },
++  { key: 'owner_reserved_bytes', label: 'Reserved for you (GiB)', scale: GiB, min: 0, help: 'Customers cannot buy this part of your quota.' },
++  { key: 'max_blob_bytes', label: 'Maximum file size (GiB)', scale: GiB, min: 1 / GiB },
++  { key: 'offer_capacity_bytes', label: 'Storage per customer (GiB)', scale: GiB, min: 1 / GiB },
++  { key: 'price_sats', label: 'Price per term (sats)', scale: 1, min: 1 },
++  { key: 'duration_seconds', label: 'Term (days)', scale: 86400, min: 1 / 86400 },
++  { key: 'grace_seconds', label: 'Recovery grace (days)', scale: 86400, min: 0, help: 'Time to retrieve files after the paid term ends.' },
++  { key: 'delivery_bytes', label: 'Delivery allowance per term (GiB)', scale: GiB, min: 1 / GiB, help: 'Managed by you; downloads are not automatically metered.' },
++]
++const status = ref<Status | null>(null)
++const form = ref<Settings | null>(null)
++const amounts = ref<Partial<Record<NumberKey, number>>>({})
++const pins = ref('')
++const busy = ref(false)
++const error = ref('')
++const message = ref('')
++const review = ref(false)
++const confirmed = ref(false)
++const loadedForm = ref('')
++const currentForm = computed(() => JSON.stringify({ form: form.value, amounts: amounts.value, pins: pins.value }))
++const dirty = computed(() => currentForm.value !== loadedForm.value)
++const saleCapacity = computed(() => Math.max(0, Number(amounts.value.quota_bytes) - Number(amounts.value.owner_reserved_bytes)))
++const usableQuota = computed(() => status.value?.disk && status.value.runtime
++  ? Math.max(0, status.value.disk.free_bytes + status.value.runtime.used_bytes - status.value.disk.headroom_bytes) : null)
++const tooLarge = computed(() => usableQuota.value !== null && Number(amounts.value.quota_bytes) * GiB > usableQuota.value)
++const liveLabel = computed(() => {
++  if (!status.value?.runtime) return 'Node status unavailable'
++  if (status.value.external_configuration) return 'Managed outside the dashboard'
++  if (!status.value.active) return 'Sales off'
++  if (!status.value.applied) return 'Apply pending — running settings not verified'
++  return status.value.active.settings.sales_enabled ? 'Sales enabled' : status.value.active.checkout_started ? 'New sales paused' : 'Sales off'
++})
++const canReview = computed(() => status.value?.has_draft && status.value.can_apply && status.value.runtime && !dirty.value && !tooLarge.value && !busy.value)
++const size = (bytes: number) => `${(bytes / GiB).toLocaleString(undefined, { maximumFractionDigits: 2 })} GiB`
++
++function show(data: Status) {
++  status.value = data
++  form.value = structuredClone(data.settings)
++  amounts.value = Object.fromEntries(fields.map(f => [f.key, data.settings[f.key] / f.scale]))
++  pins.value = data.settings.moneyer_ips.join('\n')
++  loadedForm.value = currentForm.value
++  review.value = false; confirmed.value = false
++}
++async function load() {
++  busy.value = true; error.value = ''; message.value = ''
++  try { show(await rpcClient.call<Status>({ method: 'wildbloom.storage.get', maxRetries: 1 })) }
++  catch (e) { error.value = e instanceof Error ? e.message : String(e) }
++  finally { busy.value = false }
++}
++function settings(): Settings {
++  if (!form.value) throw new Error('Load your node settings first.')
++  const result = { ...form.value, moneyer_ips: [...form.value.moneyer_ips] }
++  for (const f of fields) {
++    const raw = amounts.value[f.key]
++    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < f.min) throw new Error(`Enter a valid value for ${f.label.toLowerCase()}.`)
++    const value = raw * f.scale
++    if (!Number.isSafeInteger(value)) throw new Error(`${f.label} must resolve to a whole number of bytes, seconds or sats.`)
++    result[f.key] = value
++  }
++  result.moneyer_ips = [...new Set(pins.value.split(/[\s,]+/).filter(Boolean))]
++  return result
++}
++async function save() {
++  busy.value = true; error.value = ''; message.value = ''; review.value = false
++  try {
++    const draft = settings()
++    const response = await rpcClient.call<{ revision: number }>({ method: 'wildbloom.storage.save', params: { revision: status.value!.revision, settings: draft }, maxRetries: 1 })
++    show({ ...status.value!, revision: response.revision, settings: draft, has_draft: true })
++    message.value = 'Draft saved. Your running node has not changed.'
++  } catch (e) { error.value = e instanceof Error ? e.message : String(e) }
++  finally { busy.value = false }
++}
++async function resolve() {
++  busy.value = true; error.value = ''; review.value = false
++  try {
++    const result = await rpcClient.call<{ addresses: string[] }>({ method: 'wildbloom.storage.resolve-moneyer', maxRetries: 1 })
++    pins.value = result.addresses.join('\n')
++    message.value = 'Moneyer addresses resolved. Save the draft to keep them.'
++  } catch (e) { error.value = e instanceof Error ? e.message : String(e) }
++  finally { busy.value = false }
++}
++async function apply() {
++  if (!confirmed.value || !canReview.value) return
++  busy.value = true; error.value = ''; message.value = ''
++  try {
++    const result = await rpcClient.call<{ status: string; message?: string }>({ method: 'wildbloom.storage.apply', params: { revision: status.value!.revision, confirm_restart: true }, timeout: 120000, maxRetries: 1 })
++    show(await rpcClient.call<Status>({ method: 'wildbloom.storage.get', maxRetries: 1 }))
++    message.value = result.status === 'applied' && status.value?.applied
++      ? 'Settings applied. The node is healthy and running this configuration.'
++      : (result.message || 'Settings saved. Reload status to verify the running node.')
++  } catch (e) {
++    error.value = `${e instanceof Error ? e.message : String(e)} Reload status before retrying; an apply may still be completing.`
++    review.value = false; confirmed.value = false
++  } finally { busy.value = false }
++}
++onMounted(load)
++</script>
++
++<template>
++  <div class="mx-auto max-w-4xl space-y-6 pb-8">
++    <RouterLink to="/dashboard/settings" class="text-sm text-white/70 hover:text-white">← Settings</RouterLink>
++    <header class="flex flex-wrap items-start justify-between gap-4">
++      <div><h1 class="text-2xl font-semibold text-white">Storage &amp; selling</h1>
++        <p class="mt-2 text-sm text-white/65">Your Wildbloom node, your capacity and your prices.</p></div>
++      <button class="glass-button px-4 py-2 rounded-lg" :disabled="busy" @click="load">Reload status</button>
++    </header>
++    <p v-if="error" role="alert" class="rounded-lg border border-red-400/40 bg-red-500/10 p-4 text-red-200">{{ error }}</p>
++    <p v-if="message" role="status" class="rounded-lg border border-emerald-400/30 bg-emerald-500/10 p-4 text-emerald-100">{{ message }}</p>
++    <p v-if="!status && busy" role="status">Loading storage settings…</p>
++    <template v-if="status && form">
++      <section class="glass-card p-6 space-y-4" aria-label="Running node">
++        <div class="flex flex-wrap justify-between gap-2"><h2 class="text-lg font-semibold">Your node</h2><strong>{{ liveLabel }}</strong></div>
++        <p v-if="status.origin" class="break-all text-sm text-white/70">{{ status.origin }}</p>
++        <p v-else class="text-amber-200">Configure a public hostname for this Archipelago before applying storage settings.</p>
++        <dl class="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
++          <div><dt class="text-white/60">Current quota</dt><dd class="mt-1 text-lg">{{ status.runtime ? size(status.runtime.quota_bytes) : 'Unavailable' }}</dd></div>
++          <div><dt class="text-white/60">Files stored</dt><dd class="mt-1 text-lg">{{ status.runtime ? size(status.runtime.used_bytes) : 'Unavailable' }}</dd></div>
++          <div><dt class="text-white/60">Disk free</dt><dd class="mt-1 text-lg">{{ status.disk ? size(status.disk.free_bytes) : 'Unavailable' }}</dd></div>
++          <div><dt class="text-white/60">Usable quota now</dt><dd class="mt-1 text-lg">{{ usableQuota !== null ? size(usableQuota) : 'Unavailable' }}</dd></div>
++        </dl>
++        <p class="text-xs text-white/60">Keep at least 5 GiB or 5% of the disk free for Archipelago and other apps. Capacity is checked again when you apply.</p>
++        <p v-if="status.external_configuration" class="text-amber-200 text-sm">This node already has sales configured outside the dashboard. Its receiving state must be migrated before you can apply changes here.</p>
++        <p v-else-if="!status.can_apply || !status.runtime" class="text-amber-200 text-sm">Applying requires a healthy, compatible Wildbloom Node installed through Archipelago. You can still prepare a draft.</p>
++      </section>
++
++      <form class="glass-card p-6 space-y-6" @submit.prevent="save">
++        <fieldset :disabled="busy" class="space-y-6">
++          <legend class="text-lg font-semibold">Storage and offer</legend>
++          <p class="text-sm text-white/65">Start with the suggestions, then set values that suit your node. Existing installations keep their current quota.</p>
++          <div class="grid gap-5 sm:grid-cols-2">
++            <div v-for="field in fields" :key="field.key">
++              <label :for="field.key" class="mb-2 block text-sm font-medium">{{ field.label }}</label>
++              <input :id="field.key" v-model.number="amounts[field.key]" type="number" :min="field.min" :step="field.key === 'price_sats' ? 1 : 'any'" required class="storage-input" :aria-describedby="field.help ? `${field.key}-help` : undefined" @input="review = false" />
++              <p v-if="field.help" :id="`${field.key}-help`" class="mt-2 text-xs text-white/60">{{ field.help }}</p>
++            </div>
++          </div>
++          <p class="rounded-lg bg-white/5 p-3 text-sm">Available for customers: <strong>{{ saleCapacity.toLocaleString() }} GiB</strong> in total, shared across all customer allowances and pending quotes. Stored sizes include encryption overhead.</p>
++          <p v-if="tooLarge" role="alert" class="text-amber-200 text-sm">This quota exceeds usable disk capacity. Reduce it before applying.</p>
++          <p v-if="status.active?.checkout_started" class="text-sm text-white/65">Existing customer promises are preserved. Once selling has begun, this screen cannot reduce total quota or increase your reserved share.</p>
++
++          <div class="border-t border-white/10 pt-6 space-y-4">
++            <h2 class="text-lg font-semibold">Payments and terms</h2>
++            <p class="text-sm text-white/65">Accept LNURLcash issued by moneyer.dev. Payments are received by your node. Review <a href="https://moneyer.dev" target="_blank" rel="noopener noreferrer" class="underline">Moneyer’s terms</a> before enabling sales.</p>
++            <div><label for="seller-name" class="block text-sm mb-2">Seller name</label><input id="seller-name" v-model="form.seller_name" maxlength="128" required class="storage-input" @input="review = false" /></div>
++            <div><label for="refund-policy" class="block text-sm mb-2">Contact and refund terms</label><textarea id="refund-policy" v-model="form.refund_policy" rows="3" maxlength="2048" class="storage-input" placeholder="How customers contact you, and when you offer a refund" @input="review = false" /><p class="mt-2 text-xs text-white/60">Published with your offer. Use a single paragraph.</p></div>
++            <details class="rounded-lg border border-white/15 p-4">
++              <summary class="cursor-pointer text-sm font-medium">Moneyer connection</summary>
++              <p class="my-3 text-xs text-white/60">Only “Resolve Moneyer addresses” makes a DNS lookup. Loading or saving this page never contacts Moneyer. Saved addresses stay pinned until you change them.</p>
++              <label for="moneyer-pins" class="block text-sm mb-2">Public issuer IP addresses</label>
++              <textarea id="moneyer-pins" v-model="pins" rows="3" class="storage-input font-mono" @input="review = false" />
++              <button type="button" class="glass-button mt-3 px-4 py-2 rounded-lg" @click="resolve">Resolve Moneyer addresses</button>
++            </details>
++            <label class="flex items-start gap-3 text-sm"><input v-model="form.moneyer_terms_accepted" type="checkbox" class="mt-1" @change="review = false" /><span>I have reviewed and accept the terms and risks of using Moneyer as my issuer.</span></label>
++          </div>
++
++          <div class="border-t border-white/10 pt-6 space-y-3">
++            <label class="flex items-center gap-3 font-medium"><input v-model="form.sales_enabled" type="checkbox" @change="review = false" />Accept new storage sales</label>
++            <p class="text-sm text-white/65">Off by default. Pausing blocks new quotes; existing customer access and payment recovery continue. Previously issued quotes can still be paid during their 10-minute validity.</p>
++            <div class="flex flex-wrap gap-3 pt-2">
++              <button type="submit" class="glass-button px-5 py-3 rounded-lg">{{ busy ? 'Working…' : 'Save draft' }}</button>
++              <button type="button" class="glass-button px-5 py-3 rounded-lg disabled:opacity-40" :disabled="!canReview" @click="review = true; confirmed = false">Review and apply</button>
++            </div>
++            <p class="text-xs text-white/60">{{ dirty ? 'Unsaved changes. Save your draft before applying.' : 'Saving a draft does not change the running node.' }}</p>
++          </div>
++        </fieldset>
++      </form>
++
++      <section v-if="review && !dirty" class="glass-card border border-amber-300/30 p-6 space-y-4" aria-label="Review changes">
++        <h2 class="text-lg font-semibold">Apply to your node</h2>
++        <p class="text-sm">{{ status.settings.sales_enabled ? 'Enable new sales' : 'Keep new sales off' }} with a {{ size(status.settings.quota_bytes) }} quota and {{ size(status.settings.owner_reserved_bytes) }} reserved for you.</p>
++        <p class="text-sm">Offer {{ size(status.settings.offer_capacity_bytes) }} for {{ status.settings.price_sats }} sats per {{ status.settings.duration_seconds / 86400 }} days, with {{ status.settings.grace_seconds / 86400 }} days for recovery.</p>
++        <p class="text-sm text-white/65">Wildbloom Node restarts briefly. Files, existing customer allowances and receiving state are retained. New quotes use these terms; existing quotes retain their original terms.</p>
++        <label class="flex items-start gap-3 text-sm"><input v-model="confirmed" type="checkbox" :disabled="busy" class="mt-1" />I’m ready to apply these settings and briefly restart Wildbloom Node.</label>
++        <button class="glass-button px-5 py-3 rounded-lg disabled:opacity-40" :disabled="!confirmed || busy" @click="apply">{{ busy ? 'Applying…' : 'Apply to node' }}</button>
++      </section>
++    </template>
++  </div>
++</template>
++
++<style scoped>
++.storage-input { width: 100%; padding: .7rem .9rem; border: 1px solid rgb(255 255 255 / .2); border-radius: .5rem; background: rgb(0 0 0 / .15); color: white; }
++.storage-input:focus { outline: 2px solid rgb(255 255 255 / .65); outline-offset: 2px; }
++input[type=checkbox] { width: 1rem; height: 1rem; accent-color: #fb923c; flex-shrink: 0; }
++button:disabled, fieldset:disabled { cursor: wait; }
++</style>
+diff --git a/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts b/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts
+new file mode 100644
+index 0000000..57339aa
+--- /dev/null
++++ b/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts
+@@ -0,0 +1,100 @@
++import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
++import { beforeEach, describe, expect, it, vi } from 'vitest'
++vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
++import { rpcClient } from '@/api/rpc-client'
++import StorageSelling from '../StorageSelling.vue'
++
++const GiB = 2 ** 30
++const rpc = vi.mocked(rpcClient.call)
++const initial = () => ({
++  revision: 0, active: null as null | Record<string, unknown>, applied: false, has_draft: false,
++  external_configuration: false, can_apply: true, origin: 'https://node.example:3742',
++  runtime: { quota_bytes: 10 * GiB, used_bytes: GiB, committed_bytes: GiB, settings_revision: null, checkout_started: false },
++  disk: { free_bytes: 29 * GiB, total_bytes: 38 * GiB, headroom_bytes: 5 * GiB },
++  settings: { quota_bytes: 10 * GiB, owner_reserved_bytes: 5 * GiB, max_blob_bytes: GiB,
++    offer_capacity_bytes: 5 * GiB, price_sats: 500, duration_seconds: 30 * 86400,
++    grace_seconds: 7 * 86400, delivery_bytes: 100 * GiB, seller_name: 'My node',
++    refund_policy: '', moneyer_ips: [] as string[], moneyer_terms_accepted: false, sales_enabled: false },
++})
++function button(w: VueWrapper, text: string) { return w.findAll('button').find(b => b.text() === text)! }
++async function page() {
++  const w = mount(StorageSelling, { global: { stubs: { RouterLink: true } } })
++  await flushPromises(); return w
++}
++describe('Storage & selling', () => {
++  beforeEach(() => { rpc.mockReset(); rpc.mockResolvedValue(initial()) })
++  it('loads the current quota, with sales off, and makes no issuer call', async () => {
++    const w = await page()
++    expect((w.get('#quota_bytes').element as HTMLInputElement).value).toBe('10')
++    expect(w.text()).toContain('Sales off')
++    expect(button(w, 'Review and apply').attributes('disabled')).toBeDefined()
++    expect(rpc.mock.calls.map(([o]) => o.method)).toEqual(['wildbloom.storage.get'])
++  })
++  it('saves exact operator choices without applying or losing zero values', async () => {
++    const w = await page()
++    await w.get('#price_sats').setValue(123)
++    await w.get('#owner_reserved_bytes').setValue(0)
++    await w.get('#grace_seconds').setValue(0)
++    rpc.mockResolvedValueOnce({ revision: 1 })
++    await w.get('form').trigger('submit'); await flushPromises()
++    expect(rpc).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'wildbloom.storage.save',
++      params: { revision: 0, settings: expect.objectContaining({ price_sats: 123, owner_reserved_bytes: 0, grace_seconds: 0, sales_enabled: false }) } }))
++    expect(w.text()).toContain('Draft saved. Your running node has not changed.')
++    expect(button(w, 'Review and apply').attributes('disabled')).toBeUndefined()
++    expect(rpc.mock.calls.some(([o]) => o.method === 'wildbloom.storage.apply')).toBe(false)
++  })
++  it('requires a saved review and explicit restart confirmation', async () => {
++    const data = initial(); data.has_draft = true; data.revision = 1
++    rpc.mockResolvedValueOnce(data)
++    const w = await page()
++    await button(w, 'Review and apply').trigger('click')
++    const review = w.get('[aria-label="Review changes"]')
++    expect(button(w, 'Apply to node').attributes('disabled')).toBeDefined()
++    await review.get('input[type="checkbox"]').setValue(true)
++    rpc.mockResolvedValueOnce({ status: 'applied' })
++    rpc.mockResolvedValueOnce({ ...data, applied: true, active: { revision: 2, settings: data.settings, checkout_started: false } })
++    await button(w, 'Apply to node').trigger('click'); await flushPromises()
++    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ method: 'wildbloom.storage.apply', maxRetries: 1, params: { revision: 1, confirm_restart: true } }))
++    expect(w.text()).toContain('node is healthy and running this configuration')
++  })
++  it('does not offer an oversized draft for apply', async () => {
++    const data = initial(); data.has_draft = true; data.settings.quota_bytes = 200 * GiB
++    rpc.mockResolvedValueOnce(data)
++    const w = await page()
++    expect(w.text()).toContain('quota exceeds usable disk capacity')
++    expect(button(w, 'Review and apply').attributes('disabled')).toBeDefined()
++  })
++  it('invalidates review when any offer value changes', async () => {
++    rpc.mockResolvedValueOnce({ ...initial(), has_draft: true })
++    const w = await page(); await button(w, 'Review and apply').trigger('click')
++    await w.get('#seller-name').setValue('Another name')
++    expect(w.find('[aria-label="Review changes"]').exists()).toBe(false)
++    expect(button(w, 'Review and apply').attributes('disabled')).toBeDefined()
++  })
++  it('keeps unknown or failed application distinct from success', async () => {
++    const data = { ...initial(), has_draft: true }
++    rpc.mockResolvedValueOnce(data)
++    const w = await page(); await button(w, 'Review and apply').trigger('click')
++    await w.get('[aria-label="Review changes"] input').setValue(true)
++    rpc.mockResolvedValueOnce({ status: 'pending', message: 'Restart failed; retry Apply.' })
++    rpc.mockResolvedValueOnce({ ...data, active: { revision: 2, settings: data.settings, checkout_started: false } })
++    await button(w, 'Apply to node').trigger('click'); await flushPromises()
++    expect(w.text()).toContain('Restart failed')
++    expect(w.text()).toContain('Apply pending')
++    expect(w.text()).not.toContain('node is healthy and running this configuration')
++  })
++  it('does not make a failed load look like zero storage', async () => {
++    rpc.mockRejectedValueOnce(new Error('Node unavailable'))
++    const w = await page()
++    expect(w.get('[role="alert"]').text()).toContain('Node unavailable')
++    expect(w.find('form').exists()).toBe(false)
++  })
++  it('resolves the chosen issuer only on explicit action and requires saving', async () => {
++    const w = await page()
++    rpc.mockResolvedValueOnce({ addresses: ['1.1.1.1'] })
++    await button(w, 'Resolve Moneyer addresses').trigger('click'); await flushPromises()
++    expect(rpc).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'wildbloom.storage.resolve-moneyer' }))
++    expect((w.get('#moneyer-pins').element as HTMLTextAreaElement).value).toBe('1.1.1.1')
++    expect(button(w, 'Review and apply').attributes('disabled')).toBeDefined()
++  })
++})
+-- 
+2.54.0 (Apple Git-157)
+

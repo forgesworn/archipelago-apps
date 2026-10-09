@@ -12,6 +12,9 @@ on:
       - scripts/lib/patches.bash
       - scripts/backend-release-plan.sh
       - .github/workflows/backend.yml
+      - tests/dashboard/**
+      - tests/smoke/seller-capacity.mjs
+      - scripts/test-storage-settings-profile.sh
   workflow_dispatch:
 # One run at a time per ref: two runs must not both find no release and publish.
 concurrency:
@@ -128,6 +131,13 @@ jobs:
           check appgate::identity::tests:: 11
           check auth::tests:: 15
           check public_host 7
+          check wildbloom 11
+      - name: Dashboard profile on packaged node
+        if: steps.plan.outputs.skip != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y python3-yaml
+          npm ci --prefix tests/smoke --ignore-scripts
+          scripts/test-storage-settings-profile.sh .cache/archy ghcr.io/forgesworn/wildbloom-node:0.3.5-2ea211e-2
       - name: Build backend
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy/core

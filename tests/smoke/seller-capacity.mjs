@@ -29,7 +29,8 @@ try {
   writeFileSync(input, JSON.stringify(settings), { mode: 0o600 });
   execFileSync('python3', [join(root, 'scripts/configure-wildbloom-sales.py'), input,
     '--output', output, '--moneyer-ip', '1.1.1.1', '--enable-sales']);
-  const profile = readFileSync(join(output, 'checkout-profile.json'));
+  const profile = readFileSync(process.argv[3] || join(output, 'checkout-profile.json'));
+  const parsedProfile = JSON.parse(profile);
   const manifest = JSON.parse(readFileSync(join(output, 'manifest.yml'))).app;
   docker('volume', 'create', volume);
   execFileSync('docker', ['run', '--rm', '-i', '--network', 'none', '-v', `${volume}:/data`,
@@ -81,7 +82,17 @@ try {
   assert.deepEqual(await (await quote(buyer, 'first')).json(), first, 'Quote and capacity survive restart');
   assert.equal((await quote(stranger, 'second')).status, 503);
   assert.deepEqual(Buffer.from(await (await fetch(base + '/' + sha)).arrayBuffer()), bytes);
-  console.log('Packaged seller acceptance passed: generated Moneyer profile, bounded quotes, owner reserve, unpaid refusal and restart. No issuer payment calls.');
+  // Pausing keeps the profile and ledger present but sets the aggregate
+  // ceiling to zero. Existing immutable quotes still resolve after restart.
+  parsedProfile.max_paid_bytes = 0;
+  execFileSync('docker', ['exec', '-i', cid, 'sh', '-c', 'cat > /data/operator/checkout-profile.json'], { input: JSON.stringify(parsedProfile) });
+  docker('restart', cid);
+  base = `http://127.0.0.1:${docker('port', cid, '3742/tcp').split(':').at(-1)}`;
+  await ready();
+  assert.deepEqual(await (await quote(buyer, 'first')).json(), first, 'Pause preserves existing quotes');
+  assert.equal((await quote(stranger, 'paused-new')).status, 503, 'Pause refuses new quotes');
+  assert.deepEqual(Buffer.from(await (await fetch(base + '/' + sha)).arrayBuffer()), bytes);
+  console.log('Packaged seller acceptance passed: generated Moneyer profile, bounded quotes, owner reserve, unpaid refusal, restart and pause. No issuer payment calls.');
 } catch (error) {
   if (cid) console.error(docker('logs', '--tail', '20', cid));
   throw error;
