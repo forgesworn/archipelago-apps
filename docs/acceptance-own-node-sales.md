@@ -35,6 +35,24 @@ descriptors, verified the active and quoted orders in an isolated copy, then
 installed a checkpointed database while retaining a private recovery copy. The
 post-restart checkout and storage databases both report `integrity_check=ok`.
 
+The repeated-quote fix from [Wildbloom PR #83](https://github.com/forgesworn/wildbloom/pull/83)
+was published and deployed through
+[Archipelago apps PR #17](https://github.com/forgesworn/archipelago-apps/pull/17).
+The [main image run](https://github.com/forgesworn/archipelago-apps/actions/runs/37992126444)
+built and smoke-tested both packages, pushed the new browser tag and left the
+already-published storage tag unchanged. The subsequent
+[published-image customer journey](https://github.com/forgesworn/archipelago-apps/actions/runs/37993127533)
+passed purchase, encrypted upload, restart, full-read audit, capacity refusal,
+renewal and the dashboard's private sales projection using synthetic funds.
+
+On the test node, the dashboard lists browser version `0.0.1-1d2a7c3-2` as
+running. An authenticated launch returned the new browser asset and visibly
+selected `https://demo.forgesworn.dev:3742` as the default Archipelago node. The
+browser-only restart left the storage daemon process unchanged. Afterwards the
+active 5 GiB allowance, all 17 blobs and both database integrity checks remained
+intact, and a fresh download of the paid encrypted blob matched its pre-upgrade
+hash and size. No new quote or payment was created during this deployment check.
+
 The [customer browser acceptance run](https://github.com/forgesworn/wildbloom/actions/runs/37925844453)
 passed against Wildbloom `a7f79cbb237f3db56f6cab2620bd6aae16eeb07e` and
 Wildbloom Node `2ea211e78e0bcd2624d6e4bc17031456c0742cef`, the upstream revisions
@@ -54,6 +72,7 @@ neither application nor daemon was rebuilt for this acceptance run.
 | Published image | Accepted registry digest |
 | --- | --- |
 | `wildbloom:0.0.1-a7f79cb-2` | `sha256:7880b875100ebc216072c57886e4f7cb4b39c0aee9212deeabc9ff4049c677e6` |
+| `wildbloom:0.0.1-1d2a7c3-2` | `sha256:1839e74142310a5f7c531aab486d8b6ebe3c4ffa4a12b6cb74c31ad752890194` |
 | `wildbloom-node:0.3.5-2ea211e-2` | `sha256:ff5ac6d45b471cfa809b07bcfe75fd2ae5cd9523f2f41c00d2fba4acb8750b95` |
 
 The packaged browser selected its own node on first load and after reload.
