@@ -63,6 +63,18 @@ install -d -o archipelago -g archipelago /var/lib/archipelago \
 mkdir -p /etc/archipelago/ssl /opt/archipelago/bin /opt/archipelago/scripts /opt/archipelago/web-ui \
   /var/log/archipelago /etc/containers /var/lib/containers
 
+# Database passwords the ISO's first boot (first-boot-containers.sh) creates
+# up front so they stay stable. Manifests that name one in secret_env fail
+# every reconcile pass while it is missing, installed or not (btcpay-server,
+# archy-btcpay-db and archy-nbxplorer, each pass). Never overwrite one.
+install -d -o archipelago -g archipelago -m 700 /var/lib/archipelago/secrets
+for svc in mempool btcpay mysql-root; do
+  f=/var/lib/archipelago/secrets/${svc}-db-password
+  [ -f "$f" ] || (umask 077 && openssl rand -hex 16 > "$f")
+  chown archipelago:archipelago "$f"
+  chmod 600 "$f"
+done
+
 # Backend (patched, verified).
 (cd "$bundle" && sha256sum -c archipelago.sha256)
 install -m 0755 "$bundle/archipelago" /usr/local/bin/archipelago
