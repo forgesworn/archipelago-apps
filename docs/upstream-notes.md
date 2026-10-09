@@ -331,3 +331,14 @@ running container keeps the environment it started with until the app is
 restarted (`package.restart`, the dashboard's Restart button). Restarting
 affected apps when the rendered value changes, or noting it in the identity
 screens, would save users a step.
+
+## Installed apps all report author "Archipelago" (archy `7abd04a`, v1.9.0-alpha)
+
+`DockerPackageScanner` builds each installed app's manifest with
+`author: Some("Archipelago")` and `license: "MIT"` written in, whatever the
+app's `manifest.yml` declares under `metadata`. The app details sidebar
+(`AppSidebar.vue`) shows that author, so Wildbloom, whose manifest says
+`author: ForgeSworn`, is credited to the node OS. The scanner already reads
+the manifest's `metadata` block for the icon (`real_manifest_metadata`).
+Patch `0016` reads `author` and `license` from it too, keeping the old values
+as fallbacks.
