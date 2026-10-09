@@ -65,7 +65,7 @@ rootless Podman layout, without the cost of a full install.
    S=<scratch-dir>/bundle
    . ./PINS
    rm -rf "$S" && mkdir -p "$S"
-   cp PINS node/install-lite.sh "$S/"
+   cp PINS node/install-lite.sh scripts/recover-wildbloom-payment.py "$S/"
    gh release download "backend-${ARCHY_RELEASE}-p${BACKEND_PATCH_LEVEL}" -D "$S"
    # The patched frontend (frontend.tar.gz, frontend.sha256, inputs.sha256):
    gh release download "frontend-${ARCHY_RELEASE}-p${FRONTEND_PATCH_LEVEL}" -D "$S"

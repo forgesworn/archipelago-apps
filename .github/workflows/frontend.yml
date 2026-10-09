@@ -50,7 +50,7 @@ jobs:
       - name: Storage settings UI tests
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy-frontend/neode-ui
-        run: npm test -- --run src/views/settings/__tests__/StorageSelling.test.ts src/views/settings/__tests__/StorageSales.test.ts src/views/__tests__/settings.test.ts src/router/__tests__/routes.test.ts
+        run: npm test -- --run src/views/settings/__tests__/StorageSelling.test.ts src/views/settings/__tests__/StorageSales.test.ts src/views/settings/__tests__/StorageRefund.test.ts src/views/__tests__/settings.test.ts src/router/__tests__/routes.test.ts
       - name: Storage settings browser acceptance
         if: steps.plan.outputs.skip != 'true'
         run: |

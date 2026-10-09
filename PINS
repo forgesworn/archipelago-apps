@@ -12,8 +12,8 @@ WILDBLOOM_NODE_REF=2ea211e78e0bcd2624d6e4bc17031456c0742cef
 WILDBLOOM_PKG_REV=2
 WILDBLOOM_NODE_PKG_REV=2
 # Bumped whenever upstream/patches changes; names the backend release asset.
-BACKEND_PATCH_LEVEL=4
+BACKEND_PATCH_LEVEL=5
 # Frontend build: bumped whenever upstream/patches or the build recipe changes;
 # names the frontend release asset. Node major matches archy's own CI (ci.yml NODE_VERSION).
-FRONTEND_PATCH_LEVEL=4
+FRONTEND_PATCH_LEVEL=5
 FRONTEND_NODE_MAJOR=20

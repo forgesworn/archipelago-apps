@@ -365,6 +365,24 @@ try {
   await action(page, "#checkout-check");
   await wait(page, "awaiting_payment");
   await fetch(mintOrigin + "/fixture/pay", { method: "POST" });
+  // Exercise the packaged local recovery binary against the original invoice.
+  // The wrapper's process/backup failures are tested separately in Python.
+  await stopNode(node);
+  const runtimeProfile = JSON.parse(readFileSync(profile, "utf8"));
+  const recoveryProfile = join(root, "recovery.json");
+  writeFileSync(recoveryProfile, JSON.stringify({ checkout: runtimeProfile.checkout,
+    phoenixd: runtimeProfile.phoenixd, notes: runtimeProfile.notes,
+    storage_root: join(root, "node"), quota_bytes: 2097152, max_blob_bytes: 1073741824 }), { mode: 0o600 });
+  const pendingInventory = JSON.parse(execFileSync(process.env.WILDBLOOM_SALES_READER, [join(root, "node")], { encoding: "utf8" }));
+  const pendingOrder = pendingInventory.orders.find(o => o.state === "awaiting_payment");
+  assert.ok(pendingOrder);
+  const reconcile = () => docker("run", "--rm", "--network", "host", "--user", `${process.getuid()}:${process.getgid()}`,
+    "-v", `${root}:${root}`, "--entrypoint", "/usr/local/bin/checkout-operator", build.node.digest,
+    "--state", join(root, "node", "operator", "checkout"), "reconcile", pendingOrder.order_id, "--profile", recoveryProfile);
+  assert.equal(JSON.parse(reconcile()), "active");
+  assert.equal(JSON.parse(reconcile()), "active", "Repeated local recovery must return the original activation");
+  node = startNode();
+  await ready(node, nodeOrigin);
   await action(page, "#checkout-check");
   await wait(page, "active");
   const stranger = new Uint8Array(32).fill(43);
@@ -496,6 +514,18 @@ try {
     for (const forbidden of ["invoice", "rotation", "payment_hash", "settlement", "note_id"]) assert.equal(forbidden in order, false);
   }
   assert.equal((await (await fetch(mintOrigin)).json()).note_rotations, 1, "Dashboard read must not contact the receiver");
+  // Record an explicitly synthetic completed refund; never send any money.
+  const refunded = JSON.parse(execFileSync(process.env.WILDBLOOM_SALES_READER,
+    [join(root, "node"), "--record-refund", activated[0].order_id, String(activated[0].price_msat), "cd".repeat(32)], { encoding: "utf8" }));
+  const savedRefund = refunded.orders.find(o => o.order_id === activated[0].order_id);
+  assert.equal(savedRefund.refund.amount_msat, activated[0].price_msat);
+  assert.equal(savedRefund.refund.payment_hash, "cd".repeat(32));
+  assert.deepEqual(savedRefund.allowance, activated[0].allowance);
+  assert.equal(savedRefund.state, "active");
+  assert.equal((await (await fetch(mintOrigin)).json()).note_rotations, 1, "Refund record must not contact receiver");
+  const retried = JSON.parse(execFileSync(process.env.WILDBLOOM_SALES_READER,
+    [join(root, "node"), "--record-refund", activated[0].order_id, String(activated[0].price_msat), "cd".repeat(32)], { encoding: "utf8" }));
+  assert.deepEqual(retried.orders.find(o => o.order_id === activated[0].order_id).refund, savedRefund.refund);
   assert.equal(publications.length, 1, "No payment or proof events published");
   await assertNoBrowserPersistence(page, context, "Node services");
   const axe = await new AxeBuilder({ page })
@@ -511,6 +541,7 @@ try {
         build,
         checks: [
           "dashboard read-only sales projection of the live packaged ledger and renewed allowance",
+          "idempotent private operator refund record on packaged orders without receiving I/O or allowance changes",
           "published images resolved and run by digest",
           "packaged own-node default before checkout and after reload",
           "paid-capacity ceiling before/after restart and renewal without double counting",
@@ -520,6 +551,7 @@ try {
           "Lightning quote-invoice-check-activation",
           "one invoice across checks",
           "daemon restart and private order recovery",
+          "packaged operator reconciles the original invoice and repeated reconciliation preserves activation",
           "paid encrypted upload and full-read retrieval after restart",
           "fresh full-read proof",
           "corruption refusal",

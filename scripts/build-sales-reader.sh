@@ -5,7 +5,9 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 archy=$(cd "${1:?Pass patched Archy checkout}" && pwd)
 fixture="$root/.cache/sales-reader"
 mkdir -p "$fixture/src"
-cp "$archy/core/archipelago/src/settings/wildbloom_sales.rs" "$fixture/src/sales.rs"
+for module in wildbloom_sales wildbloom_storage wildbloom_refunds; do
+  cp "$archy/core/archipelago/src/settings/$module.rs" "$fixture/src/$module.rs"
+done
 cat > "$fixture/Cargo.toml" <<'TOML'
 [package]
 name = "sales-reader"
@@ -17,15 +19,22 @@ anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["sync"] }
 TOML
-# Keep the source module's numeric boundary, without importing unrelated settings.
-grep '^pub const MAX:' "$archy/core/archipelago/src/settings/wildbloom_storage.rs" > "$fixture/src/wildbloom_storage.rs"
 cat > "$fixture/src/main.rs" <<'RS'
 mod wildbloom_storage;
-mod sales;
+mod wildbloom_sales;
+mod wildbloom_refunds;
 fn main() -> anyhow::Result<()> {
-    let root = std::env::args().nth(1).expect("synthetic node directory");
-    println!("{}", sales::read(std::path::Path::new(&root), true, &sales::PageRequest::default())?);
+    let args: Vec<_> = std::env::args().collect();
+    let root = args.get(1).expect("synthetic node directory");
+    if args.get(2).is_some_and(|v| v == "--record-refund") {
+        let request = wildbloom_refunds::Request { order_id: args[3].clone(), amount_msat: args[4].parse()?,
+            payment_hash: args[5].clone(), confirm_received: true };
+        wildbloom_refunds::record(std::path::Path::new(&root), request)?;
+    }
+    println!("{}", wildbloom_sales::read(std::path::Path::new(&root), true, &wildbloom_sales::PageRequest::default())?);
     Ok(())
 }
 RS

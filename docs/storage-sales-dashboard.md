@@ -21,7 +21,7 @@ dashboard; no customer data is published to Nostr or sent to the issuer.
 **Needs attention** includes incomplete reservations, uncertain invoice/note
 outcomes, payments awaiting activation and refund-required records. It is a
 review queue, not a claim that those payments failed. Refreshing this page never
-retries or checks a payment with the issuer. Refunds and payment recovery remain
+retries or checks a payment with the issuer. The original read-only release left refunds and payment recovery
 separate operator operations; this release adds no spending controls. An
 out-of-band manual refund is not automatically recorded in checkout history.
 
@@ -68,3 +68,5 @@ it is never displayed as zero customers. Failed refreshes clear stale figures.
   activated orders, one current allowance, matching renewed dates, no secret
   fields and no additional receiving mutation. This is synthetic acceptance,
   not a real-money refund or issuer-recovery test.
+
+The subsequent [refund and recovery workflow](storage-payment-recovery.md) adds private operator refund records and an explicit local recovery tool. The original checkout state remains visible.

@@ -15,6 +15,7 @@ set -euo pipefail
 bundle=${1:?usage: install-lite.sh <bundle-dir>}
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 . "$bundle/PINS"
+test -f "$bundle/recover-wildbloom-payment.py" || { echo "bundle is missing the payment recovery tool" >&2; exit 1; }
 archy=$bundle/archy
 # From /, because the service user cannot enter root's cwd and podman exits on
 # that; with the user's own bus, not one inherited from root's login session.
@@ -78,6 +79,7 @@ done
 # Backend (patched, verified).
 (cd "$bundle" && sha256sum -c archipelago.sha256)
 install -m 0755 "$bundle/archipelago" /usr/local/bin/archipelago
+install -m 0755 "$bundle/recover-wildbloom-payment.py" /usr/local/bin/recover-wildbloom-payment
 
 # Frontend, verified, then unpacked (a single top-level directory is flattened).
 # Our frontend release ships frontend.sha256; without it the bundle must be

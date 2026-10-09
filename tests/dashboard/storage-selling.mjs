@@ -34,6 +34,14 @@ await page.route('**/rpc/v1', async route => {
     if (salesUnavailable) return route.fulfill({ json: { error: { code: -32000, message: 'Unavailable' } } });
     result = request.params.state === 'attention' ? { ...sales, orders: [sales.orders[2]] } : sales;
   }
+  else if (request.method === 'wildbloom.storage.record-refund') {
+    assert.equal(request.params.confirm_received, true);
+    const order = sales.orders.find(o => o.order_id === request.params.order_id);
+    assert.equal(order.price_msat, request.params.amount_msat);
+    assert.equal(request.params.payment_hash, 'cd'.repeat(32));
+    order.refund = { amount_msat: order.price_msat, payment_hash: request.params.payment_hash, recorded_at: now };
+    result = { status: 'recorded' };
+  }
   else if (request.method === 'wildbloom.storage.save') {
     assert.equal(request.params.revision, state.revision);
     state = { ...state, revision: state.revision+1, settings: request.params.settings, has_draft: true };
@@ -78,10 +86,22 @@ try {
   await page.locator('details summary').first().click();
   await page.screenshot({ path: '.cache/storage-sales-mobile.png', fullPage: true });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Sales references fit mobile');
+  await page.getByRole('button', { name: 'Record completed refund', exact: true }).first().click();
+  await page.getByLabel('Refund payment hash', { exact: true }).fill('cd'.repeat(32));
+  assert.equal(await page.getByRole('button', { name: 'Save refund record', exact: true }).isDisabled(), true);
+  await page.getByLabel('I have confirmed that the customer received', { exact: false }).check();
+  await page.screenshot({ path: '.cache/storage-refund-mobile.png', fullPage: true });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'Refund form fits mobile');
+  await page.getByRole('button', { name: 'Save refund record', exact: true }).click();
+  await page.getByRole('heading', { name: 'Full refund recorded by operator', exact: true }).waitFor();
+  assert.equal(await page.getByText('Writes allowed', { exact: false }).count(), 2, 'Refund record preserves allowances');
   await page.getByLabel('Payment status', { exact: true }).selectOption('attention');
   await page.getByText('A pending payment may already have been received.', { exact: false }).waitFor();
   assert.equal(await page.getByText('Payment outcome pending', { exact: true }).count(), 1);
   assert.equal(await page.locator('section strong').filter({ hasText: /^Paid · allowance issued$/ }).count(), 0);
+  await page.getByText('Recover this payment', { exact: true }).click();
+  await page.locator('pre').filter({ hasText: 'recover-wildbloom-payment reconcile pending-' }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Record completed refund', exact: true }).count(), 0);
   salesUnavailable = true;
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: 'Sales records are unavailable' }).waitFor();
