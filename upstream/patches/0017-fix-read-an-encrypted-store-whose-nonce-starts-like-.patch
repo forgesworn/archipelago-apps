@@ -1,0 +1,233 @@
+From fda9a8ad6aa1f9795252acf29cc0765e07fbdef3 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 11:49:47 +0100
+Subject: [PATCH] fix: read an encrypted store whose nonce starts like JSON
+
+A sealed store file starts with its random nonce, which is { or [ in 2 of
+every 256 saves. The message store and mesh contacts checked that first
+byte alone, read such a file as plaintext, failed to parse it and loaded
+an empty store, which the next save wrote over the file.
+
+storage_crypto::open_stored tries the key first and accepts plaintext only
+if it also parses as JSON. The on-disk format is unchanged.
+---
+ core/archipelago/src/mesh/mod.rs       | 28 +++-----
+ core/archipelago/src/node_message.rs   | 26 +++----
+ core/archipelago/src/storage_crypto.rs | 97 +++++++++++++++++++++++---
+ 3 files changed, 110 insertions(+), 41 deletions(-)
+
+diff --git a/core/archipelago/src/mesh/mod.rs b/core/archipelago/src/mesh/mod.rs
+index a0a5753..2e487e1 100644
+--- a/core/archipelago/src/mesh/mod.rs
++++ b/core/archipelago/src/mesh/mod.rs
+@@ -578,23 +578,17 @@ pub async fn load_mesh_contacts(
+     let Ok(raw) = fs::read(&path).await else {
+         return std::collections::HashMap::new();
+     };
+-    let bytes = if crate::storage_crypto::is_plaintext_json(&raw) {
+-        raw
+-    } else {
+-        match crate::storage_crypto::derive_key(
+-            data_dir,
+-            crate::storage_crypto::DOMAIN_MESH_CONTACTS,
+-        )
+-        .await
+-        {
+-            Ok(k) => match crate::storage_crypto::open(&raw, &k) {
+-                Ok(p) => p,
+-                Err(e) => {
+-                    warn!("mesh contacts: decrypt failed ({e}); keeping in-memory state");
+-                    return std::collections::HashMap::new();
+-                }
+-            },
+-            Err(_) => return std::collections::HashMap::new(),
++    let key =
++        crate::storage_crypto::derive_key(data_dir, crate::storage_crypto::DOMAIN_MESH_CONTACTS)
++            .await
++            .ok();
++    let bytes = match crate::storage_crypto::open_stored(raw, key.as_ref()) {
++        Ok(
++            crate::storage_crypto::Stored::Sealed(p) | crate::storage_crypto::Stored::Plaintext(p),
++        ) => p,
++        Err(e) => {
++            warn!("mesh contacts: decrypt failed ({e}); keeping in-memory state");
++            return std::collections::HashMap::new();
+         }
+     };
+     serde_json::from_slice(&bytes).unwrap_or_default()
+diff --git a/core/archipelago/src/node_message.rs b/core/archipelago/src/node_message.rs
+index 8806de8..6f8aa2c 100644
+--- a/core/archipelago/src/node_message.rs
++++ b/core/archipelago/src/node_message.rs
+@@ -74,22 +74,16 @@ pub async fn init(data_dir: &Path) {
+     };
+     // Decrypt the on-disk blob, transparently migrating a legacy plaintext file.
+     let mut was_plaintext = false;
+-    let bytes = if crate::storage_crypto::is_plaintext_json(&raw) {
+-        was_plaintext = true;
+-        Some(raw)
+-    } else {
+-        let key = *enc_key().lock().unwrap_or_else(|e| e.into_inner());
+-        match key {
+-            Some(k) => match crate::storage_crypto::open(&raw, &k) {
+-                Ok(p) => Some(p),
+-                Err(e) => {
+-                    tracing::error!(
+-                        "message store: decrypt failed ({e}); NOT overwriting on-disk data"
+-                    );
+-                    None
+-                }
+-            },
+-            None => None,
++    let key = *enc_key().lock().unwrap_or_else(|e| e.into_inner());
++    let bytes = match crate::storage_crypto::open_stored(raw, key.as_ref()) {
++        Ok(crate::storage_crypto::Stored::Sealed(p)) => Some(p),
++        Ok(crate::storage_crypto::Stored::Plaintext(p)) => {
++            was_plaintext = true;
++            Some(p)
++        }
++        Err(e) => {
++            tracing::error!("message store: decrypt failed ({e}); NOT overwriting on-disk data");
++            None
+         }
+     };
+     if let Some(bytes) = bytes {
+diff --git a/core/archipelago/src/storage_crypto.rs b/core/archipelago/src/storage_crypto.rs
+index 0cef097..80bc6f2 100644
+--- a/core/archipelago/src/storage_crypto.rs
++++ b/core/archipelago/src/storage_crypto.rs
+@@ -9,7 +9,9 @@
+ //!   write (`nonce ‖ ciphertext` on disk). The Poly1305 tag makes it
+ //!   tamper-evident — any on-disk modification fails to open.
+ //! - **Migration**: legacy plaintext JSON is detected and read transparently,
+-//!   then re-written encrypted on the next save. No data is stranded.
++//!   then re-written encrypted on the next save. No data is stranded. Read
++//!   stores through [`open_stored`], which tries the key before sniffing for
++//!   plaintext: a random nonce starts with `{` or `[` in 2 of every 256 seals.
+ 
+ use anyhow::{Context, Result};
+ use std::path::Path;
+@@ -44,6 +46,13 @@ pub fn seal(plaintext: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
+     let mut nonce_bytes = [0u8; 12];
+     crate::entropy::draw_key_bytes(&mut rand::rngs::OsRng, &mut nonce_bytes)
+         .map_err(|e| anyhow::anyhow!("refusing to seal with degenerate nonce entropy: {e}"))?;
++    seal_with_nonce(plaintext, key, nonce_bytes)
++}
++
++/// The envelope `seal` writes, under a given nonce. Never reuse a nonce: only
++/// `seal` (fresh `OsRng` nonce) and tests call this.
++fn seal_with_nonce(plaintext: &[u8], key: &[u8; 32], nonce_bytes: [u8; 12]) -> Result<Vec<u8>> {
++    use chacha20poly1305::aead::{Aead, KeyInit};
+     let cipher = chacha20poly1305::ChaCha20Poly1305::new_from_slice(key)
+         .map_err(|e| anyhow::anyhow!("cipher init: {e}"))?;
+     let ct = cipher
+@@ -75,10 +84,38 @@ pub fn open(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
+         .map_err(|_| anyhow::anyhow!("decryption failed — key mismatch or corruption"))
+ }
+ 
+-/// Heuristic: does this look like legacy plaintext JSON (starts with `{`/`[`)?
+-/// Encrypted blobs start with a random nonce byte, so a `{`/`[` first byte is a
+-/// reliable migration signal.
+-pub fn is_plaintext_json(raw: &[u8]) -> bool {
++/// A store file's contents, and whether it was sealed or legacy plaintext.
++#[derive(Debug, PartialEq)]
++pub enum Stored {
++    Sealed(Vec<u8>),
++    Plaintext(Vec<u8>),
++}
++
++/// Read a store file: `nonce ‖ ciphertext` under `key`, or legacy plaintext JSON.
++///
++/// The key goes first. A sealed blob's first byte is its random nonce, which is
++/// `{` or `[` in 2 of every 256 seals, so a first-byte check alone would read
++/// those as plaintext, fail to parse them and leave the store empty, to be
++/// overwritten on the next save. Plaintext must also parse as JSON, so a blob
++/// that does not open under this key is an error, never "plaintext".
++pub fn open_stored(raw: Vec<u8>, key: Option<&[u8; 32]>) -> Result<Stored> {
++    if let Some(key) = key {
++        if let Ok(plaintext) = open(&raw, key) {
++            return Ok(Stored::Sealed(plaintext));
++        }
++    }
++    if is_plaintext_json(&raw) && serde_json::from_slice::<serde_json::Value>(&raw).is_ok() {
++        return Ok(Stored::Plaintext(raw));
++    }
++    match key {
++        Some(_) => anyhow::bail!("decryption failed — key mismatch or corruption"),
++        None => anyhow::bail!("not plaintext JSON, and no key to decrypt it"),
++    }
++}
++
++/// Does this start like legacy plaintext JSON (`{`/`[`)? Not proof on its own:
++/// see [`open_stored`].
++fn is_plaintext_json(raw: &[u8]) -> bool {
+     matches!(raw.first(), Some(b'{') | Some(b'['))
+ }
+ 
+@@ -91,8 +128,8 @@ mod tests {
+         let key = [7u8; 32];
+         let msg = br#"{"messages":[{"m":"hi"}]}"#;
+         let sealed = seal(msg, &key).unwrap();
+-        // Encrypted output must NOT be readable plaintext.
+-        assert!(!is_plaintext_json(&sealed));
++        // Encrypted output must NOT be readable plaintext. (Its first byte is
++        // random nonce, so it can be `{`: see the open_stored tests.)
+         assert_ne!(&sealed[12..], &msg[..]);
+         assert_eq!(open(&sealed, &key).unwrap(), msg);
+     }
+@@ -110,7 +147,51 @@ mod tests {
+     fn detects_plaintext_vs_ciphertext() {
+         assert!(is_plaintext_json(b"{\"a\":1}"));
+         assert!(is_plaintext_json(b"[]"));
+-        assert!(!is_plaintext_json(&seal(b"x", &[3u8; 32]).unwrap()));
++        assert!(!is_plaintext_json(
++            &seal_with_nonce(b"x", &[3u8; 32], [0x07; 12]).unwrap()
++        ));
++    }
++
++    /// A random nonce starts with `{` or `[` in 2 of every 256 seals. Those
++    /// blobs must open as sealed, not be misread as plaintext and lost.
++    #[test]
++    fn open_stored_opens_a_sealed_blob_that_starts_like_json() {
++        let key = [5u8; 32];
++        let msg = br#"{"messages":[]}"#;
++        for first in [b'{', b'['] {
++            let mut nonce = [0x07u8; 12];
++            nonce[0] = first;
++            let sealed = seal_with_nonce(msg, &key, nonce).unwrap();
++            assert!(is_plaintext_json(&sealed));
++            assert_eq!(
++                open_stored(sealed, Some(&key)).unwrap(),
++                Stored::Sealed(msg.to_vec())
++            );
++        }
++    }
++
++    #[test]
++    fn open_stored_reads_legacy_plaintext_with_or_without_a_key() {
++        let legacy = br#"{"messages":[{"m":"hi"}]}"#.to_vec();
++        assert_eq!(
++            open_stored(legacy.clone(), Some(&[5u8; 32])).unwrap(),
++            Stored::Plaintext(legacy.clone())
++        );
++        assert_eq!(
++            open_stored(legacy.clone(), None).unwrap(),
++            Stored::Plaintext(legacy)
++        );
++    }
++
++    /// A JSON-looking blob that does not open is an error, so callers keep the
++    /// file instead of loading an empty store over it.
++    #[test]
++    fn open_stored_refuses_a_json_looking_blob_it_cannot_open() {
++        let mut nonce = [0x07u8; 12];
++        nonce[0] = b'{';
++        let sealed = seal_with_nonce(b"{}", &[5u8; 32], nonce).unwrap();
++        assert!(open_stored(sealed.clone(), Some(&[6u8; 32])).is_err());
++        assert!(open_stored(sealed, None).is_err());
+     }
+ 
+     /// KEY-05 regression: a blob written by the pre-migration `seal` must still
+-- 
+2.53.0
+
