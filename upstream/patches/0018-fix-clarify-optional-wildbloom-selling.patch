@@ -1,0 +1,31 @@
+From e2770478f00c4b9831866155d381ac4cb1135829 Mon Sep 17 00:00:00 2001
+From: archipelago-apps <ci@invalid>
+Date: Fri, 9 Oct 2026 12:25:33 +0100
+Subject: [PATCH] fix: clarify that Wildbloom selling setup is optional
+
+---
+ neode-ui/src/views/settings/StorageSelling.vue | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/neode-ui/src/views/settings/StorageSelling.vue b/neode-ui/src/views/settings/StorageSelling.vue
+index d0d1762..901c8f5 100644
+--- a/neode-ui/src/views/settings/StorageSelling.vue
++++ b/neode-ui/src/views/settings/StorageSelling.vue
+@@ -163,10 +163,11 @@ onMounted(load)
+           <p v-if="status.active?.checkout_started" class="text-sm text-white/65">Existing customer promises are preserved. Once selling has begun, this screen cannot reduce total quota or increase your reserved share.</p>
+ 
+           <div class="border-t border-white/10 pt-6 space-y-4">
+-            <h2 class="text-lg font-semibold">Payments and terms</h2>
+-            <p class="text-sm text-white/65">Accept LNURLcash issued by moneyer.dev. Payments are received by your node. Review <a href="https://moneyer.dev" target="_blank" rel="noopener noreferrer" class="underline">Moneyer’s terms</a> before enabling sales.</p>
++            <h2 class="text-lg font-semibold">Optional selling</h2>
++            <p class="text-sm text-white/65">You can use your node for your own files without selling storage. Personal storage needs no customer contact or refund terms. If you choose to sell, set your own seller name, customer contact and refund terms.</p>
++            <p class="text-sm text-white/65">Accept LNURLcash issued by moneyer.dev. Payments are received by your node. Review <a href="https://moneyer.dev/terms" target="_blank" rel="noopener noreferrer" class="underline">Moneyer’s terms</a> before enabling sales.</p>
+             <div><label for="seller-name" class="block text-sm mb-2">Seller name</label><input id="seller-name" v-model="form.seller_name" maxlength="128" required class="storage-input" @input="review = false" /></div>
+-            <div><label for="refund-policy" class="block text-sm mb-2">Contact and refund terms</label><textarea id="refund-policy" v-model="form.refund_policy" rows="3" maxlength="2048" class="storage-input" placeholder="How customers contact you, and when you offer a refund" @input="review = false" /><p class="mt-2 text-xs text-white/60">Published with your offer. Use a single paragraph.</p></div>
++            <div><label for="refund-policy" class="block text-sm mb-2">Contact and refund terms</label><textarea id="refund-policy" v-model="form.refund_policy" rows="3" maxlength="2048" class="storage-input" placeholder="When selling: how customers contact you, and when you offer a refund" @input="review = false" /><p class="mt-2 text-xs text-white/60">Needed before enabling sales and published with your offer. A support address, Nostr public key or support page can be used; personal contact details are not required. Use a single paragraph.</p></div>
+             <div><label for="customer-apps" class="block text-sm mb-2">Other customer app origins</label><textarea id="customer-apps" v-model="customerApps" rows="2" class="storage-input" placeholder="https://customer-app.example" @input="review = false" /><p class="mt-2 text-xs text-white/60">Your packaged Wildbloom app is already allowed. To accept customers using another web app, add its exact HTTPS origin, one per line, without a path. Only add apps you choose to support.</p></div>
+             <details class="rounded-lg border border-white/15 p-4">
+               <summary class="cursor-pointer text-sm font-medium">Moneyer connection</summary>
+-- 
+2.54.0 (Apple Git-157)
+

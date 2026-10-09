@@ -15,5 +15,5 @@ WILDBLOOM_NODE_PKG_REV=2
 BACKEND_PATCH_LEVEL=3
 # Frontend build: bumped whenever upstream/patches or the build recipe changes;
 # names the frontend release asset. Node major matches archy's own CI (ci.yml NODE_VERSION).
-FRONTEND_PATCH_LEVEL=2
+FRONTEND_PATCH_LEVEL=3
 FRONTEND_NODE_MAJOR=20
