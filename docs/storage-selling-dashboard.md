@@ -47,7 +47,7 @@ After checkout is activated this screen refuses quota reductions, increases to
 the owner reserve, or a public-hostname change. These require an operator-led
 migration that accounts for outstanding customer promises and payment recovery.
 Changing prices or durations creates a new offer revision. A manually provisioned
-external checkout profile is detected and cannot be silently replaced by this UI.
+external checkout profile or inactive receiving ledger is detected and cannot be silently replaced by this UI.
 
 Private draft/active settings live under the backend data directory at
 `settings/wildbloom-storage/settings.json` (directory 0700, file 0600).
@@ -70,7 +70,7 @@ picked up by the normal app reconciliation/restart path.
 
 Local checks on 9 October 2026:
 
-- Eleven native Rust tests: defaults and zero values, disk headroom and existing
+- Twelve native Rust tests: defaults and zero values, disk headroom and existing
   promises, receiver validation, private persistence, immutable profiles,
   pause semantics, stale revisions, admin/CSRF requirements, and actual
   orchestrator environment resolution (drafts inert, owner authorisation kept).
