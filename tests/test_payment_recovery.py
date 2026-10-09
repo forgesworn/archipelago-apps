@@ -41,6 +41,8 @@ class RecoveryTests(unittest.TestCase):
         self.db.chmod(0o600)
     def execute(self, args, **kwargs):
         self.calls.append(args)
+        if args[0] == 'curl':
+            return '{"status":"ok"}'
         if args[:2] == ['podman','inspect']:
             return json.dumps([{'State':{'Running':True},'ImageName':r.IMAGE,'Image':'ab'*32,
                 'Mounts':[{'Destination':'/data','Source':str(self.root),'RW':True}],

@@ -252,6 +252,18 @@ def recover(root, settings, action, order, execute=run, make_backup=backup):
                     execute(['systemctl', '--user', 'unmask', '--runtime', SERVICE])
                     execute(['systemctl', '--user', 'start', SERVICE], timeout=120)
                     execute(['systemctl', '--user', 'is-active', '--quiet', SERVICE])
+                    healthy = False
+                    for attempt in range(10):
+                        try:
+                            health = json.loads(execute(['curl', '--fail', '--silent', '--max-time', '3',
+                                'http://127.0.0.1:3742/healthz'], timeout=5))
+                            if health.get('status') == 'ok':
+                                healthy = True
+                                break
+                        except Exception:
+                            pass
+                        time.sleep(1)
+                    require(healthy, 'Storage health could not be verified after restart.')
                     value['node_restarted'] = True
                 except BaseException:
                     value['node_restarted'] = False
@@ -269,7 +281,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['reconcile', 'recover-invoice'])
     parser.add_argument('order')
-    parser.add_argument('--confirm-restart', action='store_true', help='Allow a brief storage outage and full offline backup')
+    parser.add_argument('--confirm-restart', action='store_true', help='Allow a storage outage while a full offline backup is verified')
     args = parser.parse_args()
     require(args.confirm_restart, 'Recovery requires --confirm-restart for the offline backup and node restart.')
     require(sys.platform == 'linux' and os.geteuid() != 0, 'Run as the archipelago service user on the node.')
