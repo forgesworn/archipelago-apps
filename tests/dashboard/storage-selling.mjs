@@ -13,9 +13,13 @@ const failures = [];
 page.on('pageerror', e => failures.push(e.message));
 const settings = { quota_bytes: 10*GiB, owner_reserved_bytes: 5*GiB, max_blob_bytes: GiB,
   offer_capacity_bytes: 5*GiB, price_sats: 500, duration_seconds: 30*86400, grace_seconds: 7*86400,
-  delivery_bytes: 100*GiB, seller_name: 'My Archipelago node', refund_policy: '', moneyer_ips: [],
+  delivery_bytes: 100*GiB, seller_name: 'My Archipelago node', refund_policy: '', issuer_id: 'lnurlcash-reference', moneyer_ips: [],
   additional_browser_origins: [], moneyer_terms_accepted: false, sales_enabled: false };
 let state = { revision: 0, settings, active: null, applied: false, has_draft: false,
+  issuer_choices: [
+    { id: 'lnurlcash-reference', name: 'LNURLcash reference mint', origin: 'https://mint.lnurlcash.com/', development: false, terms_url: null },
+    { id: 'moneyer-dev', name: 'Moneyer test/development mint', origin: 'https://moneyer.dev/', development: true, terms_url: 'https://moneyer.dev/terms' },
+  ],
   runtime: { quota_bytes: 10*GiB, used_bytes: 0, committed_bytes: 0, settings_revision: null, checkout_started: false },
   disk: { free_bytes: 29*GiB, total_bytes: 38*GiB, headroom_bytes: 5*GiB },
   origin: 'https://demo.forgesworn.dev:3742', can_apply: true, external_configuration: false };
@@ -66,6 +70,10 @@ try {
   await page.getByLabel('Total storage quota (GiB)').waitFor();
   assert.deepEqual(calls, ['wildbloom.storage.get']);
   assert.equal(await page.getByLabel('Accept new storage sales', { exact: true }).isChecked(), false);
+  assert.equal(await page.getByLabel('LNURLcash issuer').inputValue(), 'lnurlcash-reference');
+  await page.getByLabel('LNURLcash issuer').selectOption('moneyer-dev');
+  await page.getByText('This is a test/development mint.', { exact: false }).waitFor();
+  await page.getByLabel('LNURLcash issuer').selectOption('lnurlcash-reference');
   await page.screenshot({ path: '.cache/storage-selling-desktop.png', fullPage: true });
   await page.getByLabel('Price per term (sats)').fill('750');
   await page.getByLabel('Reserved for you (GiB)').fill('0');
@@ -118,5 +126,5 @@ try {
   await page.getByRole('alert').filter({ hasText: 'Sales records are unavailable' }).waitFor();
   assert.equal(await page.getByLabel('Sales summary', { exact: true }).count(), 0, 'Failed read never shows stale or zero sales');
   assert.deepEqual(failures, []);
-  console.log('Browser acceptance passed: desktop/mobile, explicit draft/apply, operator overrides including zero, no issuer calls; private sales, renewal dates, pending payments and failed reads.');
+  console.log('Browser acceptance passed: reference issuer default, explicit Moneyer development choice, desktop/mobile, explicit draft/apply, operator overrides including zero, no issuer calls; private sales, renewal dates, pending payments and failed reads.');
 } finally { await browser.close(); }

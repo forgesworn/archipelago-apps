@@ -16,6 +16,20 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 MONEYER_KEY = "0218865ec3352afb85695bd1b6089323f802ecbf3ae2103bf8fd4d3e6fb571f0e4"
+REFERENCE_KEY = "027f06257d0e9af2dbef2c1c64d03962a9240a65a987eb90b36000c64de34baa6d"
+ISSUERS = {
+    "lnurlcash-reference": {
+        "host": "mint.lnurlcash.com", "origin": "https://mint.lnurlcash.com/",
+        "note_endpoint": "https://mint.lnurlcash.com/w",
+        "callback": "https://mint.lnurlcash.com/w/cb", "mint_pubkey": REFERENCE_KEY,
+        "development": False,
+    },
+    "moneyer-dev": {
+        "host": "moneyer.dev", "origin": "https://moneyer.dev/",
+        "note_endpoint": "https://moneyer.dev/w", "callback": "https://moneyer.dev/w/cb",
+        "mint_pubkey": MONEYER_KEY, "development": True,
+    },
+}
 MAX = 9_007_199_254_740_991
 
 
@@ -53,6 +67,10 @@ def build(settings, addresses, enable=False):
     if not isinstance(settings, dict):
         raise ValueError("Settings must be a JSON object")
     node = origin(settings.get("node_origin"))
+    issuer_id = settings.get("issuer_id", "moneyer-dev")
+    if issuer_id not in ISSUERS:
+        raise ValueError("issuer_id must select a reviewed packaged issuer")
+    issuer = ISSUERS[issuer_id]
     if urlsplit(node).port != 3742:
         raise ValueError("node_origin must be the Archipelago public hostname on port 3742")
     quota = integer(settings, "quota_bytes")
@@ -72,17 +90,20 @@ def build(settings, addresses, enable=False):
     for address in addresses:
         ip = ipaddress.ip_address(address)
         if not ip.is_global:
-            raise ValueError("Moneyer address pins must be public IP addresses")
+            raise ValueError("Issuer address pins must be public IP addresses")
         pins.append(f"[{ip}]:443" if ip.version == 6 else f"{ip}:443")
     pins = sorted(set(pins))
     if not 1 <= len(pins) <= 16:
-        raise ValueError("Supply 1–16 Moneyer IP pins, or explicitly resolve them with --resolve-moneyer")
+        raise ValueError("Supply 1–16 issuer IP pins, or explicitly resolve them with --resolve-issuer")
     browsers = settings.get("browser_origins", [])
     if not isinstance(browsers, list) or not 1 <= len(browsers) <= 16:
         raise ValueError("Supply 1–16 browser_origins")
     browsers = [origin(item) for item in browsers]
-    if enable and settings.get("moneyer_evaluation_accepted") is not True:
-        raise ValueError("Moneyer is an evaluation mint. Set moneyer_evaluation_accepted only after reviewing its terms")
+    reviewed = settings.get("issuer_reviewed", settings.get("moneyer_evaluation_accepted"))
+    if enable and reviewed is not True:
+        raise ValueError("Set issuer_reviewed only after reviewing the selected issuer, key, endpoints, terms and risks")
+    if enable and issuer["development"] and settings.get("moneyer_evaluation_accepted") is not True:
+        raise ValueError("Moneyer is a test/development mint. Set moneyer_evaluation_accepted only after reviewing its terms and loss warning")
     if enable and text(settings, "refund_policy").startswith("REPLACE"):
         raise ValueError("Complete your operator refund/contact terms before enabling sales")
     offer = {
@@ -100,15 +121,15 @@ def build(settings, addresses, enable=False):
             "origin": node + "/", "seller_id": seller_id,
             "seller_name": text(settings, "seller_name", 128), "network": "bitcoin",
             "quote_seconds": 600, "allow_loopback_http": False, "tor_only": False,
-            "offers": [offer], "issuers": [{"id": "moneyer-dev",
-                "note_endpoint": "https://moneyer.dev/w", "callback": "https://moneyer.dev/w/cb",
-                "mint_pubkey": MONEYER_KEY}],
+            "offers": [offer], "issuers": [{"id": issuer_id,
+                "note_endpoint": issuer["note_endpoint"], "callback": issuer["callback"],
+                "mint_pubkey": issuer["mint_pubkey"]}],
         },
         "state": "/data/operator/checkout", "max_paid_bytes": quota - reserve,
         "browser_origins": browsers, "phoenixd": None,
         "notes": [{"endpoint": endpoint, "destination": {
-            "origin": "https://moneyer.dev/", "addresses": pins, "allow_loopback_http": False,
-        }} for endpoint in ("https://moneyer.dev/w", "https://moneyer.dev/w/cb")],
+            "origin": issuer["origin"], "addresses": pins, "allow_loopback_http": False,
+        }} for endpoint in (issuer["note_endpoint"], issuer["callback"])],
     }
     manifest = yaml.safe_load((ROOT / "apps/wildbloom-node/manifest.yml").read_text())
     app = manifest["app"]
@@ -144,12 +165,14 @@ def main():
     parser.add_argument("settings", type=Path, nargs="?", help="Operator-edited settings JSON")
     parser.add_argument("--init-settings", type=Path, help="Create a private editable settings file with suggested defaults; no network access")
     parser.add_argument("--output", type=Path, help="New private output directory; never overwrites")
-    parser.add_argument("--moneyer-ip", action="append", default=[])
-    parser.add_argument("--resolve-moneyer", action="store_true", help="Explicitly resolve moneyer.dev now and pin its public IPs")
+    parser.add_argument("--issuer-ip", "--moneyer-ip", dest="issuer_ip", action="append", default=[],
+                        help="Pin a public IP for the selected issuer; --moneyer-ip remains as a compatibility alias")
+    parser.add_argument("--resolve-issuer", "--resolve-moneyer", dest="resolve_issuer", action="store_true",
+                        help="Explicitly resolve the selected reviewed issuer now and pin its public IPs")
     parser.add_argument("--enable-sales", action="store_true", help="Include checkout opt-in in the prepared manifest; does not deploy")
     args = parser.parse_args()
     if args.init_settings:
-        if args.settings or args.output or args.moneyer_ip or args.resolve_moneyer or args.enable_sales:
+        if args.settings or args.output or args.issuer_ip or args.resolve_issuer or args.enable_sales:
             parser.error("Use --init-settings on its own; edit the defaults before preparing a profile")
     elif not args.settings or not args.output:
         parser.error("Supply settings and --output, or use --init-settings to start")
@@ -163,9 +186,12 @@ def main():
         if args.settings.stat().st_size > 65536:
             raise ValueError("Settings must be at most 64 KiB")
         settings = json.loads(args.settings.read_text())
-        addresses = args.moneyer_ip
-        if args.resolve_moneyer:
-            addresses += [r[4][0] for r in socket.getaddrinfo("moneyer.dev", 443, type=socket.SOCK_STREAM)]
+        issuer_id = settings.get("issuer_id", "moneyer-dev")
+        if issuer_id not in ISSUERS:
+            raise ValueError("issuer_id must select a reviewed packaged issuer")
+        addresses = args.issuer_ip
+        if args.resolve_issuer:
+            addresses += [r[4][0] for r in socket.getaddrinfo(ISSUERS[issuer_id]["host"], 443, type=socket.SOCK_STREAM)]
         profile, manifest = build(settings, addresses, args.enable_sales)
         # A new directory avoids mixing a new profile with an existing receiving ledger.
         args.output.mkdir(mode=0o700, parents=False, exist_ok=False)

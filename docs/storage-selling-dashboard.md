@@ -26,11 +26,13 @@ This is a targeted test-node package, not a new upstream OTA or ISO.
    Add exact HTTPS origins under **Other customer app origins** to accept
    customers using a separately hosted Wildbloom web app. Your own packaged
    app stays allowed; wildcards, credentials and URL paths are refused.
-3. For selling, open **Moneyer connection** and explicitly resolve its public IP
-   addresses, or enter verified public IPs. This one action makes a DNS lookup;
-   reading and saving settings never contacts an issuer. The issuer host,
-   endpoints and signing key remain pinned to the reviewed Moneyer integration.
-   Review its terms before accepting it and enabling new sales.
+3. For selling, choose a reviewed LNURLcash issuer. New setups default to the
+   reference mint at `https://mint.lnurlcash.com/`; Moneyer is labelled and
+   retained as a test/development option. Explicitly resolve the selected
+   issuer's public IP addresses, or enter verified public IPs. This one action
+   makes a DNS lookup; reading and saving settings never contacts an issuer.
+   The host, endpoints and signing key stay pinned to the selected packaged
+   integration. Review that issuer before enabling new sales.
 4. **Save draft** stores private settings without changing the running service.
 5. **Review and apply** shows the saved offer and restart notice. Applying
    rechecks capacity and the running package, prepares an immutable private
@@ -61,6 +63,9 @@ the owner reserve, or a public-hostname change. These require an operator-led
 migration that accounts for outstanding customer promises and payment recovery.
 Changing prices or durations creates a new offer revision. A manually provisioned
 external checkout profile or inactive receiving ledger is detected and cannot be silently replaced by this UI.
+The selected issuer is also locked after checkout starts. Changing it requires
+an operator-led migration that retains the old issuer profile for pending note,
+refund and invoice recovery.
 
 Private draft/active settings live under the backend data directory at
 `settings/wildbloom-storage/settings.json` (directory 0700, file 0600).
@@ -71,7 +76,9 @@ resets, removes, or changes the ledger location. Back up dashboard settings and
 the complete Wildbloom storage/checkout directory together; do not restore an
 old receiving ledger over newer payment state.
 
-RPC methods are `wildbloom.storage.get`, `.save`, `.resolve-moneyer`, and `.apply`.
+RPC methods are `wildbloom.storage.get`, `.save`, `.resolve-issuer`, and `.apply`.
+The old `.resolve-moneyer` method remains a compatibility alias whose only
+possible target is Moneyer.
 All require the dashboard admin session and CSRF protection; browser calls must
 come from this node's dashboard origin, not a high-port app or another site. None are available
 to unauthenticated users, viewers or app users. Revision checks prevent a stale

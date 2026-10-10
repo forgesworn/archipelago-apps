@@ -1,0 +1,516 @@
+From 02b666780ea683743f93a1d7be4da9a49daff31f Mon Sep 17 00:00:00 2001
+From: archipelago-apps <ci@invalid>
+Date: Sat, 10 Oct 2026 09:54:40 +0100
+Subject: [PATCH] feat: choose a reviewed LNURLcash issuer
+
+---
+ core/archipelago/src/api/rpc/dispatcher.rs    |  10 +-
+ core/archipelago/src/api/rpc/wildbloom.rs     |  25 ++++-
+ .../src/container/prod_orchestrator.rs        |   2 +-
+ .../src/settings/wildbloom_storage.rs         | 105 +++++++++++++++++-
+ .../src/views/settings/StorageSelling.vue     |  61 +++++++---
+ .../settings/__tests__/StorageSelling.test.ts |  33 +++++-
+ 6 files changed, 203 insertions(+), 33 deletions(-)
+
+diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
+index fdb7431..5d2307b 100644
+--- a/core/archipelago/src/api/rpc/dispatcher.rs
++++ b/core/archipelago/src/api/rpc/dispatcher.rs
+@@ -71,7 +71,15 @@ impl RpcHandler {
+             "wildbloom.storage.get" => self.handle_wildbloom_get().await,
+             "wildbloom.storage.save" => self.handle_wildbloom_save(params).await,
+             "wildbloom.storage.apply" => self.clone().handle_wildbloom_apply(params).await,
+-            "wildbloom.storage.resolve-moneyer" => self.handle_wildbloom_resolve().await,
++            "wildbloom.storage.resolve-issuer" => self.handle_wildbloom_resolve(params).await,
++            // Compatibility for a frontend from before issuer selection. Its
++            // only possible target was Moneyer, so preserve that exact meaning.
++            "wildbloom.storage.resolve-moneyer" => {
++                self.handle_wildbloom_resolve(Some(serde_json::json!({
++                    "issuer_id": "moneyer-dev"
++                })))
++                .await
++            }
+             "package.credentials" => self.handle_package_credentials(params).await,
+             "app.filebrowser-token" => self.handle_filebrowser_token().await,
+ 
+diff --git a/core/archipelago/src/api/rpc/wildbloom.rs b/core/archipelago/src/api/rpc/wildbloom.rs
+index a5cfa6c..6ab2f50 100644
+--- a/core/archipelago/src/api/rpc/wildbloom.rs
++++ b/core/archipelago/src/api/rpc/wildbloom.rs
+@@ -22,6 +22,11 @@ struct Apply {
+     revision: u64,
+     confirm_restart: bool,
+ }
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct ResolveIssuer {
++    issuer_id: String,
++}
+ 
+ #[derive(Serialize)]
+ struct Runtime {
+@@ -256,7 +261,8 @@ impl RpcHandler {
+             json!({"revision": record.revision, "settings": settings, "active": record.active,
+             "has_draft": record.draft.is_some(), "applied": applied, "runtime": runtime, "external_configuration": external,
+             "can_apply": root.is_some() && disk.is_some() && !external && self.config.public_host.is_some()
+-                && runtime.as_ref().is_some_and(|r| r.image == "ghcr.io/forgesworn/wildbloom-node:0.3.5-bee5383-2"),
++                && runtime.as_ref().is_some_and(|r| r.image == "ghcr.io/forgesworn/wildbloom-node:0.3.5-4474ce1-2"),
++            "issuer_choices": storage::issuer_choices(),
+             "origin": self.config.public_host.as_ref().map(|h| format!("https://{h}:3742")),
+             "disk": disk.map(|(free,total)| json!({"free_bytes":free,"total_bytes":total,"headroom_bytes":(5*GIB).max(total/20)}))}),
+         )
+@@ -275,12 +281,18 @@ impl RpcHandler {
+         Ok(json!({"revision":record.revision}))
+     }
+ 
+-    pub(super) async fn handle_wildbloom_resolve(&self) -> Result<Value> {
++    pub(super) async fn handle_wildbloom_resolve(&self, params: Option<Value>) -> Result<Value> {
+         // Only this explicit action contacts DNS. Loading/saving a form never
+-        // discovers or calls the payment issuer. No arbitrary hostname input.
++        // discovers or calls the payment issuer. The ID selects one reviewed,
++        // fixed host; arbitrary hostnames and URLs never enter DNS lookup.
++        let request: ResolveIssuer =
++            serde_json::from_value(params.context("Missing Wildbloom issuer selection")?)
++                .context("Invalid Wildbloom issuer selection")?;
++        let issuer =
++            storage::issuer(&request.issuer_id).context("Unknown Wildbloom payment issuer")?;
+         let addresses = tokio::time::timeout(
+             Duration::from_secs(5),
+-            tokio::net::lookup_host(("moneyer.dev", 443)),
++            tokio::net::lookup_host((issuer.host, 443)),
+         )
+         .await??;
+         let mut ips: Vec<_> = addresses
+@@ -291,7 +303,7 @@ impl RpcHandler {
+         ips.dedup();
+         ensure!(
+             !ips.is_empty() && ips.len() <= 16,
+-            "Wildbloom could not resolve public Moneyer addresses"
++            "Wildbloom could not resolve public issuer addresses"
+         );
+         Ok(json!({"addresses":ips}))
+     }
+@@ -337,7 +349,7 @@ impl RpcHandler {
+             .await
+             .context("Wildbloom start the node and wait for healthy storage before applying")?;
+         ensure!(
+-            current.image == "ghcr.io/forgesworn/wildbloom-node:0.3.5-bee5383-2",
++            current.image == "ghcr.io/forgesworn/wildbloom-node:0.3.5-4474ce1-2",
+             "Wildbloom installed image is not compatible with dashboard settings"
+         );
+         ensure!(!external_configuration(&record, &current, root.join("operator/checkout").exists()),
+@@ -461,6 +473,7 @@ mod tests {
+             "wildbloom.storage.record-refund",
+             "wildbloom.storage.save",
+             "wildbloom.storage.apply",
++            "wildbloom.storage.resolve-issuer",
+             "wildbloom.storage.resolve-moneyer",
+         ] {
+             assert!(!super::super::middleware::UNAUTHENTICATED_METHODS.contains(&method));
+diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
+index 71340d6..56f4de0 100644
+--- a/core/archipelago/src/container/prod_orchestrator.rs
++++ b/core/archipelago/src/container/prod_orchestrator.rs
+@@ -5054,7 +5054,7 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
+         );
+         anyhow::ensure!(
+             lm.manifest.app.container.image.as_deref()
+-                == Some("ghcr.io/forgesworn/wildbloom-node:0.3.5-bee5383-2"),
++                == Some("ghcr.io/forgesworn/wildbloom-node:0.3.5-4474ce1-2"),
+             "Wildbloom dashboard settings require a compatible node package"
+         );
+         let volume = lm
+diff --git a/core/archipelago/src/settings/wildbloom_storage.rs b/core/archipelago/src/settings/wildbloom_storage.rs
+index 5f4588b..2150ff8 100644
+--- a/core/archipelago/src/settings/wildbloom_storage.rs
++++ b/core/archipelago/src/settings/wildbloom_storage.rs
+@@ -8,8 +8,65 @@ use std::{net::IpAddr, path::Path};
+ pub const GIB: u64 = 1 << 30;
+ pub const MAX: u64 = 9_007_199_254_740_991;
+ pub const MONEYER_KEY: &str = "0218865ec3352afb85695bd1b6089323f802ecbf3ae2103bf8fd4d3e6fb571f0e4";
++pub const REFERENCE_KEY: &str =
++    "027f06257d0e9af2dbef2c1c64d03962a9240a65a987eb90b36000c64de34baa6d";
+ pub static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+ 
++#[derive(Clone, Copy, Debug)]
++pub struct Issuer {
++    pub id: &'static str,
++    pub name: &'static str,
++    pub host: &'static str,
++    pub origin: &'static str,
++    pub note_endpoint: &'static str,
++    pub callback: &'static str,
++    pub mint_pubkey: &'static str,
++    pub development: bool,
++    pub terms_url: Option<&'static str>,
++}
++
++pub fn issuer(id: &str) -> Option<Issuer> {
++    match id {
++        "lnurlcash-reference" => Some(Issuer {
++            id: "lnurlcash-reference",
++            name: "LNURLcash reference mint",
++            host: "mint.lnurlcash.com",
++            origin: "https://mint.lnurlcash.com/",
++            note_endpoint: "https://mint.lnurlcash.com/w",
++            callback: "https://mint.lnurlcash.com/w/cb",
++            mint_pubkey: REFERENCE_KEY,
++            development: false,
++            terms_url: None,
++        }),
++        "moneyer-dev" => Some(Issuer {
++            id: "moneyer-dev",
++            name: "Moneyer test/development mint",
++            host: "moneyer.dev",
++            origin: "https://moneyer.dev/",
++            note_endpoint: "https://moneyer.dev/w",
++            callback: "https://moneyer.dev/w/cb",
++            mint_pubkey: MONEYER_KEY,
++            development: true,
++            terms_url: Some("https://moneyer.dev/terms"),
++        }),
++        _ => None,
++    }
++}
++
++pub fn issuer_choices() -> Value {
++    json!(["lnurlcash-reference", "moneyer-dev"].map(|id| {
++        let i = issuer(id).expect("static issuer");
++        json!({"id":i.id,"name":i.name,"origin":i.origin,"development":i.development,
++            "terms_url":i.terms_url})
++    }))
++}
++
++fn legacy_issuer() -> String {
++    // Settings written before issuer selection existed were Moneyer settings.
++    // This default prevents an upgrade from reinterpreting their pinned IPs.
++    "moneyer-dev".into()
++}
++
+ #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+ #[serde(deny_unknown_fields)]
+ pub struct Settings {
+@@ -23,6 +80,10 @@ pub struct Settings {
+     pub delivery_bytes: u64,
+     pub seller_name: String,
+     pub refund_policy: String,
++    #[serde(default = "legacy_issuer")]
++    pub issuer_id: String,
++    // Retain the serialized names for backwards compatibility. These fields
++    // hold the selected issuer's pins and explicit operator review.
+     pub moneyer_ips: Vec<IpAddr>,
+     pub additional_browser_origins: Vec<String>,
+     pub moneyer_terms_accepted: bool,
+@@ -42,6 +103,7 @@ impl Settings {
+             delivery_bytes: 100 * GIB,
+             seller_name: "My Archipelago node".into(),
+             refund_policy: String::new(),
++            issuer_id: "lnurlcash-reference".into(),
+             moneyer_ips: vec![],
+             additional_browser_origins: vec![],
+             moneyer_terms_accepted: false,
+@@ -82,13 +144,17 @@ impl Settings {
+             self.moneyer_ips.len() <= 16 && self.moneyer_ips.iter().all(public_ip),
+             "Wildbloom issuer addresses must be public IPs (at most 16)"
+         );
++        ensure!(
++            issuer(&self.issuer_id).is_some(),
++            "Unknown Wildbloom payment issuer"
++        );
+         Ok(())
+     }
+ 
+     pub fn validate_receiver(&self) -> Result<()> {
+         ensure!(self.moneyer_terms_accepted && !self.refund_policy.trim().is_empty()
+             && !self.refund_policy.starts_with("REPLACE") && !self.moneyer_ips.is_empty(),
+-            "Wildbloom selling requires issuer addresses, acceptance of Moneyer terms, and published sale/refund terms");
++            "Wildbloom selling requires issuer addresses, explicit issuer review, and published sale/refund terms");
+         Ok(())
+     }
+ }
+@@ -119,7 +185,7 @@ fn plain(value: &str, limit: usize, empty: bool) -> Result<()> {
+ }
+ 
+ // Explicitly reject non-routable and translation ranges. DNS results are pins,
+-// never URLs; the receiver still verifies TLS for moneyer.dev.
++// never URLs; the receiver still verifies TLS for the selected fixed issuer.
+ pub fn public_ip(ip: &IpAddr) -> bool {
+     match ip {
+         IpAddr::V4(ip) => {
+@@ -255,12 +321,15 @@ pub fn validate_capacity(
+             "Wildbloom quota cannot shrink after selling begins; existing customer promises must be preserved");
+         ensure!(s.owner_reserved_bytes <= a.settings.owner_reserved_bytes,
+             "Wildbloom owner reserve cannot increase after selling begins; existing customer promises must be preserved");
++        ensure!(s.issuer_id == a.settings.issuer_id,
++            "Wildbloom issuer cannot change after selling begins; migrate pending payment recovery with an operator-led procedure");
+     }
+     Ok(())
+ }
+ 
+ pub fn profile(a: &Active) -> Value {
+     let s = &a.settings;
++    let issuer = issuer(&s.issuer_id).expect("validated issuer");
+     let mut browsers = vec![a.origin.replace(":3742", ":3743")];
+     for origin in &s.additional_browser_origins {
+         if !browsers.contains(origin) {
+@@ -283,15 +352,15 @@ pub fn profile(a: &Active) -> Value {
+                 "delivery_policy": "Operator-managed delivery; no automatic bandwidth meter",
+                 "retention_policy": format!("{} seconds of writes and {} further seconds for recovery", s.duration_seconds, s.grace_seconds),
+                 "refund_policy": s.refund_policy}],
+-            "issuers": [{"id": "moneyer-dev", "note_endpoint": "https://moneyer.dev/w",
+-                "callback": "https://moneyer.dev/w/cb", "mint_pubkey": MONEYER_KEY}]},
++            "issuers": [{"id": issuer.id, "note_endpoint": issuer.note_endpoint,
++                "callback": issuer.callback, "mint_pubkey": issuer.mint_pubkey}]},
+         "state": "/data/operator/checkout",
+         // Zero blocks every new reservation while existing quotes, receiving
+         // recovery and activated allowances continue against the same ledger.
+         "max_paid_bytes": if s.sales_enabled { s.quota_bytes - s.owner_reserved_bytes } else { 0 },
+         "browser_origins": browsers, "phoenixd": null,
+-        "notes": (["https://moneyer.dev/w", "https://moneyer.dev/w/cb"].map(|endpoint| json!({
+-            "endpoint": endpoint, "destination": {"origin": "https://moneyer.dev/", "addresses": ips, "allow_loopback_http": false}})))
++        "notes": ([issuer.note_endpoint, issuer.callback].map(|endpoint| json!({
++            "endpoint": endpoint, "destination": {"origin": issuer.origin, "addresses": ips, "allow_loopback_http": false}})))
+     })
+ }
+ 
+@@ -387,6 +456,7 @@ mod tests {
+         let mut s = Settings::defaults(10 * GIB);
+         assert_eq!(s.owner_reserved_bytes, 5 * GIB);
+         assert_eq!(s.offer_capacity_bytes, 5 * GIB);
++        assert_eq!(s.issuer_id, "lnurlcash-reference");
+         assert!(!s.sales_enabled);
+         s.owner_reserved_bytes = 0;
+         s.grace_seconds = 0;
+@@ -405,6 +475,9 @@ mod tests {
+         s = a.settings.clone();
+         s.owner_reserved_bytes += GIB;
+         assert!(validate_capacity(&s, 300 * GIB, 400 * GIB, 0, 0, Some(&a)).is_err());
++        s = a.settings.clone();
++        s.issuer_id = "moneyer-dev".into();
++        assert!(validate_capacity(&s, 300 * GIB, 400 * GIB, 0, 0, Some(&a)).is_err());
+     }
+     #[test]
+     fn pause_keeps_receiver_and_ledger_but_refuses_new_capacity() {
+@@ -479,6 +552,26 @@ mod tests {
+         assert!(load(dir.path()).is_err());
+     }
+     #[test]
++    fn old_settings_remain_moneyer_and_new_profiles_use_the_reference_mint() {
++        let current = Settings::defaults(10 * GIB);
++        let mut legacy = serde_json::to_value(&current).unwrap();
++        legacy.as_object_mut().unwrap().remove("issuer_id");
++        let migrated: Settings = serde_json::from_value(legacy).unwrap();
++        assert_eq!(migrated.issuer_id, "moneyer-dev");
++
++        let a = active();
++        let value = profile(&a);
++        assert_eq!(value["checkout"]["issuers"][0]["id"], "lnurlcash-reference");
++        assert_eq!(
++            value["checkout"]["issuers"][0]["mint_pubkey"],
++            REFERENCE_KEY
++        );
++        assert_eq!(
++            value["notes"][1]["endpoint"],
++            "https://mint.lnurlcash.com/w/cb"
++        );
++    }
++    #[test]
+     fn profiles_are_immutable_and_do_not_reset_receiving_state() {
+         let dir = tempfile::tempdir().unwrap();
+         let mut a = active();
+diff --git a/neode-ui/src/views/settings/StorageSelling.vue b/neode-ui/src/views/settings/StorageSelling.vue
+index 688b0a7..cbd5db9 100644
+--- a/neode-ui/src/views/settings/StorageSelling.vue
++++ b/neode-ui/src/views/settings/StorageSelling.vue
+@@ -7,11 +7,14 @@ type Settings = {
+   quota_bytes: number; owner_reserved_bytes: number; max_blob_bytes: number
+   offer_capacity_bytes: number; price_sats: number; duration_seconds: number
+   grace_seconds: number; delivery_bytes: number; seller_name: string
+-  refund_policy: string; moneyer_ips: string[]; additional_browser_origins: string[]; moneyer_terms_accepted: boolean; sales_enabled: boolean
++  refund_policy: string; issuer_id: string; moneyer_ips: string[]; additional_browser_origins: string[]; moneyer_terms_accepted: boolean; sales_enabled: boolean
+ }
++type IssuerChoice = { id: string; name: string; origin: string; development: boolean; terms_url: string | null }
+ type Active = { revision: number; checkout_started: boolean; settings: Settings }
+ type Status = {
+   revision: number; settings: Settings; active: Active | null; applied: boolean
++  issuer_choices?: IssuerChoice[]
++  issuer_selection_supported?: boolean
+   runtime: { quota_bytes: number; used_bytes: number; committed_bytes: number; settings_revision: number | null; checkout_started: boolean } | null
+   disk: { free_bytes: number; total_bytes: number; headroom_bytes: number } | null
+   has_draft: boolean; can_apply: boolean; external_configuration: boolean; origin: string | null
+@@ -39,12 +42,14 @@ const message = ref('')
+ const review = ref(false)
+ const confirmed = ref(false)
+ const loadedForm = ref('')
++const issuerSelectionSupported = ref(false)
+ const currentForm = computed(() => JSON.stringify({ form: form.value, amounts: amounts.value, pins: pins.value, customerApps: customerApps.value }))
+ const dirty = computed(() => currentForm.value !== loadedForm.value)
+ const saleCapacity = computed(() => Math.max(0, Number(amounts.value.quota_bytes) - Number(amounts.value.owner_reserved_bytes)))
+ const usableQuota = computed(() => status.value?.disk && status.value.runtime
+   ? Math.max(0, status.value.disk.free_bytes + status.value.runtime.used_bytes - status.value.disk.headroom_bytes) : null)
+ const tooLarge = computed(() => usableQuota.value !== null && Number(amounts.value.quota_bytes) * GiB > usableQuota.value)
++const selectedIssuer = computed(() => status.value?.issuer_choices?.find(i => i.id === form.value?.issuer_id) ?? null)
+ const liveLabel = computed(() => {
+   if (!status.value?.runtime) return 'Node status unavailable'
+   if (status.value.external_configuration) return 'Managed outside the dashboard'
+@@ -56,11 +61,19 @@ const canReview = computed(() => status.value?.has_draft && status.value.can_app
+ const size = (bytes: number) => `${(bytes / GiB).toLocaleString(undefined, { maximumFractionDigits: 2 })} GiB`
+ 
+ function show(data: Status) {
+-  status.value = data
+-  form.value = structuredClone(data.settings)
+-  amounts.value = Object.fromEntries(fields.map(f => [f.key, data.settings[f.key] / f.scale]))
+-  pins.value = data.settings.moneyer_ips.join('\n')
+-  customerApps.value = data.settings.additional_browser_origins.join('\n')
++  issuerSelectionSupported.value = data.issuer_selection_supported ?? Array.isArray(data.issuer_choices)
++  const settings = structuredClone(data.settings)
++  // A cached/new frontend can briefly meet the previous backend during an
++  // upgrade. Missing issuer fields have the same legacy Moneyer meaning as the
++  // backend's deserializer; never reinterpret its saved pins as the reference.
++  settings.issuer_id ||= 'moneyer-dev'
++  status.value = { ...data, settings, issuer_selection_supported: issuerSelectionSupported.value, issuer_choices: data.issuer_choices ?? [
++    { id: 'moneyer-dev', name: 'Moneyer test/development mint', origin: 'https://moneyer.dev/', development: true, terms_url: 'https://moneyer.dev/terms' },
++  ] }
++  form.value = structuredClone(settings)
++  amounts.value = Object.fromEntries(fields.map(f => [f.key, settings[f.key] / f.scale]))
++  pins.value = settings.moneyer_ips.join('\n')
++  customerApps.value = settings.additional_browser_origins.join('\n')
+   loadedForm.value = currentForm.value
+   review.value = false; confirmed.value = false
+ }
+@@ -84,6 +97,12 @@ function settings(): Settings {
+   result.additional_browser_origins = [...new Set(customerApps.value.split(/[\s,]+/).filter(Boolean))]
+   return result
+ }
++function issuerChanged() {
++  if (!form.value) return
++  pins.value = ''
++  form.value.moneyer_terms_accepted = false
++  review.value = false
++}
+ async function save() {
+   busy.value = true; error.value = ''; message.value = ''; review.value = false
+   try {
+@@ -97,9 +116,11 @@ async function save() {
+ async function resolve() {
+   busy.value = true; error.value = ''; review.value = false
+   try {
+-    const result = await rpcClient.call<{ addresses: string[] }>({ method: 'wildbloom.storage.resolve-moneyer', maxRetries: 1 })
++    const result = await rpcClient.call<{ addresses: string[] }>(issuerSelectionSupported.value
++      ? { method: 'wildbloom.storage.resolve-issuer', params: { issuer_id: form.value!.issuer_id }, maxRetries: 1 }
++      : { method: 'wildbloom.storage.resolve-moneyer', maxRetries: 1 })
+     pins.value = result.addresses.join('\n')
+-    message.value = 'Moneyer addresses resolved. Save the draft to keep them.'
++    message.value = `${selectedIssuer.value?.name ?? 'Issuer'} addresses resolved. Save the draft to keep them.`
+   } catch (e) { error.value = e instanceof Error ? e.message : String(e) }
+   finally { busy.value = false }
+ }
+@@ -166,18 +187,27 @@ onMounted(load)
+           <div class="border-t border-white/10 pt-6 space-y-4">
+             <h2 class="text-lg font-semibold">Optional selling</h2>
+             <p class="text-sm text-white/65">You can use your node for your own files without selling storage. Personal storage needs no sale terms. If you choose to sell, set your seller name and state the conditions for fulfilment and full refunds. A public contact address is optional.</p>
+-            <p class="text-sm text-white/65">Accept LNURLcash issued by moneyer.dev. Payments are received by your node. Review <a href="https://moneyer.dev/terms" target="_blank" rel="noopener noreferrer" class="underline">Moneyer’s terms</a> before enabling sales.</p>
++            <p class="text-sm text-white/65">Payments are received directly by your node as LNURLcash notes from the issuer you review and select. The reference mint is the suggested default; Moneyer remains available for testing and development.</p>
+             <div><label for="seller-name" class="block text-sm mb-2">Seller name</label><input id="seller-name" v-model="form.seller_name" maxlength="128" required class="storage-input" @input="review = false" /></div>
+             <div><label for="refund-policy" class="block text-sm mb-2">Sale and refund terms</label><textarea id="refund-policy" v-model="form.refund_policy" rows="3" maxlength="2048" class="storage-input" placeholder="When you provide or refund the purchased storage allowance" @input="review = false" /><p class="mt-2 text-xs text-white/60">Needed before enabling sales and published with your offer. Describe fulfilment and full-refund conditions. You may say how buyers reach you, but no email, Nostr key, URL or personal details are required. Use a single paragraph.</p></div>
+             <div><label for="customer-apps" class="block text-sm mb-2">Other customer app origins</label><textarea id="customer-apps" v-model="customerApps" rows="2" class="storage-input" placeholder="https://customer-app.example" @input="review = false" /><p class="mt-2 text-xs text-white/60">Your packaged Wildbloom app is already allowed. To accept customers using another web app, add its exact HTTPS origin, one per line, without a path. Only add apps you choose to support.</p></div>
++            <div>
++              <label for="issuer-id" class="block text-sm mb-2">LNURLcash issuer</label>
++              <select id="issuer-id" v-model="form.issuer_id" class="storage-input" :disabled="status.active?.checkout_started" @change="issuerChanged">
++                <option v-for="issuer in status.issuer_choices" :key="issuer.id" :value="issuer.id">{{ issuer.name }}</option>
++              </select>
++              <p v-if="status.active?.checkout_started" class="mt-2 text-xs text-white/60">The issuer is locked after selling begins so pending payment recovery keeps its original endpoints and key.</p>
++              <p v-if="selectedIssuer?.development" class="mt-2 text-amber-200 text-xs">This is a test/development mint. Expect loss and do not treat it as the reference choice.</p>
++              <p v-if="selectedIssuer" class="mt-2 text-xs text-white/60">Pinned origin: <a :href="selectedIssuer.origin" target="_blank" rel="noopener noreferrer" class="underline">{{ selectedIssuer.origin }}</a><template v-if="selectedIssuer.terms_url"> · <a :href="selectedIssuer.terms_url" target="_blank" rel="noopener noreferrer" class="underline">Issuer terms</a></template></p>
++            </div>
+             <details class="rounded-lg border border-white/15 p-4">
+-              <summary class="cursor-pointer text-sm font-medium">Moneyer connection</summary>
+-              <p class="my-3 text-xs text-white/60">Only “Resolve Moneyer addresses” makes a DNS lookup. Loading or saving this page never contacts Moneyer. Saved addresses stay pinned until you change them.</p>
+-              <label for="moneyer-pins" class="block text-sm mb-2">Public issuer IP addresses</label>
+-              <textarea id="moneyer-pins" v-model="pins" rows="3" class="storage-input font-mono" @input="review = false" />
+-              <button type="button" class="glass-button mt-3 px-4 py-2 rounded-lg" @click="resolve">Resolve Moneyer addresses</button>
++              <summary class="cursor-pointer text-sm font-medium">Issuer connection</summary>
++              <p class="my-3 text-xs text-white/60">Only “Resolve issuer addresses” makes a DNS lookup. Loading or saving this page never contacts the issuer. Saved addresses stay pinned until you change them.</p>
++              <label for="issuer-pins" class="block text-sm mb-2">Public issuer IP addresses</label>
++              <textarea id="issuer-pins" v-model="pins" rows="3" class="storage-input font-mono" @input="review = false" />
++              <button type="button" class="glass-button mt-3 px-4 py-2 rounded-lg" @click="resolve">Resolve issuer addresses</button>
+             </details>
+-            <label class="flex items-start gap-3 text-sm"><input v-model="form.moneyer_terms_accepted" type="checkbox" class="mt-1" @change="review = false" /><span>I have reviewed and accept the terms and risks of using Moneyer as my issuer.</span></label>
++            <label class="flex items-start gap-3 text-sm"><input v-model="form.moneyer_terms_accepted" type="checkbox" class="mt-1" @change="review = false" /><span>I have reviewed this issuer, its key, endpoints, terms and risks.</span></label>
+           </div>
+ 
+           <div class="border-t border-white/10 pt-6 space-y-3">
+@@ -196,6 +226,7 @@ onMounted(load)
+         <h2 class="text-lg font-semibold">Apply to your node</h2>
+         <p class="text-sm">{{ status.settings.sales_enabled ? 'Enable new sales' : 'Keep new sales off' }} with a {{ size(status.settings.quota_bytes) }} quota and {{ size(status.settings.owner_reserved_bytes) }} reserved for you.</p>
+         <p class="text-sm">Offer {{ size(status.settings.offer_capacity_bytes) }} for {{ status.settings.price_sats }} sats per {{ status.settings.duration_seconds / 86400 }} days, with {{ status.settings.grace_seconds / 86400 }} days for recovery.</p>
++        <p class="text-sm">Issuer: {{ selectedIssuer?.name }}.</p>
+         <p class="text-sm text-white/65">Wildbloom Node restarts briefly. Files, existing customer allowances and receiving state are retained. New quotes use these terms; existing quotes retain their original terms.</p>
+         <label class="flex items-start gap-3 text-sm"><input v-model="confirmed" type="checkbox" :disabled="busy" class="mt-1" />I’m ready to apply these settings and briefly restart Wildbloom Node.</label>
+         <button class="glass-button px-5 py-3 rounded-lg disabled:opacity-40" :disabled="!confirmed || busy" @click="apply">{{ busy ? 'Applying…' : 'Apply to node' }}</button>
+diff --git a/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts b/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts
+index e92571a..d210103 100644
+--- a/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts
++++ b/neode-ui/src/views/settings/__tests__/StorageSelling.test.ts
+@@ -9,12 +9,16 @@ const rpc = vi.mocked(rpcClient.call)
+ const initial = () => ({
+   revision: 0, active: null as null | Record<string, unknown>, applied: false, has_draft: false,
+   external_configuration: false, can_apply: true, origin: 'https://node.example:3742',
++  issuer_choices: [
++    { id: 'lnurlcash-reference', name: 'LNURLcash reference mint', origin: 'https://mint.lnurlcash.com/', development: false, terms_url: null },
++    { id: 'moneyer-dev', name: 'Moneyer test/development mint', origin: 'https://moneyer.dev/', development: true, terms_url: 'https://moneyer.dev/terms' },
++  ],
+   runtime: { quota_bytes: 10 * GiB, used_bytes: GiB, committed_bytes: GiB, settings_revision: null, checkout_started: false },
+   disk: { free_bytes: 29 * GiB, total_bytes: 38 * GiB, headroom_bytes: 5 * GiB },
+   settings: { quota_bytes: 10 * GiB, owner_reserved_bytes: 5 * GiB, max_blob_bytes: GiB,
+     offer_capacity_bytes: 5 * GiB, price_sats: 500, duration_seconds: 30 * 86400,
+     grace_seconds: 7 * 86400, delivery_bytes: 100 * GiB, seller_name: 'My node',
+-    refund_policy: '', moneyer_ips: [] as string[], additional_browser_origins: [] as string[], moneyer_terms_accepted: false, sales_enabled: false },
++    refund_policy: '', issuer_id: 'lnurlcash-reference', moneyer_ips: [] as string[], additional_browser_origins: [] as string[], moneyer_terms_accepted: false, sales_enabled: false },
+ })
+ function button(w: VueWrapper, text: string) { return w.findAll('button').find(b => b.text() === text)! }
+ async function page() {
+@@ -28,6 +32,8 @@ describe('Storage & selling', () => {
+     expect((w.get('#quota_bytes').element as HTMLInputElement).value).toBe('10')
+     expect(w.text()).toContain('Sales off')
+     expect(w.text()).toContain('A public contact address is optional')
++    expect(w.text()).toContain('LNURLcash reference mint')
++    expect(w.text()).toContain('Moneyer remains available for testing and development')
+     expect(w.text()).toContain('no email, Nostr key, URL or personal details are required')
+     expect(w.text()).not.toContain('A support address')
+     expect(button(w, 'Review and apply').attributes('disabled')).toBeDefined()
+@@ -96,9 +102,28 @@ describe('Storage & selling', () => {
+   it('resolves the chosen issuer only on explicit action and requires saving', async () => {
+     const w = await page()
+     rpc.mockResolvedValueOnce({ addresses: ['1.1.1.1'] })
+-    await button(w, 'Resolve Moneyer addresses').trigger('click'); await flushPromises()
+-    expect(rpc).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'wildbloom.storage.resolve-moneyer' }))
+-    expect((w.get('#moneyer-pins').element as HTMLTextAreaElement).value).toBe('1.1.1.1')
++    await button(w, 'Resolve issuer addresses').trigger('click'); await flushPromises()
++    expect(rpc).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'wildbloom.storage.resolve-issuer', params: { issuer_id: 'lnurlcash-reference' } }))
++    expect((w.get('#issuer-pins').element as HTMLTextAreaElement).value).toBe('1.1.1.1')
+     expect(button(w, 'Review and apply').attributes('disabled')).toBeDefined()
+   })
++  it('labels Moneyer as development and clears pins when issuer changes', async () => {
++    const w = await page()
++    await w.get('#issuer-pins').setValue('1.1.1.1')
++    await w.get('#issuer-id').setValue('moneyer-dev')
++    expect(w.text()).toContain('test/development mint')
++    expect(w.text()).toContain('Expect loss')
++    expect((w.get('#issuer-pins').element as HTMLTextAreaElement).value).toBe('')
++  })
++  it('preserves the legacy Moneyer meaning during frontend/backend release skew', async () => {
++    const data = initial()
++    delete (data as { issuer_choices?: unknown }).issuer_choices
++    delete (data.settings as { issuer_id?: string }).issuer_id
++    rpc.mockResolvedValueOnce(data)
++    const w = await page()
++    expect((w.get('#issuer-id').element as HTMLSelectElement).value).toBe('moneyer-dev')
++    rpc.mockResolvedValueOnce({ addresses: ['1.1.1.1'] })
++    await button(w, 'Resolve issuer addresses').trigger('click'); await flushPromises()
++    expect(rpc).toHaveBeenLastCalledWith(expect.objectContaining({ method: 'wildbloom.storage.resolve-moneyer' }))
++  })
+ })
+-- 
+2.54.0 (Apple Git-157)
+

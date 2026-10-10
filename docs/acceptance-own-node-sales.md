@@ -1,5 +1,35 @@
 # Own-node default and seller capacity acceptance
 
+## 10 October 2026: reference issuer default
+
+New Wildbloom selling configurations now select the LNURLcash reference mint at
+`https://mint.lnurlcash.com/`. Its live discovery document was checked against
+the packaged key and endpoints, and the packaged source identifies the public
+reference implementation. Moneyer remains available as an explicit
+test/development choice with its separate loss warning and acknowledgement.
+
+Existing settings without an issuer field continue to deserialize as Moneyer.
+The issuer is locked after checkout begins, so an upgrade cannot reinterpret
+saved IP pins, pending notes, refunds or invoice recovery as belonging to a
+different mint. The currently deployed test node therefore remains on its
+operator-selected Moneyer configuration until a separate migration is designed
+and accepted; this release does not claim a live payment through the reference
+mint.
+
+The dashboard and private configuration helper both keep sales disabled until
+the operator chooses capacity, price and terms, reviews the selected issuer and
+resolves or supplies public IP pins. The resolver accepts only the two packaged
+issuer identifiers and never an operator-supplied hostname. The legacy
+`wildbloom.storage.resolve-moneyer` RPC remains a fixed Moneyer-only alias for an
+older cached dashboard.
+
+Local acceptance covers the reference default and exact key/callback, legacy
+Moneyer deserialization, issuer-change refusal after checkout starts, arbitrary
+issuer rejection, the explicit DNS action, dashboard labelling, and the current
+`wildbloom-node:0.3.5-4474ce1-2` compatibility pin. Release workflow and deployed
+browser evidence are recorded separately once the immutable p8 backend and
+frontend assets have been published.
+
 ## 10 October 2026: commerce lifecycle release and live acceptance
 
 The complete own-node commerce lifecycle is now shipped. Wildbloom Node
