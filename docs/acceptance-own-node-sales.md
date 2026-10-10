@@ -1,5 +1,99 @@
 # Own-node default and seller capacity acceptance
 
+## 10 October 2026: commerce lifecycle release and live acceptance
+
+The complete own-node commerce lifecycle is now shipped. Wildbloom Node
+[PR #48](https://github.com/forgesworn/wildbloom-node/pull/48) added private,
+address-bound LNURLcash refunds with durable and idempotent operator recovery.
+Wildbloom [PR #84](https://github.com/forgesworn/wildbloom/pull/84) added customer
+allowance, renewal and refund receipts. Archipelago apps
+[PR #19](https://github.com/forgesworn/archipelago-apps/pull/19) packaged those
+revisions and the dashboard recovery controls. The frontend release source was
+temporarily unavailable upstream; [PR #20](https://github.com/forgesworn/archipelago-apps/pull/20)
+therefore added a hash-pinned fallback that reused only byte-identical framework
+inputs and rebuilt the dashboard from the current source. Wallet of Satoshi's
+LNURL-pay address delegates invoice creation to a different public HTTPS origin.
+Wildbloom Node [PR #49](https://github.com/forgesworn/wildbloom-node/pull/49)
+supports that standard deployment while independently resolving, filtering and
+pinning each origin, refusing redirects and requiring invoice verification to
+remain on the callback origin. Archipelago apps
+[PR #21](https://github.com/forgesworn/archipelago-apps/pull/21) packages that
+exact revision in the node image and recovery tool.
+
+| Released component | Accepted identity |
+| --- | --- |
+| Wildbloom Node source | `4474ce194888b039f14cf7001e2eab43305b2c9c` |
+| Wildbloom source | `d7dfadb33b7eedd8b180e2165150365f91299274` |
+| `wildbloom-node:0.3.5-4474ce1-2` | `sha256:6106ddb70d43071d500e71fd3052c8e59ad03336dac8f67c34bd205e4a538056` |
+| `wildbloom:0.0.1-d7dfadb-2` | `sha256:d0070c13882f577387c46fa33286a327644ebd5f72a20df13940ffc7ab7e7277` |
+| Backend release | `backend-v1.9.0-alpha-p7`, SHA-256 `792a17618c46d29b949e8586fac2ba24f8e9f3f8400293f8c59a38f3930ec32f` |
+| Frontend release | `frontend-v1.9.0-alpha-p7`, SHA-256 `6211c116ee309ecb4f7be0d4d73be7cbd6db7be95073fe963c8ffee79628fd3f` |
+
+The published-image customer journey passed purchase, encrypted upload, daemon
+restart, full-read audit and renewal in
+[run 38004200702, attempt 2](https://github.com/forgesworn/archipelago-apps/actions/runs/38004200702/attempts/2).
+The final main release also passed the
+[frontend](https://github.com/forgesworn/archipelago-apps/actions/runs/38030185852),
+[backend](https://github.com/forgesworn/archipelago-apps/actions/runs/38030185880),
+[validation](https://github.com/forgesworn/archipelago-apps/actions/runs/38030185875)
+and [image](https://github.com/forgesworn/archipelago-apps/actions/runs/38030185894)
+workflows.
+
+The callback compatibility release subsequently passed main
+[validation](https://github.com/forgesworn/archipelago-apps/actions/runs/38034292493),
+[frontend](https://github.com/forgesworn/archipelago-apps/actions/runs/38034292572),
+[image](https://github.com/forgesworn/archipelago-apps/actions/runs/38034292489)
+and [backend](https://github.com/forgesworn/archipelago-apps/actions/runs/38034292491)
+workflows. The Node change itself passed all eight jobs in
+[run 38032264546](https://github.com/forgesworn/wildbloom-node/actions/runs/38032264546).
+
+The live p7 upgrade preserved all 17 stored blobs, totalling 180,394 bytes, with
+exact pre/post hashes. The checkout ledger migrated from schema 1 to schema 2,
+passed its integrity check and retained the active allowance. An authenticated
+Chrome session showed the new browser package running and selected the local
+Archipelago node as the default storage destination.
+
+A real 500-sat Moneyer renewal retained the stable 5 GiB allowance and extended
+`writes_until` exactly from `2026-11-08T20:33:44Z` to
+`2026-12-08T20:33:44Z`. Signed recovery returned the same active receipt after a
+forced daemon restart. The customer receipt contained no bearer note.
+
+A separate real 500-sat payment exercised the automatic-refund path. With the
+writer stopped and a byte-verified full-volume backup retained, the acceptance
+harness expired only that signed reservation before submitting its valid
+Moneyer note. The receiver rotated the note, activation failed as intended, and
+the signed order became `refund_required` without an allowance. The first
+pre-fix recovery request refused Wallet of Satoshi's delegated callback before
+creating an invoice. After deploying PRs #49 and #21, the first request durably
+recorded one pending refund and returned an uncertain result. The operator
+verified that durable state before retrying; the idempotent retry reused the
+same invoice and completed the 500,000 msat refund. The signed customer result
+is `refunded` with a completed refund, no allowance receipt and a refund
+timestamp. It survived a forced daemon restart. The pre-existing renewed 5 GiB
+allowance retained the same identifier, capacity and expiry timestamps.
+The Wallet of Satoshi recipient independently confirmed arrival of the full
+500-sat refund.
+
+The callback image upgrade preserved all 17 blobs and 180,394 bytes through a
+fresh verified offline backup. Both the persistent sideload manifest and the
+installed-image record were updated before the Archipelago backend restarted;
+the reconciler then retained the new image and exact digest. This matters on an
+existing sideloaded installation: changing only the generated Quadlet unit is
+temporary because the management daemon regenerates it from persistent app
+state.
+
+During verification, an ordinary `sqlite3` connection was accidentally opened
+against the live WAL database. That unlinked the writer's WAL and SHM directory
+entries. The open descriptors were copied to a private recovery location, the
+writer was stopped cleanly, its checkpointed database was verified, and the
+node was restarted with schema 2, two active orders and one quoted order intact.
+The live process now holds non-deleted database, WAL and SHM files. Operators
+must stop the writer before using general SQLite tools; the dashboard's bounded
+read-only sales projection is the supported live inspection path.
+
+Private signer material, bearer notes, order references, refund destinations,
+backups and recovery journals are excluded from the repository.
+
 ## 9 October 2026: deployed setup and customer acceptance
 
 The own-node integration and editable storage/selling dashboard are deployed on
@@ -104,8 +198,9 @@ workflow change; image publication itself remains a separate operation.
 
 The test node's operator has selected the current offer, reviewed Moneyer terms
 and deliberately enabled public checkout. Other operators choose their own values
-and may leave selling disabled. Real renewal, automatic refunds and refund
-interruption recovery have not been accepted.
+and may leave selling disabled. At this packaged-test checkpoint, real renewal,
+automatic refunds and refund interruption recovery had not been accepted; the
+10 October section records their subsequent live acceptance.
 
 ## 8 October 2026: local implementation and container acceptance
 
