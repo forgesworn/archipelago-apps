@@ -6,6 +6,12 @@ collect customer payments. A person who enables sales becomes the storage
 provider and is responsible for their own offer, customers, operation and legal
 obligations. Payments go directly to that operator's configured receiver.
 
+For a start-to-finish exercise using a clean node, the dashboard, a separate
+buyer, the reference mint, restart, renewal, refund and paired backup, follow
+the [independent operator runbook](wildbloom-operator-runbook.md). The remainder
+of this document is the technical configuration reference, including the
+manual CLI path.
+
 The Archipelago browser package selects the node's configured public HTTPS
 Blossom origin on port 3742. This is populated locally, without contacting the
 storage service, a discovery relay or a payment issuer. The existing node signer
