@@ -136,7 +136,7 @@ uncollected expired data and other host disk usage still consume real space.
 `checkout-operator` is included in the Node image for the upstream documented
 inspection/recovery commands. Stop the owning daemon before using the tool;
 do not run concurrent writers or treat `refund_required` as an issued refund.
-See [upstream checkout](https://github.com/forgesworn/wildbloom-node/blob/bee538354ebccd652a506de21168ddf9eacbb54d/docs/CHECKOUT.md)
+See [upstream checkout](https://github.com/forgesworn/wildbloom-node/blob/4474ce194888b039f14cf7001e2eab43305b2c9c/docs/CHECKOUT.md)
 for the recovery profile and direct operator refund procedure.
 
 ## Packaging and acceptance
@@ -145,7 +145,7 @@ See the [local acceptance record](acceptance-own-node-sales.md) for completed
 checks and the remaining operational inputs.
 
 The two capacity patches in `apps/wildbloom-node/` apply to the exact Node
-`bee5383` and Shelter v0.5.0 (`c573ca3` tag, `a2847bd` source commit). They add an atomic customer allocation
+`4474ce1` and Shelter v0.5.0 (`c573ca3` tag, `a2847bd` source commit). They add an atomic customer allocation
 ceiling and wire optional `max_paid_bytes` from the private profile into
 checkout. Existing generic Shelter admission behaviour stays unchanged.
 The container build applies both patches with `git apply --check`, uses the
