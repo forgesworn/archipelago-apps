@@ -1,5 +1,11 @@
 # Own storage and optional sales
 
+Archipelago and Wildbloom provide self-hosted software. ForgeSworn does not run
+the operator's node, provide the storage, list sellers, set prices or terms, or
+collect customer payments. A person who enables sales becomes the storage
+provider and is responsible for their own offer, customers, operation and legal
+obligations. Payments go directly to that operator's configured receiver.
+
 The Archipelago browser package selects the node's configured public HTTPS
 Blossom origin on port 3742. This is populated locally, without contacting the
 storage service, a discovery relay or a payment issuer. The existing node signer

@@ -6,6 +6,11 @@ The patched Archipelago dashboard adds **Settings → Storage & selling** at
 the packaged rootless Quadlet and `/var/lib/archipelago/wildbloom-node` volume.
 This is a targeted test-node package, not a new upstream OTA or ISO.
 
+This dashboard configures the node owner's own storage offer. ForgeSworn
+supplies the software and does not operate a storage service or marketplace,
+list sellers, set their terms, or receive customer payments. Enabling sales
+makes the node owner the storage provider and direct payee.
+
 ## Operator flow
 
 1. Open the page. It reads local node health and available space on the storage
