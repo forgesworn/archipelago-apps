@@ -54,10 +54,13 @@ note, payment, renewal or refund was created during this upgrade.
 
 The packaged browser acceptance checked the reference default for a new
 configuration, explicit Moneyer selection, desktop and mobile layouts, and the
-draft/apply flow. A final authenticated view of the already-configured live
-seller panel remains outstanding because the backend restart invalidated the
-browser login. The file, service and settings evidence above does not substitute
-for that signed-in browser check.
+draft/apply flow. After signing back in following the backend restart, the live
+seller panel showed sales enabled with the retained 10 GiB quota, 5 GiB owner
+reserve, 5 GiB customer offer, 500-sat price, 30-day term and 7-day grace. It
+selected and labelled Moneyer as the test/development mint, displayed the loss
+warning, and locked the issuer because checkout had started. The reference mint
+remained available as the alternative for a new configuration. This was a
+read-only browser check: no draft, apply, quote or payment action was submitted.
 
 ## 10 October 2026: commerce lifecycle release and live acceptance
 
