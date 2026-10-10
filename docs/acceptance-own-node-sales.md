@@ -71,8 +71,8 @@ same invoice and completed the 500,000 msat refund. The signed customer result
 is `refunded` with a completed refund, no allowance receipt and a refund
 timestamp. It survived a forced daemon restart. The pre-existing renewed 5 GiB
 allowance retained the same identifier, capacity and expiry timestamps.
-The signed result and issuer completion establish the operator-side outcome;
-arrival in the recipient wallet remains a separate acceptance check.
+The Wallet of Satoshi recipient independently confirmed arrival of the full
+500-sat refund.
 
 The callback image upgrade preserved all 17 blobs and 180,394 bytes through a
 fresh verified offline backup. Both the persistent sideload manifest and the
