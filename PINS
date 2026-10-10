@@ -11,7 +11,7 @@ FRONTEND_SHA256=6d5135fa8e79b1bc84c8ed972770ebf99fe6611d819e5c1453f38f1593c26e66
 FRONTEND_FALLBACK_URL=https://github.com/forgesworn/archipelago-apps/releases/download/frontend-v1.9.0-alpha-p6/frontend.tar.gz
 FRONTEND_FALLBACK_SHA256=3215f29a08f2f38a75526c33adaf7d2d6426be758203f31ecf02d7990ea71ab0
 WILDBLOOM_REF=d7dfadb33b7eedd8b180e2165150365f91299274
-WILDBLOOM_NODE_REF=bee538354ebccd652a506de21168ddf9eacbb54d
+WILDBLOOM_NODE_REF=4474ce194888b039f14cf7001e2eab43305b2c9c
 # Packaging revisions: bump when the image changes without an upstream pin change.
 # The node never re-pulls an existing tag, so every image change needs a new tag.
 WILDBLOOM_PKG_REV=2

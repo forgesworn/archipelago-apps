@@ -3,7 +3,7 @@
 Open **Settings → Storage & selling → View sales & customers** at
 `/dashboard/settings/storage/sales`. The view is included in the patched
 `v1.9.0-alpha-p7` backend and frontend. It reads checkout schema 1 or 2 from the
-packaged Node `0.3.5-bee5383-2`; sales remain an explicit operator choice.
+packaged Node `0.3.5-4474ce1-2`; sales remain an explicit operator choice.
 
 The summary separates historical activated orders from current customer
 allowances. Renewals count as orders but share an allowance, so allocated

@@ -2,7 +2,7 @@
 
 The patched Archipelago dashboard adds **Settings → Storage & selling** at
 `/dashboard/settings/storage`. Requires matching backend and frontend
-`v1.9.0-alpha-p7` assets and Wildbloom Node `0.3.5-bee5383-2`, installed using
+`v1.9.0-alpha-p7` assets and Wildbloom Node `0.3.5-4474ce1-2`, installed using
 the packaged rootless Quadlet and `/var/lib/archipelago/wildbloom-node` volume.
 This is a targeted test-node package, not a new upstream OTA or ISO.
 
