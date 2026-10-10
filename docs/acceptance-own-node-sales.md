@@ -26,9 +26,38 @@ older cached dashboard.
 Local acceptance covers the reference default and exact key/callback, legacy
 Moneyer deserialization, issuer-change refusal after checkout starts, arbitrary
 issuer rejection, the explicit DNS action, dashboard labelling, and the current
-`wildbloom-node:0.3.5-4474ce1-2` compatibility pin. Release workflow and deployed
-browser evidence are recorded separately once the immutable p8 backend and
-frontend assets have been published.
+`wildbloom-node:0.3.5-4474ce1-2` compatibility pin.
+
+[PR #23](https://github.com/forgesworn/archipelago-apps/pull/23) merged as
+`2156a858963c80be4d5401333f43da6cf0b34693`. The immutable releases are
+`backend-v1.9.0-alpha-p8` (SHA-256
+`aa5d5023d6577aace06e82da07ebdf145a7b68173b35932c3c533827a846a6b2`)
+and `frontend-v1.9.0-alpha-p8` (SHA-256
+`ceb5d93757fa2c3c274c4b1f003ec214d6967e17ed2ad3d7c32dbaa9a90dea61`).
+The final main revision passed the
+[backend](https://github.com/forgesworn/archipelago-apps/actions/runs/38040995046),
+[frontend](https://github.com/forgesworn/archipelago-apps/actions/runs/38040995090),
+[validation](https://github.com/forgesworn/archipelago-apps/actions/runs/38040995035),
+[published-service](https://github.com/forgesworn/archipelago-apps/actions/runs/38040995190)
+and [image](https://github.com/forgesworn/archipelago-apps/actions/runs/38040995139)
+workflows.
+
+The p8 backend and frontend were installed on the live test node. The deployed
+backend matches the release hash, nginx and the Archipelago backend are active,
+and HTTPS answers successfully. The installer restarted the existing
+`wildbloom-node:0.3.5-4474ce1-2` systemd container; it returned healthy on the
+same data mount with all 17 blobs and 180,394 stored bytes. The seller settings
+file is byte-for-byte identical to its pre-upgrade backup. It remains revision 5
+with checkout started, sales enabled, and no issuer field, which p8 deliberately
+interprets as the legacy Moneyer development issuer. No reference-mint quote,
+note, payment, renewal or refund was created during this upgrade.
+
+The packaged browser acceptance checked the reference default for a new
+configuration, explicit Moneyer selection, desktop and mobile layouts, and the
+draft/apply flow. A final authenticated view of the already-configured live
+seller panel remains outstanding because the backend restart invalidated the
+browser login. The file, service and settings evidence above does not substitute
+for that signed-in browser check.
 
 ## 10 October 2026: commerce lifecycle release and live acceptance
 
