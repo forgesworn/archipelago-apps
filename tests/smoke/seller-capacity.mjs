@@ -22,13 +22,13 @@ let cid;
 try {
   const settings = JSON.parse(readFileSync(join(root, 'docs/wildbloom-sales.example.json')));
   Object.assign(settings, { quota_bytes: 100, owner_reserved_bytes: 40, offer_capacity_bytes: 60,
-    max_blob_bytes: 100, price_sats: 1, moneyer_evaluation_accepted: true,
+    max_blob_bytes: 100, price_sats: 1, issuer_reviewed: true,
     refund_policy: 'Synthetic local acceptance only; no real payment.' });
   const input = join(tmp, 'settings.json');
   const output = join(tmp, 'prepared');
   writeFileSync(input, JSON.stringify(settings), { mode: 0o600 });
   execFileSync('python3', [join(root, 'scripts/configure-wildbloom-sales.py'), input,
-    '--output', output, '--moneyer-ip', '1.1.1.1', '--enable-sales']);
+    '--output', output, '--issuer-ip', '1.1.1.1', '--enable-sales']);
   const profile = readFileSync(process.argv[3] || join(output, 'checkout-profile.json'));
   const parsedProfile = JSON.parse(profile);
   const manifest = JSON.parse(readFileSync(join(output, 'manifest.yml'))).app;
@@ -51,7 +51,7 @@ try {
   }
   await ready();
   const offers = await (await fetch(base + '/checkout/v1/offers')).json();
-  assert.match(JSON.stringify(offers), /moneyer-dev/);
+  assert.match(JSON.stringify(offers), /lnurlcash-reference/);
   const customerOrigin = parsedProfile.browser_origins.at(-1);
   const preflight = await fetch(base + '/checkout/v1/orders', { method: 'OPTIONS', headers: {
     origin: customerOrigin, 'access-control-request-method': 'POST',
@@ -62,7 +62,7 @@ try {
   assert.equal(unknownOrigin.headers.get('access-control-allow-origin'), null, 'Unselected customer origins stay blocked');
   async function quote(key, requestId) {
     const path = '/checkout/v1/orders';
-    const body = JSON.stringify({ request_id: requestId, offer_id: settings.offer_id, rail: 'lnurlcash', issuer_id: 'moneyer-dev', renews: null });
+    const body = JSON.stringify({ request_id: requestId, offer_id: settings.offer_id, rail: 'lnurlcash', issuer_id: 'lnurlcash-reference', renews: null });
     const authorization = auth({ kind: 27235, created_at: Math.floor(Date.now() / 1000), content: '',
       tags: [['u', 'https://storage.example:3742' + path], ['method', 'POST'], ['payload', hash(body)]] }, key);
     return fetch(base + path, { method: 'POST', headers: { authorization, 'content-type': 'application/json' }, body });
@@ -100,7 +100,7 @@ try {
   assert.deepEqual(await (await quote(buyer, 'first')).json(), first, 'Pause preserves existing quotes');
   assert.equal((await quote(stranger, 'paused-new')).status, 503, 'Pause refuses new quotes');
   assert.deepEqual(Buffer.from(await (await fetch(base + '/' + sha)).arrayBuffer()), bytes);
-  console.log('Packaged seller acceptance passed: generated Moneyer profile, bounded quotes, owner reserve, unpaid refusal, restart and pause. No issuer payment calls.');
+  console.log('Packaged seller acceptance passed: generated reference-mint profile, bounded quotes, owner reserve, unpaid refusal, restart and pause. No issuer payment calls.');
 } catch (error) {
   if (cid) console.error(docker('logs', '--tail', '20', cid));
   throw error;

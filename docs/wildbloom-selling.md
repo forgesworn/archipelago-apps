@@ -15,7 +15,7 @@ This integration applies to the Archipelago-packaged web app. The separately
 hosted public Wildbloom app does not automatically know which node you own.
 Use its destination field to select your node explicitly.
 
-## Prepare a Moneyer offer
+## Prepare an LNURLcash offer
 
 The patched dashboard now provides **Settings → Storage & selling** for the
 supported packaged node. See the [dashboard guide](storage-selling-dashboard.md)
@@ -49,17 +49,22 @@ It requires Python 3 and PyYAML (also used by the manifest validator).
    Fill in real sale/refund terms and increment `offer_revision` when changing
    published terms. A public email, Nostr key, URL or personal contact details
    are optional. Existing quotes retain their original terms.
-4. Prepare the files with an explicit DNS lookup:
+4. Keep the suggested `lnurlcash-reference` issuer or deliberately select
+   `moneyer-dev` for development. The packaged choices pin separate origins,
+   endpoints and keys; arbitrary issuer URLs are refused.
+5. Prepare the files with an explicit DNS lookup:
 
    ```sh
    python3 scripts/configure-wildbloom-sales.py /private/operator/settings.json \
-     --resolve-moneyer --output /private/operator/prepared
+     --resolve-issuer --output /private/operator/prepared
    ```
 
-   Alternatively repeat `--moneyer-ip PUBLIC_IP` to supply verified address
-   pins yourself. TLS still verifies `moneyer.dev`; redirects and ambient DNS
-   refresh are disabled by the receiver. Refresh pins deliberately if the issuer
-   moves. The output directory is 0700 and both files are 0600.
+   Alternatively repeat `--issuer-ip PUBLIC_IP` to supply verified address pins
+   yourself. TLS still verifies the selected issuer hostname; redirects and
+   ambient DNS refresh are disabled by the receiver. Refresh pins deliberately
+   if the issuer moves. The old `--moneyer-ip` and `--resolve-moneyer` spellings
+   remain compatibility aliases. The output directory is 0700 and both files
+   are 0600.
 
 Sales are **disabled in this prepared manifest**. Setup starts with editable
 suggestions: 200 GiB total, 100 GiB reserved for the owner, a 10 GiB customer
@@ -75,13 +80,22 @@ apps before choosing a total quota. Creating defaults does not inspect the disk
 or start the node. Existing installations keep their configuration until the
 operator deliberately applies a prepared manifest and profile.
 
-The Moneyer key is pinned to
-`0218865ec3352afb85695bd1b6089323f802ecbf3ae2103bf8fd4d3e6fb571f0e4`,
-observed through its [mint discovery document](https://moneyer.dev/.well-known/lnurlw/mint)
-on 8 October 2026. Its note endpoint is `/w` and mutation callback is `/w/cb`.
-Moneyer currently describes itself as an evaluation mint and warns users to
-expect loss of funds. Review its [terms](https://moneyer.dev/terms) before use.
-Key changes require explicit review; this script does not silently trust a new key.
+New settings select the LNURLcash reference mint at
+`https://mint.lnurlcash.com/`. Its key is pinned to
+`027f06257d0e9af2dbef2c1c64d03962a9240a65a987eb90b36000c64de34baa6d`,
+observed through its [mint discovery document](https://mint.lnurlcash.com/.well-known/lnurlw/mint)
+on 10 October 2026 and matched to the
+[reference implementation](https://github.com/dni/lnurl-mint). Its note endpoint
+is `/w` and mutation callback is `/w/cb`.
+
+Moneyer remains available as the explicit `moneyer-dev` choice for tests and
+development. Its discovery document describes it as a proof of concept and
+warns users to expect loss of funds. Selecting it requires the additional
+`moneyer_evaluation_accepted` setting after reviewing
+[its terms](https://moneyer.dev/terms). Existing settings written before issuer
+selection continue to mean Moneyer so an upgrade never reinterprets their IP
+pins or pending payment recovery. Key or endpoint changes require explicit
+review; this package does not silently trust new values.
 
 ## Install and enable deliberately
 
@@ -100,11 +114,12 @@ That ledger can contain spendable LNURLcash notes. Back up the **whole matching
 storage and checkout state together with the daemon stopped**; keep the backup
 private. Do not delete receiving state to retry an uncertain payment.
 
-After testing the receiver and reviewing the evaluation-mint terms, set
-`moneyer_evaluation_accepted` to `true` in your private settings. Prepare a new
-output directory with `--enable-sales`. This adds only the private profile path
-to the manifest; the profile and assets are never embedded in it. Check that
-the profile on the node exactly matches the new prepared profile before staging:
+After testing the receiver and reviewing the selected issuer, set
+`issuer_reviewed` to `true` in your private settings. If you deliberately select
+Moneyer, also set `moneyer_evaluation_accepted` to `true`. Prepare a new output
+directory with `--enable-sales`. This adds only the private profile path to the
+manifest; the profile and assets are never embedded in it. Check that the
+profile on the node exactly matches the new prepared profile before staging:
 
 ```sh
 APP_MANIFEST=/private/operator/enabled/manifest.yml \
@@ -123,7 +138,7 @@ port 3742 must be reachable from their devices. A working dashboard inside the
 LAN does not establish public reachability. Do not expose the dashboard itself
 merely to expose Blossom. The customer chooses your origin in Wildbloom,
 connects a signer, reads your offer, approves its quote and provides an
-exact-value Moneyer note. The node verifies and rotates that note before it
+exact-value note from the selected issuer. The node verifies and rotates that note before it
 activates the allowance. Owner identities retain their existing access and do
 not have to buy storage from themselves.
 

@@ -54,7 +54,7 @@ private checkout profile and persistent checkout state, with coordinated offline
 backups of checkout and storage. Do not paste receiving credentials into a public
 manifest. See the upstream [checkout documentation](https://github.com/forgesworn/wildbloom-node/blob/main/docs/CHECKOUT.md)
 before enabling it. Installing the app does not configure a merchant service.
-The [Archipelago Moneyer setup](wildbloom-selling.md) prepares a private profile
+The [Archipelago LNURLcash setup](wildbloom-selling.md) prepares a private profile
 and manifest with an aggregate sales ceiling and an owner reserve.
 
 ## Upgrade evidence

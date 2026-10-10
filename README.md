@@ -13,8 +13,9 @@ Archipelago itself.
 | `wildbloom` | Encrypt, replicate or shard files, recover from receipts, and use your node identities to sign |
 
 For existing installations, see the [Wildbloom upgrade guide](docs/wildbloom-upgrade.md).
-The browser defaults to your own node. For optional Moneyer LNURLcash sales,
-capacity reserved for yourself and private configuration, see
+The browser defaults to your own node. Optional LNURLcash sales default to the
+reference mint at `mint.lnurlcash.com`; Moneyer remains an explicit test/development
+choice. For capacity reserved for yourself and private configuration, see
 [own storage and selling](docs/wildbloom-selling.md).
 Configure it in **Settings → Storage & selling** with the matching patched
 dashboard/backend: see the [dashboard guide](docs/storage-selling-dashboard.md).
