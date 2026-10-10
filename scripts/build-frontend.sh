@@ -34,12 +34,29 @@ rm -f "$OUT_DIR"/frontend.tar.gz* "$OUT_DIR"/frontend.sha256 "$OUT_DIR"/inputs.s
 asset="archipelago-frontend-${ARCHY_RELEASE#v}.tar.gz"
 url="${ARCHY_REPO%.git}/releases/download/${ARCHY_RELEASE}/$asset"
 cache=$root/.cache/upstream-$asset
+base=$cache
 if ! { [ -f "$cache" ] && echo "$FRONTEND_SHA256  $cache" | sha256sum -c - >/dev/null 2>&1; }; then
-  curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "$cache.part" "$url"
-  mv "$cache.part" "$cache"
+  if curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "$cache.part" "$url"; then
+    mv "$cache.part" "$cache"
+  else
+    rm -f "$cache.part"
+    # A previous ForgeSworn frontend release retains aiui/ and
+    # archipelago-runtime/ from this exact, hash-pinned upstream release. Only
+    # those directories survive the overlay below; the dashboard is rebuilt.
+    base=$root/.cache/frontend-fallback-${FRONTEND_FALLBACK_SHA256}.tar.gz
+    if ! { [ -f "$base" ] && echo "$FRONTEND_FALLBACK_SHA256  $base" | sha256sum -c - >/dev/null 2>&1; }; then
+      curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+        -o "$base.part" "$FRONTEND_FALLBACK_URL"
+      mv "$base.part" "$base"
+    fi
+  fi
 fi
-echo "$FRONTEND_SHA256  $cache" | sha256sum -c -
-mkdir "$work/tree"; tar -xzf "$cache" -C "$work/tree"
+if [ "$base" = "$cache" ]; then
+  echo "$FRONTEND_SHA256  $base" | sha256sum -c -
+else
+  echo "$FRONTEND_FALLBACK_SHA256  $base" | sha256sum -c -
+fi
+mkdir "$work/tree"; tar -xzf "$base" -C "$work/tree"
 
 # 2. Build neode-ui as upstream's scripts/create-release.sh does (npm run build
 # into web/dist/neode-ui); the same staleness check on the embedded version.

@@ -5,6 +5,11 @@ ARCHY_REF=7abd04a7f680e72105ae783cecbe2268e3c8e71b
 # SHA-256 of the ARCHY_RELEASE frontend asset node/install-lite.sh installs:
 # releases/download/${ARCHY_RELEASE}/archipelago-frontend-${ARCHY_RELEASE#v}.tar.gz
 FRONTEND_SHA256=6d5135fa8e79b1bc84c8ed972770ebf99fe6611d819e5c1453f38f1593c26e66
+# Hash-pinned fallback for the two directories retained from the upstream
+# frontend asset. This p6 bundle was produced from the same ARCHY_RELEASE and
+# preserves aiui/ and archipelago-runtime/ byte-for-byte.
+FRONTEND_FALLBACK_URL=https://github.com/forgesworn/archipelago-apps/releases/download/frontend-v1.9.0-alpha-p6/frontend.tar.gz
+FRONTEND_FALLBACK_SHA256=3215f29a08f2f38a75526c33adaf7d2d6426be758203f31ecf02d7990ea71ab0
 WILDBLOOM_REF=d7dfadb33b7eedd8b180e2165150365f91299274
 WILDBLOOM_NODE_REF=bee538354ebccd652a506de21168ddf9eacbb54d
 # Packaging revisions: bump when the image changes without an upstream pin change.
