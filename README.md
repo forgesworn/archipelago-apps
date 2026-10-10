@@ -19,6 +19,8 @@ choice. For capacity reserved for yourself and private configuration, see
 [own storage and selling](docs/wildbloom-selling.md).
 Configure it in **Settings → Storage & selling** with the matching patched
 dashboard/backend: see the [dashboard guide](docs/storage-selling-dashboard.md).
+For a complete clean-node, operator, buyer, renewal, refund and backup exercise,
+follow the [independent operator runbook](docs/wildbloom-operator-runbook.md).
 
 The patches also let a node identity keep its key in a NIP-46 remote signer
 (a hardware signer such as Heartwood, or a phone app): see

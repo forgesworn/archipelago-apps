@@ -66,9 +66,11 @@ rootless Podman layout, without the cost of a full install.
    . ./PINS
    rm -rf "$S" && mkdir -p "$S"
    cp PINS node/install-lite.sh scripts/recover-wildbloom-payment.py "$S/"
-   gh release download "backend-${ARCHY_RELEASE}-p${BACKEND_PATCH_LEVEL}" -D "$S"
-   # The patched frontend (frontend.tar.gz, frontend.sha256, inputs.sha256):
-   gh release download "frontend-${ARCHY_RELEASE}-p${FRONTEND_PATCH_LEVEL}" -D "$S"
+   gh release download "backend-${ARCHY_RELEASE}-p${BACKEND_PATCH_LEVEL}" \
+     --pattern archipelago --pattern archipelago.sha256 -D "$S"
+   # The patched frontend files used by the installer:
+   gh release download "frontend-${ARCHY_RELEASE}-p${FRONTEND_PATCH_LEVEL}" \
+     --pattern frontend.tar.gz --pattern frontend.sha256 -D "$S"
    # Or upstream's own asset instead (no frontend.sha256; PINS FRONTEND_SHA256 checks it):
    #   curl -fL -o "$S/frontend.tar.gz" \
    #     "https://source.archipelago-foundation.org/lfg2025/archy/releases/download/${ARCHY_RELEASE}/archipelago-frontend-${ARCHY_RELEASE#v}.tar.gz"
