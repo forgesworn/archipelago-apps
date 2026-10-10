@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/lib/patches.bash
-{ grep -E '^(ARCHY_REPO|ARCHY_REF|ARCHY_RELEASE|FRONTEND_SHA256|FRONTEND_NODE_MAJOR)=' PINS
+{ grep -E '^(ARCHY_REPO|ARCHY_REF|ARCHY_RELEASE|FRONTEND_SHA256|FRONTEND_FALLBACK_URL|FRONTEND_FALLBACK_SHA256|FRONTEND_NODE_MAJOR)=' PINS
   frontend_patches | hash_listed
   sha256sum scripts/build-frontend.sh scripts/lib/patches.bash; } \
   | sha256sum | awk '{print $1}'
