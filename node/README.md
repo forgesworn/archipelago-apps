@@ -91,9 +91,11 @@ rootless Podman layout, without the cost of a full install.
    Expect three `active`. The installer finishes by requesting
    `https://<node-ip>/` from the node itself, then the backend's unauthenticated
    JSON-RPC `health` method through nginx, and fails if either does not answer.
-   It is safe to re-run, for example with a new backend or frontend release: it restarts the
-   service, keeps the existing SSH host keys and CA (a re-run reissues the leaf
-   certificate under the same CA, so its fingerprint changes), and never recursively chowns
+   It is safe to re-run, for example with a new backend or frontend release: it
+   restarts the service, regenerates the SSH host keys, and keeps the existing
+   TLS CA (a re-run reissues the leaf certificate under the same CA, so its
+   fingerprint changes). Re-verify and accept the new SSH host-key fingerprint
+   before reconnecting. The installer never recursively chowns
    `/var/lib/archipelago`, where image layers and app volumes belong to
    subuid-mapped ids.
 

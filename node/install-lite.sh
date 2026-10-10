@@ -176,11 +176,18 @@ systemctl restart archipelago
 systemctl is-active archipelago nginx avahi-daemon
 
 # Self-check, on the public IP from the node itself, which is the path a
-# SOCKS-tunnelled browser takes. First nginx answers at all (curl reports 000
-# and fails when nothing does; || true keeps that readable).
-code=$(curl -sk -m 10 -o /dev/null -w '%{http_code}' "https://$public_ip/") || true
+# SOCKS-tunnelled browser takes. First wait for nginx to answer at all (curl
+# reports 000 and fails when nothing does). systemctl can report active before
+# the listener is ready on a busy upgrade, so an immediate one-shot probe gives
+# a false failure.
+code=""
+for _ in $(seq 30); do
+  code=$(curl -sk -m 5 -o /dev/null -w '%{http_code}' "https://$public_ip/") || true
+  [ -n "$code" ] && [ "$code" != 000 ] && break
+  sleep 2
+done
 echo "https://$public_ip/ -> HTTP $code"
-[ "$code" != 000 ] || { echo "dashboard not answering on $public_ip:443" >&2; exit 1; }
+[ -n "$code" ] && [ "$code" != 000 ] || { echo "dashboard not answering on $public_ip:443" >&2; exit 1; }
 # Then the backend behind it. JSON-RPC `health` needs no session (it is in
 # UNAUTHENTICATED_METHODS, core/archipelago/src/api/rpc/middleware.rs; handler
 # handle_health in core/archipelago/src/api/rpc/dispatcher.rs) and returns
