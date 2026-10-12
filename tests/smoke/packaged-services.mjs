@@ -1,14 +1,14 @@
 // Adapted from Wildbloom a7f79cb scripts/services-acceptance.mjs (MIT).
-// Linux-only: published images, real loopback TLS, synthetic receiving services.
+// Linux-only: immutable published images by default; explicit candidates are labelled separately.
+// Real loopback TLS and synthetic receiving services.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { pathToFileURL } from "node:url";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { finalizeEvent, getPublicKey, verifyEvent } from "nostr-tools/pure";
 import { chromium } from "playwright-core";
@@ -26,14 +26,15 @@ const key = new Uint8Array(32).fill(42),
   pubkey = getPublicKey(key);
 const fixture = process.env.WILDBLOOM_CHECKOUT_FIXTURE;
 const [nodeTag, appTag] = process.argv.slice(2);
+const candidate = process.argv.includes("--candidate");
 assert.ok(fixture && nodeTag && appTag, "Pass Node and app image tags and set WILDBLOOM_CHECKOUT_FIXTURE.");
 assert.equal(process.platform, "linux", "Run on Linux: containers share the fixture's loopback network.");
 const docker = (...args) => execFileSync("docker", args, { encoding: "utf8" }).trim();
 function pinnedImage(tag) {
   const metadata = JSON.parse(docker("image", "inspect", tag))[0];
   const digest = metadata.RepoDigests?.find(d => d.startsWith(tag.split(":")[0] + "@"));
-  assert.ok(digest, "Pull the published image first; local rebuilds are not release acceptance.");
-  return { tag, digest, id: metadata.Id };
+  assert.ok(digest || candidate, "Pull the published image first; local rebuilds are not release acceptance.");
+  return { tag, digest: digest || null, id: metadata.Id, run: digest || metadata.Id };
 }
 const build = { node: pinnedImage(nodeTag), app: pinnedImage(appTag) };
 const tls = {
@@ -56,7 +57,9 @@ async function tlsProxy(listenPort, targetPort) {
   server.listen(listenPort, "127.0.0.1");
   await once(server, "listening");
 }
-const root = mkdtempSync(join(tmpdir(), "wildbloom-services-"));
+const scratch = join(process.cwd(), ".cache");
+mkdirSync(scratch, { recursive: true });
+const root = mkdtempSync(join(scratch, "wildbloom-services-"));
 const children = new Set();
 let browser, relay, activePage;
 const faults = [];
@@ -234,7 +237,7 @@ try {
     containers.add(name);
     return launch("docker", ["run", "--rm", "--name", name, "--network", "host",
       "--cap-drop=ALL", "--security-opt=no-new-privileges", "--read-only",
-      "--tmpfs", "/tmp", "--user", `${process.getuid()}:${process.getgid()}`, "-v", `${root}:${root}`, build.node.digest, ...args]);
+      "--tmpfs", "/tmp", "--user", `${process.getuid()}:${process.getgid()}`, "-v", `${root}:${root}`, build.node.run, ...args]);
   }
   async function stopNode(child) {
     docker("stop", "--time", "5", `archy-services-node-${process.pid}`);
@@ -293,7 +296,7 @@ try {
   const appName = `archy-services-app-${process.pid}`;
   containers.add(appName);
   docker("run", "-d", "--name", appName, "--security-opt=no-new-privileges",
-    "-p", "127.0.0.1::3743", "-e", `WILDBLOOM_HOME_NODE_URL=${nodeOrigin}`, build.app.digest);
+    "-p", "127.0.0.1::3743", "-e", `WILDBLOOM_HOME_NODE_URL=${nodeOrigin}`, build.app.run);
   const appPort = Number(docker("port", appName, "3743/tcp").split(":").at(-1));
   await tlsProxy(Number(new URL(appOrigin).port), appPort);
   await ready({ exitCode: null }, appOrigin);
@@ -377,7 +380,7 @@ try {
   const pendingOrder = pendingInventory.orders.find(o => o.state === "awaiting_payment");
   assert.ok(pendingOrder);
   const reconcile = () => docker("run", "--rm", "--network", "host", "--user", `${process.getuid()}:${process.getgid()}`,
-    "-v", `${root}:${root}`, "--entrypoint", "/usr/local/bin/checkout-operator", build.node.digest,
+    "-v", `${root}:${root}`, "--entrypoint", "/usr/local/bin/checkout-operator", build.node.run,
     "--state", join(root, "node", "operator", "checkout"), "reconcile", pendingOrder.order_id, "--profile", recoveryProfile);
   assert.equal(JSON.parse(reconcile()), "active");
   assert.equal(JSON.parse(reconcile()), "active", "Repeated local recovery must return the original activation");
@@ -541,12 +544,15 @@ try {
       {
         version: 1,
         result: "passed",
+        image_source: build.node.digest && build.app.digest ? "published" : "candidate",
         build,
         checks: [
           "dashboard read-only sales projection of the live packaged ledger and renewed allowance",
           "private bound refund destination on the LNURLcash renewal",
           "idempotent private operator refund record on packaged orders without receiving I/O or allowance changes",
-          "published images resolved and run by digest",
+          build.node.digest && build.app.digest
+            ? "published images resolved and run by digest"
+            : "explicit candidate images run by immutable local image ID; not release acceptance",
           "packaged own-node default before checkout and after reload",
           "paid-capacity ceiling before/after restart and renewal without double counting",
           "explicit trusted discovery without node probes",

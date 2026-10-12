@@ -1,17 +1,24 @@
 name: Packaged storage services
 on:
   push:
-    branches: ['**']
+    branches: ['**', '!main']
     paths: [PINS, apps/**, scripts/ensure-package-image.sh, upstream/patches/**, scripts/build-sales-reader.sh, tests/smoke/packaged-services.mjs, tests/smoke/package.json, tests/smoke/package-lock.json, .github/workflows/packaged-services.yml]
   workflow_dispatch:
+  workflow_run:
+    workflows: [images]
+    types: [completed]
+    branches: [main]
 permissions:
   contents: read
 jobs:
   customer-flow:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/setup-node@v4
         with: { node-version: '24' }
       - name: Read reviewed source pins and published image tags
@@ -73,8 +80,12 @@ jobs:
           export WILDBLOOM_CHECKOUT_FIXTURE="$GITHUB_WORKSPACE/.cache/services-node/target/debug/examples/checkout_fixture"
           export WILDBLOOM_TEST_TLS_KEY="$GITHUB_WORKSPACE/.cache/services-tls/key.pem"
           export NODE_EXTRA_CA_CERTS="$GITHUB_WORKSPACE/.cache/services-tls/cert.pem"
-          node tests/smoke/packaged-services.mjs "$NODE_IMAGE" "$APP_IMAGE" | tee .cache/packaged-services-report.json
-          node --input-type=module -e 'import fs from "node:fs"; import assert from "node:assert/strict"; const r=JSON.parse(fs.readFileSync(".cache/packaged-services-report.json")); assert.equal(r.result,"passed"); assert.ok(r.checks.includes("dashboard read-only sales projection of the live packaged ledger and renewed allowance"));'
+          candidate=()
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            candidate=(--candidate)
+          fi
+          node tests/smoke/packaged-services.mjs "$NODE_IMAGE" "$APP_IMAGE" "${candidate[@]}" | tee .cache/packaged-services-report.json
+          node --input-type=module -e 'import fs from "node:fs"; import assert from "node:assert/strict"; const r=JSON.parse(fs.readFileSync(".cache/packaged-services-report.json")); assert.equal(r.result,"passed"); assert.ok(r.checks.includes("dashboard read-only sales projection of the live packaged ledger and renewed allowance")); if (process.env.GITHUB_EVENT_NAME !== "push") { assert.equal(r.image_source,"published"); assert.ok(r.build.node.digest && r.build.app.digest); }' 
       - uses: actions/upload-artifact@v4
         if: success()
         with:
