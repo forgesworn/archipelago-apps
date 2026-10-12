@@ -83,6 +83,8 @@ class DiscoveryConfigTests(unittest.TestCase):
 
     def test_refuses_private_redirectable_or_ambiguous_relay_destinations(self):
         invalid = [
+            {"url": "wss://relay.example", "addresses": ["1.1.1.1:443"]},
+            {"url": "wss://RELAY.example/", "addresses": ["1.1.1.1:443"]},
             {"url": "ws://relay.example/", "addresses": ["1.1.1.1:80"]},
             {"url": "wss://user:secret@relay.example/", "addresses": ["1.1.1.1:443"]},
             {"url": "wss://relay.example/?token=secret", "addresses": ["1.1.1.1:443"]},

@@ -52,7 +52,7 @@ def https_origin(value):
                 or not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) for label in host.split("."))):
             raise ValueError("Use a public HTTPS hostname")
     else:
-        public_ip(host)
+        host = str(public_ip(host))
     host = f"[{host}]" if ":" in host else host
     port = f":{u.port}" if u.port and u.port != 443 else ""
     return f"https://{host}{port}"
@@ -86,7 +86,10 @@ def announcement(settings):
         if (u.scheme != "wss" or not u.hostname or u.username is not None or u.password is not None
                 or u.query or u.fragment or u.port == 0 or "\\" in r["url"] or u.hostname.endswith(".onion")):
             raise ValueError("Direct publication requires a public WSS relay without credentials, query or fragment")
-        https_origin("https://" + u.netloc)
+        relay_origin = https_origin("https://" + u.netloc)
+        canonical = "wss://" + relay_origin[len("https://"):] + (u.path or "/")
+        if r["url"] != canonical or any(c.isspace() for c in r["url"]):
+            raise ValueError("Use a canonical WSS relay URL, including its trailing slash")
         if r["url"] in seen:
             raise ValueError("Duplicate relay")
         seen.add(r["url"])
@@ -132,6 +135,8 @@ def build(settings, manifest, inspection=False, publication=False, free=False):
     if app["container"]["image"] != expected:
         raise ValueError("Upgrade the private manifest to the exact validated discovery image before preparing discovery")
     env = app.setdefault("environment", [])
+    if not isinstance(env, list) or any(not isinstance(entry, str) for entry in env):
+        raise ValueError("Manifest environment must use KEY=value strings")
     pairs = [entry.split("=", 1) for entry in env]
     if any(len(entry) != 2 for entry in pairs) or len({entry[0] for entry in pairs}) != len(pairs):
         raise ValueError("Manifest environment must use unique KEY=value entries")

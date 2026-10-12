@@ -58,7 +58,7 @@ index 2150ff8..69fc7d6 100644
 @@ -12,6 +12,15 @@ pub const REFERENCE_KEY: &str =
      "027f06257d0e9af2dbef2c1c64d03962a9240a65a987eb90b36000c64de34baa6d";
  pub static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
- 
+
 +/// Exact packaged images whose checkout profile, ceiling and recovery contract we validate.
 +pub fn compatible_node_image(image: &str) -> bool {
 +    matches!(
