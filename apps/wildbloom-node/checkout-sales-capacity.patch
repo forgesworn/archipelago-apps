@@ -1,8 +1,8 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 0255f5f..f0d4488 100644
+index b589ea7..184be44 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -2162,7 +2162,6 @@ dependencies = [
+@@ -2191,7 +2191,6 @@ dependencies = [
  [[package]]
  name = "shelter-kit"
  version = "0.5.0"
@@ -28,7 +28,7 @@ index b99ddd6..e2a7f8f 100644
 +[patch."https://github.com/forgesworn/shelter-kit"]
 +shelter-kit = { path = "vendor/shelter-kit" }
 diff --git a/crates/wildbloom-checkout/src/profile.rs b/crates/wildbloom-checkout/src/profile.rs
-index 1574d58..21cbdef 100644
+index 92455cc..74e6d0c 100644
 --- a/crates/wildbloom-checkout/src/profile.rs
 +++ b/crates/wildbloom-checkout/src/profile.rs
 @@ -13,6 +13,8 @@ use wildbloom_core::Store;
@@ -40,7 +40,7 @@ index 1574d58..21cbdef 100644
      pub browser_origins: Vec<String>,
      pub phoenixd: Option<PhoenixProfile>,
      #[serde(default)]
-@@ -114,7 +116,8 @@ impl RuntimeProfile {
+@@ -125,7 +127,8 @@ impl RuntimeProfile {
                      .collect(),
              )?) as Arc<dyn crate::NoteTransport>)
          };
@@ -51,7 +51,7 @@ index 1574d58..21cbdef 100644
              return Err(Error::Invalid);
          }
 diff --git a/crates/wildbloom-checkout/src/service.rs b/crates/wildbloom-checkout/src/service.rs
-index f53a088..d41c98e 100644
+index 399417b..d20bf55 100644
 --- a/crates/wildbloom-checkout/src/service.rs
 +++ b/crates/wildbloom-checkout/src/service.rs
 @@ -38,6 +38,7 @@ pub trait RefundTransport: Send + Sync {
@@ -70,7 +70,7 @@ index f53a088..d41c98e 100644
              ledger,
              store,
              lightning,
-@@ -68,6 +70,14 @@ impl Checkout {
+@@ -68,6 +70,19 @@ impl Checkout {
          self.refunds = Some(refunds);
          self
      }
@@ -82,10 +82,15 @@ index f53a088..d41c98e 100644
 +        self.max_paid_bytes = max_paid_bytes;
 +        Ok(self)
 +    }
++    /// Capacity for new customers using the same atomic seller ceiling as quotes.
++    pub fn available_sales_capacity(&self) -> Result<u64, StoreError> {
++        self.store
++            .remaining_paid_sale_capacity(self.max_paid_bytes.unwrap_or(i64::MAX as u64))
++    }
      pub fn config(&self) -> &Config {
          &self.config
      }
-@@ -197,15 +207,18 @@ impl Checkout {
+@@ -197,15 +212,18 @@ impl Checkout {
                  .state(&q.order_id, State::Reserving, State::Expired)?;
          } else {
              self.store
@@ -114,7 +119,7 @@ index f53a088..d41c98e 100644
                      StoreError::QuotaExceeded => Error::Capacity,
                      StoreError::InvalidPaidSale | StoreError::PaidAllowanceUnavailable => {
 diff --git a/crates/wildbloom-checkout/src/tests.rs b/crates/wildbloom-checkout/src/tests.rs
-index 53248ff..83298d8 100644
+index ee18fbe..6e844e5 100644
 --- a/crates/wildbloom-checkout/src/tests.rs
 +++ b/crates/wildbloom-checkout/src/tests.rs
 @@ -1850,3 +1850,30 @@ fn offers_fit_the_browser_transport_without_precision_loss() {
@@ -146,5 +151,67 @@ index 53248ff..83298d8 100644
 +            .unwrap()
 +            .quote_digest,
 +        first.quote_digest
++    );
++}
+diff --git a/crates/wildbloomd/src/services/mod.rs b/crates/wildbloomd/src/services/mod.rs
+index 8f4088f..4b65c8b 100644
+--- a/crates/wildbloomd/src/services/mod.rs
++++ b/crates/wildbloomd/src/services/mod.rs
+@@ -166,8 +166,9 @@ impl Services {
+                 eviction_policy: "Guest mirrors are evictable, oldest first, under storage pressure. Direct uploads from unknown keys are refused.".into() });
+         }
+         let checkout = self.checkout.as_ref().map(|checkout| {
++            let paid_free = checkout.available_sales_capacity().ok();
+             for offer in &checkout.config().offers {
+-                let availability = match free_bytes {
++                let availability = match paid_free {
+                     Some(free) if free >= offer.capacity_bytes => Availability::Accepting,
+                     Some(_) => Availability::Full,
+                     None => Availability::Unknown,
+diff --git a/crates/wildbloomd/src/services/tests.rs b/crates/wildbloomd/src/services/tests.rs
+index 34e2a26..da16e4b 100644
+--- a/crates/wildbloomd/src/services/tests.rs
++++ b/crates/wildbloomd/src/services/tests.rs
+@@ -454,3 +454,42 @@ fn announcement_transport_requires_explicit_public_pins_or_tor_proxy() {
+     });
+     assert!(services(p, s, None, true).is_err()); // No silent direct fallback.
+ }
++
++#[test]
++fn packaged_paid_discovery_respects_seller_ceiling_without_exposing_it() {
++    let temp = tempfile::tempdir().unwrap();
++    let s = store(temp.path());
++    // Total quota is 1000, offer is 600, seller allocation only 500.
++    let c = checkout(s.clone(), temp.path())
++        .with_sales_capacity(Some(500))
++        .unwrap();
++    let svc = services(profile(), s.clone(), Some(c), false).unwrap();
++    let d = svc.snapshot(1, false).unwrap();
++    assert_eq!(d.services[0].availability(), Availability::Full);
++    let value = serde_json::to_value(d).unwrap();
++    assert!(!value.to_string().contains("max_paid_bytes"));
++    assert!(!value.to_string().contains("owner_reserved_bytes"));
++    drop(svc);
++    let c = checkout(s.clone(), temp.path())
++        .with_sales_capacity(Some(600))
++        .unwrap();
++    let svc = services(profile(), s.clone(), Some(c), false).unwrap();
++    assert_eq!(
++        svc.snapshot(2, false).unwrap().services[0].availability(),
++        Availability::Accepting
++    );
++    let hold = PaidSale {
++        order_id: "ceiling-held".into(),
++        signer_pubkey: keys(2).public_key().to_hex(),
++        capacity_bytes: 1,
++        duration_seconds: 600,
++        grace_seconds: 60,
++        hold_expires_at: now().unwrap() + 600,
++        renews: None,
++    };
++    s.reserve_paid_sale_with_ceiling(&hold, 600).unwrap();
++    assert_eq!(
++        svc.snapshot(3, false).unwrap().services[0].availability(),
++        Availability::Full
 +    );
 +}

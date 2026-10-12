@@ -29,6 +29,7 @@ class RecoveryTests(unittest.TestCase):
             'settings': {'quota_bytes':10000, 'max_blob_bytes':1000}}})
         r.save(self.root/'operator/dashboard-profile-2.json', {'state':'/data/operator/checkout',
             'checkout':{'origin':'https://node.example:3742/'},'phoenixd':None,'notes':[]})
+        self.image = r.IMAGE
         self.calls = []
         self.running = True
         self.fail_recovery = False
@@ -42,12 +43,22 @@ class RecoveryTests(unittest.TestCase):
             db.execute('INSERT INTO orders VALUES(?,?,?)', ('order-a',state,json.dumps({'order_id':'order-a','rail':'lnurlcash',
                 'refund_to':refund_to})))
         self.db.chmod(0o600)
+    def test_recovery_accepts_exact_old_and_discovery_images_only(self):
+        for image in r.COMPATIBLE_IMAGES:
+            self.image = image
+            r.configuration(self.root, self.settings, self.execute)
+        for image in ['ghcr.io/forgesworn/wildbloom-node:latest',
+                      'ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-3']:
+            self.image = image
+            with self.assertRaises(r.Refused):
+                r.configuration(self.root, self.settings, self.execute)
+
     def execute(self, args, **kwargs):
         self.calls.append(args)
         if args[0] == 'curl':
             return '{"status":"ok"}'
         if args[:2] == ['podman','inspect']:
-            return json.dumps([{'State':{'Running':True},'ImageName':r.IMAGE,'Image':'ab'*32,
+            return json.dumps([{'State':{'Running':True},'ImageName':self.image,'Image':'ab'*32,
                 'Mounts':[{'Destination':'/data','Source':str(self.root),'RW':True}],
                 'Config':{'Env':['WILDBLOOM_CHECKOUT_PROFILE=/data/operator/dashboard-profile-2.json',
                   'WILDBLOOM_ARCHIPELAGO_SETTINGS_REVISION=2','WILDBLOOM_QUOTA_BYTES=10000','WILDBLOOM_MAX_BLOB_BYTES=1000']}}])

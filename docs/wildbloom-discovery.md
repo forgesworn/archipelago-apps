@@ -16,25 +16,87 @@ it in [Wildbloom PR 90](https://github.com/forgesworn/wildbloom/pull/90), merged
 `402-announce` 2.3.0. This is a versioned kind 31402 extension, not a ratified
 NIP interoperability claim.
 
-**The current Archipelago package pins predate native discovery.** Its installed
-container and dashboard do not gain this feature from a documentation or public
-browser update. Before enabling it on a packaged node, prepare and validate a
-new pinned Node image and manifest, including the existing sales-capacity
-patches, backup/restart/restore checks and exact installed-image verification.
-Do not add an unknown flag to the current production image or replace the
-writer over a live storage/checkout volume. This runbook enables nothing and
-does not change the packaged pins, owner reserve or existing operator settings.
+The packaged integration pins this native source and applies the existing
+sales-capacity patches. Image `wildbloom-node:0.3.5-b9a7cf4-2` uses the same
+aggregate `max_paid_bytes` ceiling for new quotes and advertised paid availability.
+The capacity read counts retained allowances and live new-sale holds, counting
+renewals once, and also checks total store commitments. An exhausted ceiling
+appears full even when physical owner space remains. Failed reads appear unknown.
+Discovery discloses neither the ceiling nor precise usage. Existing holds remain
+honourable after a ceiling reduction; a listing reserves nothing.
 
-The Archipelago capacity patches impose an extra aggregate paid-sale ceiling
-to preserve owner space. Upstream discovery observes the upstream quota and
-commitment rules. A future packaged integration must also use the patched
-ceiling when reporting paid availability; it must not advertise accepting
-capacity that its checkout will refuse. Keep that packaging gate separate from
-the verified upstream feature and public-browser deployment.
+Installing a new image does not enable discovery or update existing installations.
+Before replacing a writer, stop it, retain its whole matching storage/checkout
+volume and private configuration, and verify restart, old-file recovery and exact
+installed-image identity. Never run old and new writers against the same volume.
+See the [upgrade instructions](wildbloom-upgrade.md). Publication, free shelter and
+sales remain separate deliberate choices.
 
 For an independently installed upstream-compatible daemon, follow the native
 [configuration and transport runbook](https://github.com/forgesworn/wildbloom-node/blob/main/docs/SERVICE-DISCOVERY.md)
 with the steps below.
+
+## Prepare an operator manifest locally
+
+`scripts/configure-wildbloom-discovery.py` uses Python 3 and PyYAML. It performs
+no DNS lookup, signing, relay connection, deployment or payment. It writes a new
+0700 output directory and 0600 profile/manifest files, refusing overwrites and
+existing discovery configuration. Settings accept public keys only; signing
+secrets are never generated or accepted.
+
+```sh
+python3 scripts/configure-wildbloom-discovery.py \
+  --init-settings /private/operator/discovery-settings.json
+```
+
+Replace the synthetic public key, name, origins and service selection with your
+own. Use a dedicated operator-controlled service key; the daemon refuses its
+owner/friend keys. In your existing private Node manifest, change only the image
+tag to the validated discovery image, preserving quota, checkout profile,
+identity-derived environment, mounts and other operator settings. For paid
+listings, prepare/enable your offer separately using the sales workflow first.
+The helper never adds a checkout profile or changes capacity/prices.
+
+```sh
+python3 scripts/configure-wildbloom-discovery.py \
+  /private/operator/discovery-settings.json \
+  --manifest /private/operator/upgraded-node-manifest.yml \
+  --output /private/operator/discovery-prepared
+```
+
+Default preparation preserves the manifest exactly and leaves `announcement`
+null. To prepare HTTP inspection, use a new output directory and explicitly add
+`--enable-inspection`. For free shelter, select `free` in `public_services` and
+also add `--enable-free-shelter`: this deliberately enables signed guest mirrors
+and direct public HTTPS mirror transport. Unknown direct uploads stay refused.
+The profile lists all enabled services; it cannot hide enabled paid/free services
+behind a partial selection.
+
+An enabled manifest adds the separate bind
+`/var/lib/archipelago/wildbloom-service:/service`. Create that host directory
+0700, owned by the Archipelago service user, and install `service-profile.json`
+there at 0600. The storage/checkout volume remains `/data`. Default catalogue
+manifests do not contain this mount or service-profile environment entry.
+
+For publication, choose 1–8 canonical public WSS relays with approved public
+`IP:port` socket pins in `relays`, install your Linux-compatible external signer
+at `/service/signer` (host `wildbloom-service/signer`), and set
+`publication_reviewed: true` only after reviewing the public metadata and
+transport. The signer must be executable, owned by the service user, use the
+bounded JSON stdin/stdout contract and keep its key/configuration private.
+No signer, secret, arguments or default relays are supplied by the package.
+Use `--enable-publication` with a new output directory after the inspection
+checks below. It also enables inspection; it never deploys the result.
+
+The helper supports the package's direct HTTPS mode. Its publisher state is
+`/service/publisher`, outside the blob store, and must persist through restart.
+For Tor, use the separately documented native configuration and validate routing;
+the helper refuses Tor/proxy overrides instead of silently changing them.
+
+Applying a prepared manifest still requires the existing operator staging and
+backup procedure. Do not use the default catalogue manifest over an operator's
+private sales/discovery manifest. Dashboard sales controls on the new Node image
+require the compatible backend described in the upgrade instructions.
 
 ## 1. Choose what to make public
 

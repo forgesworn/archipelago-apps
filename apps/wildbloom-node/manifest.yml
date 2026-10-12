@@ -9,7 +9,7 @@ app:
   category: nostr
 
   container:
-    image: ghcr.io/forgesworn/wildbloom-node:0.3.5-4474ce1-2
+    image: ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-2
     pull_policy: if-not-present
     network: archy-net
     derived_env:
@@ -48,6 +48,7 @@ app:
       options: [rw]
 
   # Full-read audits are opt-in because they consume disk and download bandwidth.
+  # Public discovery stays off without an operator service profile.
   # Paid storage stays off unless an operator provisions a private checkout profile.
   environment:
     - WILDBLOOM_STORAGE_PROOFS=false

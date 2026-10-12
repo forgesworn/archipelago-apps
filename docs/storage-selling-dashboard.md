@@ -1,8 +1,8 @@
 # Storage & selling in the dashboard
 
 The patched Archipelago dashboard adds **Settings → Storage & selling** at
-`/dashboard/settings/storage`. Requires matching backend and frontend
-`v1.9.0-alpha-p7` assets and Wildbloom Node `0.3.5-4474ce1-2`, installed using
+`/dashboard/settings/storage`. The discovery package requires backend `v1.9.0-alpha-p9` with the existing
+`v1.9.0-alpha-p8` frontend and Wildbloom Node `0.3.5-b9a7cf4-2`, installed using
 the packaged rootless Quadlet and `/var/lib/archipelago/wildbloom-node` volume.
 This is a targeted test-node package, not a new upstream OTA or ISO.
 
@@ -117,3 +117,5 @@ synthetic receivers, including renewal at the paid-capacity ceiling and bounded
 automatic-refund status. Real-money renewal and automatic refund acceptance are
 recorded separately when completed. Public sales stay off until an operator configures and
 deliberately enables them; successful tests do not enable sales.
+
+Backend p9 also retains compatibility with the exact old Node `0.3.5-4474ce1-2`. Update the backend before using sales controls on the discovery image. It adds no discovery toggle or automatic publication.

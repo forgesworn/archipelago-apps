@@ -1,0 +1,15 @@
+{
+  "service_pubkey": "1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+  "identifier": "public-storage",
+  "name": "My public storage",
+  "about": "Public storage provided by this operator.",
+  "node_origin": "https://storage.example:3742",
+  "browser_origins": ["https://storage.example:3743"],
+  "public_services": ["paid"],
+  "withdrawn": false,
+  "publication_reviewed": false,
+  "signer": "/service/signer",
+  "relays": [],
+  "heartbeat_seconds": 1800,
+  "ttl_seconds": 7200
+}

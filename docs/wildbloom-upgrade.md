@@ -140,3 +140,31 @@ The upstream acceptance deliberately aborts one quote request at the network
 boundary and verifies that consecutive explicit quote attempts use different
 request identifiers. This is a browser-only update; the Wildbloom Node image,
 checkout database, stored blobs, identities and signer provider remain unchanged.
+
+## Public service discovery package
+
+Node image `0.3.5-b9a7cf4-2` adds the optional `/services/v1` route and signed
+Nostr announcements. Paid availability respects the package's aggregate
+customer ceiling, including live holds and retained allowances. The catalogue
+manifest keeps inspection, publication, free shelter and checkout disabled.
+Use the [operator discovery setup](wildbloom-discovery.md) to prepare private
+configuration with separate explicit opt-ins.
+
+Upgrade existing private manifests by changing their image tags, preserving
+storage/checkout paths, owner reserve, identity-derived environment and custom
+mounts. Retain a stopped-writer offline backup and original manifests; verify
+old-file retrieval, authorisation and private quote recovery after restart.
+Rollback uses the old image with its matching backup. This release does not
+establish an installed physical-node update or real relay/payment acceptance.
+
+Browser image `0.0.1-bb08278-2` includes the signed public directory for paid
+storage and free mirror shelter. Own-node selection remains local, and relay
+lookup, node inspection and checkout still require separate explicit actions.
+The packaged acceptance uses a controlled signed fixture and intercepted HTTP;
+it contacts no public relay and makes no payment.
+
+Dashboard-managed sales on the new Node require backend
+`backend-v1.9.0-alpha-p9`; frontend p8 remains compatible. The backend and
+private payment-recovery helper accept the exact old and new package tags,
+refusing arbitrary/latest images. Install the backend before using dashboard
+sales controls on the new image. CLI setup does not install these components.

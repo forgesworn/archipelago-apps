@@ -1,0 +1,1 @@
+`storage-combined.json` is the shared synthetic MIT-licensed 402-announce 2.3.0 storage fixture, copied from Wildbloom Node b9a7cf4. Acceptance refreshes only observation/expiry timestamps and signs with the documented synthetic fixture key. No operator key, public relay or real payment is used.

@@ -6,7 +6,8 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 archy=${1:-$root/.cache/archy-selling}
 image=${2:?Pass the packaged Wildbloom Node image}
 archy=$(cd "$archy" && pwd)
-fixture=$(mktemp -d)
+mkdir -p "$root/.cache"
+fixture=$(mktemp -d "$root/.cache/storage-settings.XXXXXX")
 trap 'rm -rf "$fixture"' EXIT
 mkdir "$fixture/src"
 cat > "$fixture/Cargo.toml" <<'TOML'
