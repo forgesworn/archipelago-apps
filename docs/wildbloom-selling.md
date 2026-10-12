@@ -27,6 +27,13 @@ This integration applies to the Archipelago-packaged web app. The separately
 hosted public Wildbloom app does not automatically know which node you own.
 Use its destination field to select your node explicitly.
 
+Public paid/free service listings are a separate explicit configuration. The
+[discovery runbook](wildbloom-discovery.md) describes the native/browser contract,
+dedicated signer, relay transports, withdrawal and expiry checks. Current
+packaged pins predate native discovery; a compatible validated image and
+availability that respects the package's owner reserve are prerequisites.
+Turning on sales never automatically publishes the node.
+
 ## Prepare an LNURLcash offer
 
 The patched dashboard now provides **Settings → Storage & selling** for the

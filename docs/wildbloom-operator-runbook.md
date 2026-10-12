@@ -4,6 +4,11 @@ This runbook takes one independent operator from a clean Archipelago test node
 to a paid Wildbloom upload. It also covers restart, retrieval, renewal, refund
 and the evidence worth keeping. Follow it in order for the first run.
 
+Public service discovery is a separate opt-in feature. See the
+[discovery runbook](wildbloom-discovery.md), including its package prerequisite
+and owner-reserve availability gate. The current pinned container remains
+unpublished; enabling sales does not publish a Nostr listing.
+
 ForgeSworn supplies the software. The operator supplies the machine, storage,
 network access, offer, customer relationship and payment/refund handling.
 ForgeSworn does not run the node, list the offer, set its terms, collect payment
