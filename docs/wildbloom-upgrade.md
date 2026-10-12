@@ -156,3 +156,9 @@ mounts. Retain a stopped-writer offline backup and original manifests; verify
 old-file retrieval, authorisation and private quote recovery after restart.
 Rollback uses the old image with its matching backup. This release does not
 establish an installed physical-node update or real relay/payment acceptance.
+
+Browser image `0.0.1-bb08278-2` includes the signed public directory for paid
+storage and free mirror shelter. Own-node selection remains local, and relay
+lookup, node inspection and checkout still require separate explicit actions.
+The packaged acceptance uses a controlled signed fixture and intercepted HTTP;
+it contacts no public relay and makes no payment.

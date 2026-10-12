@@ -35,7 +35,7 @@ case "$app" in
            scripts/configure-wildbloom-discovery.py docs/wildbloom-discovery.example.json)
     pin_re='^(WILDBLOOM_NODE_REF|WILDBLOOM_NODE_PKG_REV)=' ;;
   wildbloom)
-    smoke=(tests/smoke/wildbloom.sh tests/smoke/own-node.mjs tests/smoke/package.json tests/smoke/package-lock.json)
+    smoke=(tests/smoke/wildbloom.sh tests/smoke/own-node.mjs tests/smoke/fixtures tests/smoke/package.json tests/smoke/package-lock.json)
     pin_re='^(WILDBLOOM_REF|WILDBLOOM_PKG_REV)=' ;;
 esac
 smoke+=("${common_smoke[@]}")
