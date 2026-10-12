@@ -85,7 +85,7 @@ jobs:
             candidate=(--candidate)
           fi
           node tests/smoke/packaged-services.mjs "$NODE_IMAGE" "$APP_IMAGE" "${candidate[@]}" | tee .cache/packaged-services-report.json
-          node --input-type=module -e 'import fs from "node:fs"; import assert from "node:assert/strict"; const r=JSON.parse(fs.readFileSync(".cache/packaged-services-report.json")); assert.equal(r.result,"passed"); assert.ok(r.checks.includes("dashboard read-only sales projection of the live packaged ledger and renewed allowance")); if (process.env.GITHUB_EVENT_NAME !== "push") { assert.equal(r.image_source,"published"); assert.ok(r.build.node.digest && r.build.app.digest); }' 
+          node --input-type=module -e 'import fs from "node:fs"; import assert from "node:assert/strict"; const r=JSON.parse(fs.readFileSync(".cache/packaged-services-report.json")); assert.equal(r.result,"passed"); assert.ok(r.checks.includes("dashboard read-only sales projection of the live packaged ledger and renewed allowance")); if (process.env.GITHUB_EVENT_NAME !== "push") { assert.equal(r.image_source,"published"); assert.ok(r.build.node.digest && r.build.app.digest); }'
       - uses: actions/upload-artifact@v4
         if: success()
         with:
