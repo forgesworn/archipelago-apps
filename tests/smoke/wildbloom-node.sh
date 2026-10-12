@@ -10,7 +10,9 @@ pubkey=$(cd "$here" && node --input-type=module -e 'import { getPublicKey } from
 # Production ownership: rootless Podman maps container uid 0 to the host user that owns the bind
 # directory, so container root owns /data. Reproduce that with a root-owned dir; wildbloomd chmods
 # /data to 0700 on start, which needs ownership (or CAP_FOWNER, which the manifest drops).
-data=$(mktemp -d)
+scratch=$(mktemp -d "$here/node-upgrade.XXXXXX")
+data=$scratch/data
+mkdir "$data"
 sudo chown 0:0 "$data"
 # --read-only matches the manifest's readonly_root: true.
 start_node() {
@@ -19,7 +21,7 @@ start_node() {
   -e WILDBLOOM_SERVER_NAME=localhost,127.0.0.1 -e WILDBLOOM_STORAGE_PROOFS=true "$1"
 }
 cid=$(start_node "${previous:-$image}")
-trap 'docker logs "$cid" | tail -n 50; docker rm -f "$cid" >/dev/null; sudo rm -rf "$data"' EXIT
+trap 'docker logs "$cid" | tail -n 50; docker rm -f "$cid" >/dev/null; sudo rm -rf "$scratch"' EXIT
 # The node's containers (Podman/netavark) have ::1 on lo, and so do Docker 26+ containers on an
 # IPv4-only network. Assert it so the localhost probe below matches the node. Test the content:
 # procfs files always stat as size 0, so `test -s /proc/net/if_inet6` is always false.
@@ -33,11 +35,12 @@ ipv6_check() {
 ipv6_check
 for _ in $(seq 30); do curl -fsS http://127.0.0.1:3742/healthz >/dev/null && break; sleep 1; done
 curl -fsS http://127.0.0.1:3742/healthz
+[ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3742/services/v1)" = 404 ] || { echo "FAIL: discovery should be off by default"; exit 1; }
 # Archipelago's generated health check (quadlet.rs:610 at the pinned core) runs this exact chain
 # inside the container. debian-slim has neither wget nor curl, so in practice it is the bash
 # /dev/tcp branch against localhost; run the whole command as the node does.
 docker exec "$cid" sh -c "if command -v wget >/dev/null 2>&1; then wget -q -T 5 -O /dev/null http://localhost:3742/healthz; elif command -v curl >/dev/null 2>&1; then curl -fsS -m 5 http://localhost:3742/healthz; elif command -v bash >/dev/null 2>&1; then bash -c 'exec 3<>/dev/tcp/localhost/3742'; else exit 0; fi"
-payload=$(mktemp); head -c 4096 /dev/urandom > "$payload"
+payload=$scratch/payload; head -c 4096 /dev/urandom > "$payload"
 sha=$(sha256sum "$payload" | awk '{print $1}')
 auth=$(cd "$here" && node sign-auth.mjs "$secret" upload "$sha" localhost)
 # The server reads X-SHA-256 (and Content-Length, which curl sets) before it checks authorisation.
@@ -59,7 +62,7 @@ fi
 (cd "$here" && node storage-proof.mjs "$secret" "$payload")
 # A stranger's key must be refused. Fresh payload, so the refusal is about auth, not a stored blob.
 stranger=$(openssl rand -hex 32)
-payload2=$(mktemp); head -c 4096 /dev/urandom > "$payload2"
+payload2=$scratch/payload2; head -c 4096 /dev/urandom > "$payload2"
 sha2=$(sha256sum "$payload2" | awk '{print $1}')
 bad=$(cd "$here" && node sign-auth.mjs "$stranger" upload "$sha2" localhost)
 code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT --data-binary @"$payload2" -H "Authorization: Nostr $bad" \

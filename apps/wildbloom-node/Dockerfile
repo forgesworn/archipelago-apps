@@ -18,7 +18,7 @@ RUN git clone --quiet --no-checkout https://github.com/forgesworn/shelter-kit.gi
     && git -C vendor/shelter-kit apply /patches/shelter-sales-capacity.patch \
     && git apply --check /patches/checkout-sales-capacity.patch \
     && git apply /patches/checkout-sales-capacity.patch
-RUN cargo test --locked -p wildbloom-checkout \
+RUN cargo test --locked --workspace \
     && cargo test --locked --manifest-path vendor/shelter-kit/Cargo.toml --lib \
     && cargo build --release --locked -p wildbloomd -p wildbloom-checkout --bin wildbloomd --bin checkout-operator
 

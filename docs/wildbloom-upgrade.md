@@ -140,3 +140,19 @@ The upstream acceptance deliberately aborts one quote request at the network
 boundary and verifies that consecutive explicit quote attempts use different
 request identifiers. This is a browser-only update; the Wildbloom Node image,
 checkout database, stored blobs, identities and signer provider remain unchanged.
+
+## Public service discovery package
+
+Node image `0.3.5-b9a7cf4-2` adds the optional `/services/v1` route and signed
+Nostr announcements. Paid availability respects the package's aggregate
+customer ceiling, including live holds and retained allowances. The catalogue
+manifest keeps inspection, publication, free shelter and checkout disabled.
+Use the [operator discovery setup](wildbloom-discovery.md) to prepare private
+configuration with separate explicit opt-ins.
+
+Upgrade existing private manifests by changing their image tags, preserving
+storage/checkout paths, owner reserve, identity-derived environment and custom
+mounts. Retain a stopped-writer offline backup and original manifests; verify
+old-file retrieval, authorisation and private quote recovery after restart.
+Rollback uses the old image with its matching backup. This release does not
+establish an installed physical-node update or real relay/payment acceptance.
