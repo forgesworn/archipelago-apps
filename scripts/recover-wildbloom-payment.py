@@ -24,7 +24,8 @@ import uuid
 
 ROOT = Path('/var/lib/archipelago/wildbloom-node')
 SETTINGS = Path('/var/lib/archipelago/settings/wildbloom-storage/settings.json')
-IMAGE = 'ghcr.io/forgesworn/wildbloom-node:0.3.5-4474ce1-2'
+IMAGE = 'ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-2'
+COMPATIBLE_IMAGES = frozenset((IMAGE, 'ghcr.io/forgesworn/wildbloom-node:0.3.5-4474ce1-2'))
 SERVICE = 'wildbloom-node.service'
 CONTAINER = 'wildbloom-payment-recovery'
 MAX = 9_007_199_254_740_991
@@ -125,7 +126,7 @@ def configuration(root, settings_path, execute):
     info = json.loads(execute(['podman', 'inspect', 'wildbloom-node']))
     require(len(info) == 1 and info[0]['State']['Running'], 'Start the node before requesting recovery.')
     info = info[0]
-    require(info['ImageName'] == IMAGE and re.fullmatch(r'(sha256:)?[0-9a-f]{64}', info['Image']),
+    require(info['ImageName'] in COMPATIBLE_IMAGES and re.fullmatch(r'(sha256:)?[0-9a-f]{64}', info['Image']),
             'Installed node image is incompatible with this recovery tool.')
     mounts = [m for m in info['Mounts'] if m['Destination'] == '/data']
     require(len(mounts) == 1 and mounts[0]['Source'] == str(root) and mounts[0]['RW'],

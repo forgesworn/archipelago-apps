@@ -2,14 +2,14 @@ name: Packaged storage services
 on:
   push:
     branches: ['**']
-    paths: [upstream/patches/**, scripts/build-sales-reader.sh, tests/smoke/packaged-services.mjs, tests/smoke/package.json, tests/smoke/package-lock.json, .github/workflows/packaged-services.yml]
+    paths: [PINS, apps/**, scripts/ensure-package-image.sh, upstream/patches/**, scripts/build-sales-reader.sh, tests/smoke/packaged-services.mjs, tests/smoke/package.json, tests/smoke/package-lock.json, .github/workflows/packaged-services.yml]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   customer-flow:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -44,13 +44,15 @@ jobs:
           ARCHY_FULL=1 scripts/fetch-archy.sh .cache/services-archy
           scripts/apply-patches.sh .cache/services-archy
           scripts/build-sales-reader.sh .cache/services-archy
-      - name: Pull published images; do not rebuild the app or daemon
-        env:
-          APP_IMAGE: ${{ steps.pins.outputs.app_image }}
-          NODE_IMAGE: ${{ steps.pins.outputs.node_image }}
+      - uses: docker/setup-buildx-action@v3
+        with:
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+      - name: Use published packages or build local candidates without publishing
         run: |
-          docker pull "$APP_IMAGE"
-          docker pull "$NODE_IMAGE"
+          scripts/ensure-package-image.sh wildbloom
+          scripts/ensure-package-image.sh wildbloom-node
       - name: Install test tools and generate ephemeral loopback TLS certificate
         run: |
           npm ci --prefix tests/smoke --ignore-scripts

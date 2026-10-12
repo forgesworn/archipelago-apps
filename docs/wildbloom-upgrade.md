@@ -162,3 +162,9 @@ storage and free mirror shelter. Own-node selection remains local, and relay
 lookup, node inspection and checkout still require separate explicit actions.
 The packaged acceptance uses a controlled signed fixture and intercepted HTTP;
 it contacts no public relay and makes no payment.
+
+Dashboard-managed sales on the new Node require backend
+`backend-v1.9.0-alpha-p9`; frontend p8 remains compatible. The backend and
+private payment-recovery helper accept the exact old and new package tags,
+refusing arbitrary/latest images. Install the backend before using dashboard
+sales controls on the new image. CLI setup does not install these components.
