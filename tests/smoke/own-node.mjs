@@ -18,10 +18,10 @@ try {
   const fixture = JSON.parse(readFileSync(new URL('./fixtures/storage-combined.json', import.meta.url)));
   const now = Math.floor(Date.now() / 1000) - 5;
   const description = { ...fixture.description, observed_at: now, expires_at: now + 7200 };
-  const content = JSON.parse(fixture.event.content);
+  const content = JSON.parse(fixture.signed_event.content);
   content.storage = description;
-  const event = finalizeEvent({ kind: fixture.event.kind, created_at: now,
-    tags: fixture.event.tags.map(t => t[0] === 'expiration' ? ['expiration', String(description.expires_at)] : t),
+  const event = finalizeEvent({ kind: fixture.signed_event.kind, created_at: now,
+    tags: fixture.signed_event.tags.map(t => t[0] === 'expiration' ? ['expiration', String(description.expires_at)] : t),
     content: JSON.stringify(content) }, new Uint8Array(32).fill(1));
   let relayQueries = 0, inspections = 0;
   await context.routeWebSocket('wss://relay.example/', socket => {
@@ -97,7 +97,7 @@ try {
   await page.click('#inspect-storage-service');
   await page.locator('#node-service-status').filter({ hasText: 'Current service identity and terms checked' }).waitFor();
   assert.equal(inspections, 1);
-  assert.match(await page.locator('#storage-service-description').textContent(), /best-effort/);
+  assert.match(await page.locator('#storage-service-description').textContent(), /best-effort/i);
   await page.click('#use-storage-service');
   await page.locator('#node-service-status').filter({ hasText: 'Paid node selected' }).waitFor();
   assert.equal(await input.inputValue(), 'https://storage.example/');
