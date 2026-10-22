@@ -368,3 +368,25 @@ on-disk format is unchanged. Both stores now load through it.
 Upstream main fixed this independently (`053f03be`, 5 Oct): `is_plaintext_json`
 now accepts a file only if the whole of it parses as JSON. Not proposed;
 drop `0017` at the next `ARCHY_REF` bump past `053f03be`.
+
+## Install port probe with a published UDP and TCP port (archy `7abd04a`)
+
+After the orchestrator installs an app, `ensure_host_port_listener`
+(`core/archipelago/src/api/rpc/package/install.rs`, ~line 2109) is called with no
+runtime ports. It falls back to `published_host_port` (~line 2167), which takes the
+first parseable line of `podman port <container>` and TCP-connects to it on
+127.0.0.1. If that probe fails it restarts the container, waits, and then returns an
+error, so `package.install` fails although the container is running.
+
+For an app that publishes both a TCP and a UDP port, which line comes first is not
+stable. Podman's `ParsePortMapping` (`pkg/specgen/generate/ports.go`, v5.4.2) groups
+the mappings as host IP, then protocol, in Go maps and ranges over them to build the
+list it stores, so the order differs from one container create to the next. Half the
+installs would probe the UDP port with a TCP connect and fail. The other probe in the
+orchestrator, `wait_for_manifest_host_ports`, already skips non-TCP ports for this
+reason; `published_host_port` should skip lines ending in `/udp` or `/sctp` too (or
+the caller should pass the manifest's first TCP host port as `runtime_ports`).
+
+`apps/stampede-keep` sidesteps it with `network: host`: a host-network container has
+no port mappings (podman drops them in `namespaces.go` for the host mode), so there is
+no `podman port` line to probe.

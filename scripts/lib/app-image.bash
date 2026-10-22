@@ -12,6 +12,10 @@ app_image() {
     wildbloom)
       APP_REF=${WILDBLOOM_REF:?}
       APP_TAG="ghcr.io/forgesworn/wildbloom:0.0.1-${APP_REF:0:7}-${WILDBLOOM_PKG_REV:?}" ;;
+    stampede-keep)
+      # Hand-loaded on the node; CI neither builds nor publishes it.
+      APP_REF=hand-loaded
+      APP_TAG="ghcr.io/forgesworn/stampede-keep:${STAMPEDE_KEEP_TAG:?}" ;;
     *) echo "unknown app: $1" >&2; return 2 ;;
   esac
 }

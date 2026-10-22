@@ -1,0 +1,98 @@
+app:
+  id: stampede-keep
+  name: Stampede Keep
+  version: 0.1.0
+  upstream:
+    kind: internal
+  description: A headless Stampede host that stays open between races. Players join by its six-letter room code or an invite link; the status page on the home network shows the code, who is in and the invites. Test identity, for the home network.
+  category: games
+
+  container:
+    # Hand-loaded, not built or published by this repository's CI: the image is
+    # loaded into the node's podman under this name (podman load + podman tag),
+    # and the node never pulls a tag it already holds. The tag comes from
+    # STAMPEDE_KEEP_TAG in PINS; every new build needs a new tag.
+    image: ghcr.io/forgesworn/stampede-keep:k1e-1
+    pull_policy: if-not-present
+    # Host networking, deliberately. The Keep is a UDP/QUIC game host that
+    # announces its own address (--advertise) and needs to see each player's real
+    # address, which a published-port proxy would hide. It also keeps the install
+    # from tripping on archy's post-install port probe: ensure_host_port_listener
+    # (api/rpc/package/install.rs) TCP-connects to the first line of `podman port`,
+    # and with a published UDP and TCP port that line is chosen at random per
+    # create (podman's ParsePortMapping ranges over Go maps). A host-network
+    # container publishes nothing, so there is no `podman port` line to probe.
+    # The container still runs with all capabilities dropped, a read-only root and
+    # no-new-privileges; it listens on unprivileged ports only.
+    network: host
+    # Arguments after the image; the entrypoint is the image's stampede-headless.
+    custom_args:
+      - --online
+      - --test-identity
+      - --data-dir
+      - /var/lib/stampede-keep/data
+      - --quic-port
+      - "47800"
+      - --status
+      - 0.0.0.0:8780
+      - --seconds
+      - "0"
+      # Announce only the address in STAMPEDE_ADVERTISE (derived_env below): no
+      # LAN, STUN or UPnP discovery.
+      - --advertise-only
+    # The address phones are told to dial: the node's own address, filled in by
+    # the node when the app is installed.
+    derived_env:
+      - key: STAMPEDE_ADVERTISE
+        template: "{{HOST_IP}}:47800"
+    # The image runs as its `keep` user (uid/gid 999). Rootless podman maps that
+    # to host uid/gid 100998 (subuid 100000 + 999 - 1); this chowns the data dir.
+    data_uid: "999:999"
+
+  dependencies:
+    - storage: 1Gi
+
+  resources:
+    memory_limit: 256Mi
+    cpu_limit: 1
+
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: host
+
+  # Host networking: these are what the Keep listens on, declared so the node
+  # knows them (the install waits for 8780 to answer). Nothing is published.
+  # Both stay LAN-only through the node firewall.
+  ports:
+    - host: 8780
+      container: 8780
+      protocol: tcp
+      auth: none
+      auth_rationale: Home-network status page with no login of its own, by design. It shows the room code and live invite links, and shows the owner-pairing link only to requests that come from the node itself, so the app gate's proxy must not sit in front of it. It answers only requests addressed to an IP address or localhost. Keep it reachable from the home network only and never forward it on the router.
+    - host: 47800
+      container: 47800
+      protocol: udp
+      auth: none
+      auth_rationale: QUIC game traffic from players' phones. Players are authenticated by the Keep itself (room code or invite) and the protocol is not HTTP, so a dashboard login cannot sit in front of it.
+
+  volumes:
+    # The Keep's identity, owner claim, invites and cursor. Losing this cancels
+    # every invite and gives the Keep a new key.
+    - type: bind
+      source: /var/lib/archipelago/stampede-keep
+      target: /var/lib/stampede-keep/data
+      options: [rw]
+
+  health_check:
+    type: http
+    endpoint: http://127.0.0.1:8780
+    path: /status.json
+    interval: 30s
+    timeout: 5s
+    retries: 3
+
+  metadata:
+    author: ForgeSworn
+    tags: [game, multiplayer, stampede]
