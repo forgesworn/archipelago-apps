@@ -387,7 +387,7 @@ orchestrator, `wait_for_manifest_host_ports`, already skips non-TCP ports for th
 reason; `published_host_port` should skip lines ending in `/udp` or `/sctp` too (or
 the caller should pass the manifest's first TCP host port as `runtime_ports`).
 
-`apps/stampede-keep` sidesteps it with `network: host`: a host-network container has
+`apps/ingle` sidesteps it with `network: host`: a host-network container has
 no port mappings (podman drops them in `namespaces.go` for the host mode), so there is
 no `podman port` line to probe.
 

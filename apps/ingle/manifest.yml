@@ -1,18 +1,18 @@
 app:
-  id: stampede-keep
-  name: Stampede Keep
+  id: ingle
+  name: Ingle
   version: 0.1.0
   upstream:
     kind: internal
-  description: A headless Stampede host that stays open between races. Players join by its six-letter room code or an invite link; the status page on the home network shows the code, who is in and the invites. Test identity, for the home network.
+  description: Game hosting for your Keep. Today it hosts Stampede rooms that stay open between races. Players join by its six-letter room code or an invite link; the status page on the home network shows the code, who is in and the invites. Test identity, for the home network.
   category: games
 
   container:
     # Hand-loaded, not built or published by this repository's CI: the image is
     # loaded into the node's podman under this name (podman load + podman tag),
     # and the node never pulls a tag it already holds. The tag comes from
-    # STAMPEDE_KEEP_TAG in PINS; every new build needs a new tag.
-    image: ghcr.io/forgesworn/stampede-keep:k1e-4
+    # INGLE_TAG in PINS; every new build needs a new tag.
+    image: ghcr.io/forgesworn/ingle:k1e-4
     pull_policy: if-not-present
     # Host networking, deliberately. The Keep is a UDP/QUIC game host that
     # announces its own address (--advertise) and needs to see each player's real
@@ -88,7 +88,7 @@ app:
     # The Keep's identity, owner claim, invites and cursor. Losing this cancels
     # every invite and gives the Keep a new key.
     - type: bind
-      source: /var/lib/archipelago/stampede-keep
+      source: /var/lib/archipelago/ingle
       target: /var/lib/stampede-keep/data
       options: [rw]
 
