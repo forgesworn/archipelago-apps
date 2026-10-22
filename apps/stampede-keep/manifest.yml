@@ -12,7 +12,7 @@ app:
     # loaded into the node's podman under this name (podman load + podman tag),
     # and the node never pulls a tag it already holds. The tag comes from
     # STAMPEDE_KEEP_TAG in PINS; every new build needs a new tag.
-    image: ghcr.io/forgesworn/stampede-keep:k1e-1
+    image: ghcr.io/forgesworn/stampede-keep:k1e-2
     pull_policy: if-not-present
     # Host networking, deliberately. The Keep is a UDP/QUIC game host that
     # announces its own address (--advertise) and needs to see each player's real

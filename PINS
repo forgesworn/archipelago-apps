@@ -24,4 +24,4 @@ FRONTEND_PATCH_LEVEL=8
 FRONTEND_NODE_MAJOR=20
 # Stampede Keep: hand-loaded into the node's podman (not built or pushed by CI).
 # Bump to the new build's tag whenever the image changes: the node never re-pulls a tag it has.
-STAMPEDE_KEEP_TAG=k1e-1
+STAMPEDE_KEEP_TAG=k1e-2
