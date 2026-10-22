@@ -390,3 +390,13 @@ the caller should pass the manifest's first TCP host port as `runtime_ports`).
 `apps/stampede-keep` sidesteps it with `network: host`: a host-network container has
 no port mappings (podman drops them in `namespaces.go` for the host mode), so there is
 no `podman port` line to probe.
+
+## Re-staging a running app doesn't always apply the new image (seen 2026-10-22, stampede-keep)
+
+Re-staging `stampede-keep` from `k1e-2` to `k1e-3` logged "Applying pending Quadlet runtime change" and restarted
+the container on the new image. Re-staging `k1e-3` to `k1e-4` an hour later rewrote the Quadlet unit
+(`Image=...:k1e-4`) and logged `INSTALL ORCH OK`, but never applied it: the old container kept running, and
+stage-to-node.sh still reported `state=running`. `systemctl --user daemon-reload && systemctl --user restart
+stampede-keep.service` (as `archipelago`) applied it. Suggest: after rewriting a Quadlet unit for a running app,
+always apply it (or report the pending change), and have stage-to-node.sh check the running container's image
+against the manifest's.
