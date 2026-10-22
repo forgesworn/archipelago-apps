@@ -12,7 +12,7 @@ app:
     # loaded into the node's podman under this name (podman load + podman tag),
     # and the node never pulls a tag it already holds. The tag comes from
     # STAMPEDE_KEEP_TAG in PINS; every new build needs a new tag.
-    image: ghcr.io/forgesworn/stampede-keep:k1e-2
+    image: ghcr.io/forgesworn/stampede-keep:k1e-3
     pull_policy: if-not-present
     # Host networking, deliberately. The Keep is a UDP/QUIC game host that
     # announces its own address (--advertise) and needs to see each player's real
@@ -40,6 +40,13 @@ app:
       # Announce only the address in STAMPEDE_ADVERTISE (derived_env below): no
       # LAN, STUN or UPnP discovery.
       - --advertise-only
+      # Relays for the room code and the owner's messages. relay.damus.io is left
+      # out for now: it demands NIP-42 AUTH for these reads and then rejects every
+      # AUTH ("needs serviceUrl"), which would hold the Keep's read cursor back.
+      - --relay
+      - wss://nos.lol
+      - --relay
+      - wss://relay.primal.net
     # The address phones are told to dial: the node's own address, filled in by
     # the node when the app is installed.
     derived_env:
