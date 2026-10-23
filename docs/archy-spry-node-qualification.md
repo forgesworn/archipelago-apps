@@ -35,6 +35,39 @@ a public Spry service from this node on this evidence.
 
 ## Authenticated installation
 
+### Corrected login path: use the deployed signer support
+
+The owner subsequently clarified that they normally sign in with their signer.
+The agent incorrectly assumed password login was the required route and
+recommended an unnecessary recovery detour. The deployed signer flow is
+implemented by this repository's patches 0006/0007 and later signer patches;
+reading only the unpatched upstream cache missed it.
+
+Read-only inspection of the actual node confirmed that `login_signers` is
+present and unchanged compared with the pre-reset authentication backup.
+The served login UI includes `auth.login.signer.available`, `.start` and
+`.finish`; the availability RPC returned `true`. This is configuration and
+capability evidence, not a completed owner-approved signer login.
+
+The owner has executed the prepared reset. The password hash changed and
+TOTP was cleared; sessions, remembered browser logins and paired-device tokens
+were invalidated by that procedure. No signer enrolment was removed. No
+further authentication setting or restoration was applied during this check.
+The earlier password-only instructions below describe that detour, not a
+prerequisite for signer login.
+
+On this patched build, TOTP changes the signer login policy: without TOTP a
+linked signer can log in without the password; with TOTP the signer is an
+alternative at the second-factor step after the password (patch 0006,
+`available` and `start`). Do not automatically re-enable TOTP or restore the
+backup as a way to repair signer login; either changes authentication and
+needs an explicit owner decision. Use the live dashboard signer option and
+approve on the enrolled signer first.
+
+See the [read-only signer readback](evidence/archy-signer-login-readback-20261023.json).
+
+### Earlier password-recovery preparation
+
 The owner reports holding a 2FA code without the dashboard password.
 The supplied temporary login input was rejected and removed. A separately
 prepared [owner SSH recovery procedure](dashboard-login-recovery.md) requires

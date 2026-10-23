@@ -1,5 +1,12 @@
 # Recovering the dashboard login through owner SSH access
 
+**Correction:** the owner normally uses signer login. The deployed signer
+enrolment survived the owner-executed reset unchanged, and the live dashboard
+reports signer login available. Password recovery was not the right default
+for this investigation. Read the [corrected login path](archy-spry-node-qualification.md#corrected-login-path-use-the-deployed-signer-support)
+before using any recovery procedure. The instructions below remain an
+explicit owner recovery tool, not a requirement for installing software.
+
 23 October 2026. Prepared and fixture-tested; no live password or 2FA reset
 has been performed by the agent. This is an explicit owner recovery action,
 separate from normal package installation and from factory reset.
@@ -88,6 +95,8 @@ code only, and verifies full authentication before mutation. Ten installer
 boundary tests pass. Its original non-interactive file mode remains available
 when the server does not demand a TOTP challenge. Neither route bypasses 2FA.
 
-Actual recovery, fresh dashboard login and re-enrolment remain owner steps.
+The owner has since performed recovery; fresh dashboard/signer login remains
+unverified by the agent. Re-enabling TOTP changes the patched signer's login
+requirements and is an explicit owner choice, not an automatic follow-up.
 Spry has still not been installed through the dashboard API, no public TURN
 ports were opened and no service discovery was published by this increment.

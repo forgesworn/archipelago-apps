@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-23",
+  "inspection_read_only": true,
+  "owner_login_method": "linked signer",
+  "correction": "Password-only assumptions missed the deployed signer-login patches. Recovery was an unnecessary detour for the investigation.",
+  "pre_reset_backup_compared_on_node": true,
+  "login_signers_present": true,
+  "login_signers_unchanged": true,
+  "auth_fields_changed_by_owner_reset": [
+    "password_hash",
+    "totp"
+  ],
+  "reset_revoked_sessions_remembered_logins_and_paired_device_tokens": true,
+  "live_ui_signer_api_methods": [
+    "auth.login.signer.available",
+    "auth.login.signer.start",
+    "auth.login.signer.finish"
+  ],
+  "live_signer_availability_rpc_result": true,
+  "signer_end_to_end_login_tested": false,
+  "authentication_settings_changed_during_inspection": false,
+  "automatic_rollback_or_totp_reenrolment_performed": false,
+  "source_of_deployed_flow": [
+    "upstream/patches/0006-feat-log-in-to-the-dashboard-with-a-linked-signer.patch",
+    "upstream/patches/0007-feat-dashboard-login-and-onboarding-with-a-linked-si.patch"
+  ],
+  "operator_keys_or_auth_values_exported": false
+}
