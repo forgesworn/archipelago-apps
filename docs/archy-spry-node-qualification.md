@@ -1,5 +1,10 @@
 # Spry qualification on an existing Archy node
 
+The subsequent [installed-service handover](archy-spry-installed-20261023.md)
+supersedes the installation-pending status below. Signer login and the real
+package API now succeeded, the resource-unit spelling was corrected and
+installed UDP/TCP/restart checks passed. Public operation is still pending.
+
 23 October 2026. Owner-authorised qualification on an owner-controlled
 Debian 13 x86-64 node. This is not evidence of independent third-party
 operation, a public service launch or an OSA exemption.
@@ -100,14 +105,16 @@ a full authenticated session is confirmed, the password file is removed;
 the task session is logged out on completion/failure. A failed login leaves
 the owner's file in place for correction or deliberate deletion.
 
-On the node, after the verified image has been loaded:
+For a fresh installation on the qualified node, after the verified image
+has been loaded, use the current manifest and signer approval:
 
 ```bash
 python3 /root/archy-spry-qualification/install-spry-lab.py \
   --manifest /root/archy-spry-qualification/manifest.yml \
-  --manifest-sha256 02f28c27e033a193c2aa268d0a73ff4498ae74828c7ab698ed22a012679f82c1 \
+  --manifest-sha256 d10a81f2b565c0f4e348f9b06cd3f5b637cc9a1f31683e4fb4f840ce5c079688 \
   --image-id sha256:a1eebc1872ead4c304cd53e746f93d39c019dda37cdbf95c031fce4d77b7b6b0 \
-  --dashboard-origin https://<operator-dashboard-hostname>
+  --dashboard-origin https://<operator-dashboard-hostname> \
+  --signer-login
 ```
 
 The JSON result checks TURN secret ownership, permissions, whether it existed

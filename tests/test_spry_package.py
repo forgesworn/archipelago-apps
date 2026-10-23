@@ -70,6 +70,7 @@ class SpryPackageTests(unittest.TestCase):
 
     def test_lab_uses_bounded_peer_ports_without_enabling_public_exposure(self):
         app = package.manifest(package.SPRY_REF)["app"]
+        self.assertEqual(app["resources"]["memory_limit"], "128m")
         args = app["container"]["custom_args"]
         self.assertEqual(args[args.index("--relay-ports") + 1], "49160:49191")
         self.assertNotIn("--public-ip", args)

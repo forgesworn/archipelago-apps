@@ -4,6 +4,13 @@
 This is not a public installation, signed service-discovery implementation,
 complete call stack or legal advice.
 
+**Current qualification:** the owner-controlled node now runs the lab after
+signer-authorised installation through Archy's package API. Kernel limits,
+node-secret isolation, scoped container logging and UDP/TCP traffic across
+restart passed. It remains loopback-only. See the [installed-service
+handover](archy-spry-installed-20261023.md); earlier receipts below describe
+their own preparation snapshots.
+
 The owner has chosen software and protocols: people install services on their
 own Archy nodes, run and manage them themselves, and choose which services
 their clients use. ForgeSworn must not hold their operating keys, issue a
@@ -26,7 +33,9 @@ The manifest requests a node-generated, transport-only TURN root secret
 through Archy's `generated_secrets` and `secret_env`. It does not request
 reuse of the node's Nostr identity. The design requires that secret to stay
 on the operator's node, outside room links, public service listings, client
-bundles and publisher accounts. Runtime isolation remains to be verified.
+bundles and publisher accounts. The installed-node readback verifies uid 1000,
+mode 0600 and absence of the value from container inspection. Broader
+secret-isolation review remains open.
 An operator may later mint temporary transport credentials; room admission
 stays separate.
 
@@ -159,9 +168,10 @@ No new service-launch deadline or cost is assigned by this local experiment.
 - Public certificate validation, renewal/reload and a transport-specific
   readiness check. An Archy self-signed node certificate is not automatically
   trusted by arbitrary browser guests' TURN clients.
-- A pinned image, independent source/security review, Linux/rootless Podman
-  lifecycle, actual node-secret isolation, resource enforcement and logging
-  readback. A manifest parser or local Docker test does not establish these.
+- Independent source/security review, longer rootless Podman operation,
+  upgrade/uninstall behaviour and resource-pressure testing. Basic installation,
+  restart, kernel limits, secret permissions/inspection and app-scoped logging
+  now have actual-node readback; these are narrower than production acceptance.
 - Shared transport-discovery contract, signed fixtures, withdrawal/replay
   handling and independent publisher/client interoperability.
 - Actual KithMoot multi-party media, refresh/rejoin, loss/jitter/blocked UDP,
@@ -176,10 +186,10 @@ No new service-launch deadline or cost is assigned by this local experiment.
 No public node or service was deployed by this work.
 
 The subsequent [existing-node qualification](archy-spry-node-qualification.md)
-built the same pinned source for Linux AMD64, loaded the verified image into
-an owner-controlled Archy node's rootless store and passed 22 disposable
-socket tests there. Authenticated Archy installation, public exposure and
-discovery remain pending; staged image availability is not installation.
+and [installed-service handover](archy-spry-installed-20261023.md) built the
+same pinned source for Linux AMD64, verified it on the node and installed it
+through the package API after signer approval. Public exposure and discovery
+remain pending.
 
 The [revision 2 evidence](evidence/archy-spry-bounded-20261023.json) records
 eleven passing package tests, both manifest validators, the refreshed Linux

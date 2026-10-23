@@ -1,0 +1,88 @@
+{
+  "date": "2026-10-23",
+  "scope": "owner-controlled private Archy qualification node",
+  "installed_via_archy_package_api": true,
+  "signer_login": {
+    "first_attempt": "NIP-46 response timeout; stopped before install",
+    "retry": "explicitly requested by owner; approved",
+    "comparison_codes_or_credentials_retained": false,
+    "automatic_prompt_retry": false,
+    "authentication_settings_changed": false
+  },
+  "image_id": "sha256:a1eebc1872ead4c304cd53e746f93d39c019dda37cdbf95c031fce4d77b7b6b0",
+  "source_ref": "a76496bbcb60e637c0606c8da5919b5a3b2b3cf3",
+  "manifest_sha256": "d10a81f2b565c0f4e348f9b06cd3f5b637cc9a1f31683e4fb4f840ce5c079688",
+  "tests": {
+    "package": 11,
+    "installer": 16,
+    "installed_service_cases": [
+      {
+        "phase": "before_restart",
+        "transport": "udp",
+        "authenticated_bidirectional_data": true,
+        "bounded_relay_ports": true,
+        "authenticated_deallocation": true
+      },
+      {
+        "phase": "before_restart",
+        "transport": "tcp",
+        "authenticated_bidirectional_data": true,
+        "bounded_relay_ports": true,
+        "authenticated_deallocation": true
+      },
+      {
+        "phase": "after_restart",
+        "transport": "udp",
+        "authenticated_bidirectional_data": true,
+        "bounded_relay_ports": true,
+        "authenticated_deallocation": true
+      },
+      {
+        "phase": "after_restart",
+        "transport": "tcp",
+        "authenticated_bidirectional_data": true,
+        "bounded_relay_ports": true,
+        "authenticated_deallocation": true
+      }
+    ]
+  },
+  "runtime": {
+    "running": true,
+    "readonly_root": true,
+    "memory_max": 134217728,
+    "cpu_max": "100000 100000",
+    "secret_owner_uid": 1000,
+    "secret_mode": "0600",
+    "secret_absent_from_inspect": true,
+    "restart_preserves_secret": true,
+    "log_driver": "none",
+    "stdout_stderr": "null",
+    "systemd_core_dump_limit": 0,
+    "logging_dropin_sha256": "d603f4095076a819c09a71ae457a904c7479988428c4b4a04ccaaaae6f0dac7c"
+  },
+  "corrected_failure": {
+    "quadlet_input_before": "128Mi",
+    "memory_cap_before": "max",
+    "quadlet_input_after": "128m",
+    "generated_memory_argument": "--memory=128m",
+    "cpu_cap_unchanged": true
+  },
+  "not_established": [
+    "public exposure or external TURN TLS",
+    "cross-network group media for this installation",
+    "signed service discovery",
+    "physical GrapheneOS",
+    "native media stall cause or repair",
+    "zero host/provider logging",
+    "independent third-party operation",
+    "OSA exemption"
+  ],
+  "task_test_fixtures_removed": true,
+  "requested_installed_service_retained": true,
+  "source_sha256": {
+    "node/install-spry-lab.py": "92385d892a0d888330dc322f64873eb4ec396d4e74baacb9b96d443bdc08523c",
+    "scripts/prepare-spry-turn.py": "457a928f4bad952014406defd93239af44edbeb4cdec8db5914b00ec665ce576",
+    "tests/test_spry_node_install.py": "4ea926f6bfb2108ce67c243241b4b19d4e49bf555b9c104d458807e95613f1c8",
+    "tests/test_spry_package.py": "8a57381487640f9a291d649ace3799c2f7d4e3daa101adce230af8d50e8bc6a9"
+  }
+}

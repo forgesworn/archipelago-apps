@@ -2,7 +2,7 @@
 """Install a verified local Spry lab image through an existing Archy dashboard.
 
 Run on the node as root. No firewall, DNS, discovery or certificate changes.
-The dashboard password is consumed on the node, never sent back to a caller.
+Signer approval is supported; password input, when selected, stays on the node.
 """
 import argparse
 import getpass
@@ -23,10 +23,12 @@ import yaml
 
 APP = "spry-turn-lab"
 IMAGE = "localhost/spry-turn:0.1.0-a76496bbcb60-2"
-MANIFEST_SHA256 = "02f28c27e033a193c2aa268d0a73ff4498ae74828c7ab698ed22a012679f82c1"
+MANIFEST_SHA256 = "d10a81f2b565c0f4e348f9b06cd3f5b637cc9a1f31683e4fb4f840ce5c079688"
 PASSWORD_FILE = Path("/root/archy-spry-dashboard-password")
 RUNTIME = Path("/opt/archipelago/web-ui/archipelago-runtime/apps")
 USER_ENV = {"XDG_RUNTIME_DIR": "/run/user/1000", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"}
+LOGGING_DROPIN = Path("/home/archipelago/.config/containers/systemd/spry-turn-lab.container.d")
+PRIVATE_LOGGING = "[Container]\nLogDriver=none\n\n[Service]\nStandardOutput=null\nStandardError=null\nLimitCORE=0\n"
 
 
 class Refused(ValueError):
@@ -125,6 +127,58 @@ def authenticate(dashboard, password, code_prompt=None):
     return requires_totp
 
 
+def authenticate_signer(dashboard, notify, max_polls=12, pause=time.sleep):
+    if dashboard.call("auth.login.signer.available") is not True:
+        raise Refused("Signer-first login is unavailable; no password fallback or authentication change attempted")
+    started = dashboard.call("auth.login.signer.start")
+    if (not isinstance(started, dict)
+            or not isinstance(started.get("attempt_id"), str)
+            or not re.fullmatch(r"[0-9a-fA-F]{32}", started["attempt_id"])
+            or not isinstance(started.get("code"), str)
+            or not re.fullmatch(r"[0-9]{4}", started["code"])):
+        raise Refused("Unexpected signer login challenge; no installation attempted")
+    notify(started["code"])
+    for _ in range(max_polls):
+        result = dashboard.call("auth.login.signer.finish", {"attempt_id": started["attempt_id"]})
+        status = result.get("status") if isinstance(result, dict) else None
+        if status == "approved":
+            dashboard.call("server.get-state")
+            return
+        if status != "pending":
+            raise Refused("Signer login was not approved; no installation attempted")
+        pause(1)
+    raise Refused("Signer approval timed out; no retry or installation attempted")
+
+
+def show_signer_code(code):
+    # This comparison code is not a TOTP or a bearer credential. The binding
+    # cookie remains in Dashboard's private in-memory cookie jar.
+    print(json.dumps({"signer_login_comparison_code": code,
+        "action": "Approve the Archipelago login on your enrolled signer only if its code matches"}), flush=True)
+
+
+def configure_private_logging():
+    # The pinned manifest schema has no log-driver field. Keep the override
+    # scoped to this app; the generated main unit remains Archy's responsibility.
+    if LOGGING_DROPIN.is_symlink():
+        raise Refused("Logging override directory must not be a symlink")
+    LOGGING_DROPIN.mkdir(mode=0o700, exist_ok=True)
+    target = LOGGING_DROPIN / "10-private-transport.conf"
+    if target.is_symlink():
+        raise Refused("Logging override must not be a symlink")
+    if target.exists():
+        if target.read_text() != PRIVATE_LOGGING:
+            raise Refused("Existing operator logging policy differs; refusing overwrite")
+    else:
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            stream.write(PRIVATE_LOGGING)
+        os.chown(target, 1000, 1000)
+    os.chown(LOGGING_DROPIN, 1000, 1000)
+    command(["systemctl", "--user", "daemon-reload"], user=True)
+    command(["systemctl", "--user", "restart", APP + ".service"], user=True)
+
+
 def install(args):
     if os.geteuid() != 0:
         raise Refused("Run on the Archy node as root")
@@ -144,12 +198,16 @@ def install(args):
     # stay in this process; the file is deleted after successful full login.
     dashboard = Dashboard(args.dashboard_origin)
     try:
-        password = getpass.getpass("Archy dashboard password: ") if args.interactive_login else private_password(PASSWORD_FILE)
-        try:
-            used_totp = authenticate(dashboard, password, getpass.getpass if args.interactive_login else None)
-        finally:
-            del password
-        PASSWORD_FILE.unlink(missing_ok=True)
+        used_totp = False
+        if args.signer_login:
+            authenticate_signer(dashboard, show_signer_code)
+        else:
+            password = getpass.getpass("Archy dashboard password: ") if args.interactive_login else private_password(PASSWORD_FILE)
+            try:
+                used_totp = authenticate(dashboard, password, getpass.getpass if args.interactive_login else None)
+            finally:
+                del password
+            PASSWORD_FILE.unlink(missing_ok=True)
         destination = RUNTIME / APP
         if destination.exists():
             if (destination / "manifest.yml").read_bytes() != body:
@@ -181,6 +239,10 @@ def install(args):
             time.sleep(1)
         else:
             raise Refused("Lab container did not start")
+        configure_private_logging()
+        inspect = json.loads(command(["podman", "inspect", APP], user=True))[0]
+        if not inspect["State"]["Running"] or inspect["HostConfig"].get("LogConfig", {}).get("Type") != "none":
+            raise Refused("Private logging policy did not become effective")
         if not inspect["HostConfig"]["ReadonlyRootfs"] or inspect["HostConfig"]["NetworkMode"] != "host":
             raise Refused("Container isolation differs from the reviewed manifest")
         pid = inspect["State"]["Pid"]
@@ -200,6 +262,7 @@ def install(args):
         if not hidden:
             raise Refused("Node secret appeared in container inspection")
         print(json.dumps({"app": APP, "running": True, "image_id": args.image_id,
+            "authentication_method": "signer" if args.signer_login else "password",
             "totp_challenge_completed": used_totp,
             "manifest_sha256": args.manifest_sha256, "node_generated_secret_mode": "0600",
             "secret_existed_before_install": secret_preexisted,
@@ -222,8 +285,11 @@ def main():
     parser.add_argument("--manifest-sha256", required=True)
     parser.add_argument("--image-id", required=True)
     parser.add_argument("--dashboard-origin", required=True)
-    parser.add_argument("--interactive-login", action="store_true",
+    login = parser.add_mutually_exclusive_group()
+    login.add_argument("--interactive-login", action="store_true",
                         help="Prompt privately for the dashboard password and any 2FA code on the node")
+    login.add_argument("--signer-login", action="store_true",
+                       help="Request one login approval from an already-enrolled signer; no password fallback")
     args = parser.parse_args()
     try:
         install(args)

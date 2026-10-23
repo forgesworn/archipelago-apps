@@ -74,7 +74,9 @@ def manifest(ref):
             "generated_secrets": [{"name": "spry-turn-rest-secret", "kind": "hex32"}],
             "secret_env": [{"key": "SPRY_TURN_SECRET", "secret_file": "spry-turn-rest-secret"}],
         },
-        "resources": {"memory_limit": "128Mi", "cpu_limit": 1},
+        # The pinned Quadlet renderer accepts m/g, not Mi/Gi. Its API-side
+        # parser accepts Mi, but that spelling silently loses the runtime cap.
+        "resources": {"memory_limit": "128m", "cpu_limit": 1},
         "security": {"capabilities": [], "readonly_root": True, "no_new_privileges": True, "network_policy": "host"},
         "ports": [{"host": 3478, "container": 3478, "protocol": protocol,
                    "bind": "127.0.0.1", "auth": "local"} for protocol in ("udp", "tcp")],

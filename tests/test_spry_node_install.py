@@ -14,6 +14,71 @@ spec.loader.exec_module(installer)
 
 
 class InstallBoundaryTests(unittest.TestCase):
+    def test_private_logging_refuses_operator_policy_overwrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "10-private-transport.conf"
+            target.write_text("generated existing operator policy")
+            with mock.patch.object(installer, "LOGGING_DROPIN", root), mock.patch.object(installer, "command") as command:
+                with self.assertRaisesRegex(installer.Refused, "refusing overwrite"):
+                    installer.configure_private_logging()
+                command.assert_not_called()
+            self.assertEqual(target.read_text(), "generated existing operator policy")
+
+    def test_private_logging_refuses_symlink_without_changing_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "owner-file"
+            outside.write_text("generated existing owner data")
+            (root / "dropin").mkdir()
+            os.symlink(outside, root / "dropin/10-private-transport.conf")
+            with mock.patch.object(installer, "LOGGING_DROPIN", root / "dropin"), mock.patch.object(installer, "command") as command:
+                with self.assertRaises(installer.Refused):
+                    installer.configure_private_logging()
+                command.assert_not_called()
+            self.assertEqual(outside.read_text(), "generated existing owner data")
+
+    def test_signer_approval_verifies_full_session_without_password_login(self):
+        dashboard = mock.Mock()
+        challenge = {"attempt_id": "a" * 32, "code": "1234"}
+        dashboard.call.side_effect = [True, challenge, {"status": "pending"}, {"status": "approved"}, {}]
+        notify = mock.Mock()
+        installer.authenticate_signer(dashboard, notify, pause=lambda _: None)
+        notify.assert_called_once_with("1234")
+        self.assertEqual(dashboard.call.call_args_list, [
+            mock.call("auth.login.signer.available"), mock.call("auth.login.signer.start"),
+            mock.call("auth.login.signer.finish", {"attempt_id": "a" * 32}),
+            mock.call("auth.login.signer.finish", {"attempt_id": "a" * 32}),
+            mock.call("server.get-state")])
+
+    def test_signer_unavailable_or_denied_never_falls_back_or_restarts(self):
+        for replies in ([False], [True, {"attempt_id": "a" * 32, "code": "1234"}, installer.Refused("denied")]):
+            dashboard = mock.Mock()
+            dashboard.call.side_effect = replies
+            with self.assertRaises(installer.Refused):
+                installer.authenticate_signer(dashboard, mock.Mock(), pause=lambda _: None)
+            methods = [args.args[0] for args in dashboard.call.call_args_list]
+            self.assertNotIn("auth.login", methods)
+            self.assertNotIn("server.get-state", methods)
+            self.assertLessEqual(methods.count("auth.login.signer.start"), 1)
+
+    def test_signer_pending_poll_is_bounded_and_does_not_confirm_session(self):
+        dashboard = mock.Mock()
+        dashboard.call.side_effect = [True, {"attempt_id": "a" * 32, "code": "1234"}, {"status": "pending"}, {"status": "pending"}]
+        with self.assertRaisesRegex(installer.Refused, "timed out"):
+            installer.authenticate_signer(dashboard, mock.Mock(), max_polls=2, pause=lambda _: None)
+        self.assertEqual(dashboard.call.call_count, 4)
+
+    def test_malformed_signer_challenge_refuses_before_poll_or_display(self):
+        for challenge in ({"attempt_id": "bad;cookie", "code": "1234"}, {"attempt_id": "a" * 32, "code": "123456"}, None):
+            dashboard = mock.Mock()
+            dashboard.call.side_effect = [True, challenge]
+            notify = mock.Mock()
+            with self.assertRaisesRegex(installer.Refused, "Unexpected"):
+                installer.authenticate_signer(dashboard, notify)
+            notify.assert_not_called()
+            self.assertEqual(dashboard.call.call_count, 2)
+
     def test_existing_full_login_does_not_prompt_for_a_code(self):
         dashboard = mock.Mock()
         dashboard.call.side_effect = [None, {}]
