@@ -12,8 +12,9 @@ import subprocess
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-SPRY_REF = "48d75adf51c73b1ef2a51a3cb663e424f2b4ea35"
-PACKAGE_REV = 1
+SPRY_REF = "a76496bbcb60e637c0606c8da5919b5a3b2b3cf3"
+PACKAGE_REV = 2
+RELAY_PORT_FIRST, RELAY_PORT_LAST = 49160, 49191
 SOURCE_FILES = ("Cargo.toml", "Cargo.lock", "examples/load.rs", "src/auth.rs", "src/lib.rs",
                 "src/limits.rs", "src/main.rs", "src/turn.rs", "src/wasm.rs", "src/wire.rs")
 NOTICE_FILES = ("LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.txt")
@@ -57,7 +58,7 @@ def committed_source(source, ref):
 
 
 def manifest(ref):
-    # Host networking avoids pretending TURN's dynamically allocated relay ports
+    # Host networking avoids pretending TURN's bounded UDP relay sockets
     # work through an HTTP app gate. The process itself binds ONLY loopback.
     # Public operation requires bounded ports/firewall/TLS work, not this recipe.
     return {"app": {
@@ -67,6 +68,7 @@ def manifest(ref):
         "container": {
             "image": f"localhost/spry-turn:0.1.0-{ref[:12]}-{PACKAGE_REV}", "pull_policy": "never", "network": "host",
             "custom_args": ["serve", "--listen", "127.0.0.1:3478", "--allow-loopback-peers",
+                            "--relay-ports", f"{RELAY_PORT_FIRST}:{RELAY_PORT_LAST}",
                             "--max-allocations", "32", "--max-per-user", "8", "--max-connections", "32",
                             "--bytes-per-second", "1000000"],
             "generated_secrets": [{"name": "spry-turn-rest-secret", "kind": "hex32"}],
@@ -104,6 +106,8 @@ def prepare(source, output, ref=SPRY_REF):
         write_private(output / "manifest.yml", yaml.safe_dump(manifest(ref), sort_keys=False).encode())
         receipt = {"source_ref": ref, "mode": "loopback-only-experiment", "built": False,
                    "deployed": False, "discovery": "disabled", "operator_secrets_in_context": False,
+                   "udp_relay_ports": {"first": RELAY_PORT_FIRST, "last": RELAY_PORT_LAST},
+                   "public_tls": "unconfigured",
                    "package_revision": PACKAGE_REV, "recipe_sha256": hashlib.sha256(recipe).hexdigest(),
                    "files": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}}
         write_private(output / "prepared.json", (json.dumps(receipt, indent=2) + "\n").encode())

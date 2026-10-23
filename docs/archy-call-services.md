@@ -14,7 +14,7 @@ management; update and orchestration mechanisms must preserve that separation.
 ## Prepared implementation
 
 `scripts/prepare-spry-turn.py` creates a private local build context and Archy
-manifest from Spry commit `48d75adf51c73b1ef2a51a3cb663e424f2b4ea35`.
+manifest from Spry commit `a76496bbcb60e637c0606c8da5919b5a3b2b3cf3`.
 It reads committed files with Git, checks the reviewed source hashes and
 copies only allowlisted source/licence files. Dirty and untracked operator
 files are not copied. Full commit IDs are required; other source revisions
@@ -40,6 +40,13 @@ certificate, public listener, directory, credential HTTP server, database,
 media recorder or discovery publisher. It is not a usable Internet relay as
 prepared. No HTTP health check is invented for a non-HTTP protocol.
 
+Package revision 2 explicitly bounds UDP peer-relay sockets to **49160–49191**
+on loopback. Spry skips occupied host ports and returns a signed TURN 508
+on exhaustion; it does not fall back outside the range. This is separate
+from the UDP/TCP client listener on 3478 and does not open a firewall or
+publish the service. These are process bind arguments: host networking
+does not make manifest port declarations an enforcement boundary.
+
 Prepare it under an existing private parent directory:
 
 ```sh
@@ -52,7 +59,7 @@ The prepared Dockerfile builds only the pinned source, with optional TLS
 support compiled in. Building is a separate local action:
 
 ```sh
-docker build --tag localhost/spry-turn:0.1.0-48d75adf51c7-1 \
+docker build --tag localhost/spry-turn:0.1.0-a76496bbcb60-2 \
   /private/experiments/spry-turn-lab
 ```
 
@@ -60,7 +67,9 @@ Building in Docker does not load the image into a separate Archy node's
 rootless Podman store. Transfer and verify an owner-selected image on that
 node before any install; a manifest is not installation evidence. Do not
 push the private source context or image. Production packaging needs the
-remaining networking and certificate qualification below.
+remaining networking and certificate qualification below. The [operator
+endpoint plan](archy-call-endpoint-plan.md) separates process bind arguments,
+host/provider firewalls, NAT and certificate responsibilities.
 
 ## Discovery design to implement
 
@@ -145,8 +154,8 @@ No new service-launch deadline or cost is assigned by this local experiment.
 
 ## Remaining gates
 
-- Spry bounded relay-port selection and an explicit firewall/NAT plan. Do
-  not expose arbitrary ephemeral ports merely to make a package connect.
+- Apply and read back the bounded relay-port firewall/NAT plan on a real
+  operator node. Range selection is implemented; this package remains local.
 - Public certificate validation, renewal/reload and a transport-specific
   readiness check. An Archy self-signed node certificate is not automatically
   trusted by arbitrary browser guests' TURN clients.
@@ -166,7 +175,9 @@ No new service-launch deadline or cost is assigned by this local experiment.
 
 No public node or service was deployed by this work.
 
-The [bounded package evidence](evidence/archy-spry-package-20261023.json)
-records ten passing package tests, both manifest validators, the Linux ARM64
-image build and isolated process/credential smoke. The image was not installed
-on Archy and carried no network media in that smoke test.
+The [revision 2 evidence](evidence/archy-spry-bounded-20261023.json) records
+eleven passing package tests, both manifest validators, the refreshed Linux
+ARM64 image build and isolated process/credential smoke. The image was not
+installed on Archy and carried no network media in that smoke test. The
+[earlier revision 1 receipt](evidence/archy-spry-package-20261023.json) remains
+historical evidence for its own source pin, not this updated package.

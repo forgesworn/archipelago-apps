@@ -68,6 +68,14 @@ class SpryPackageTests(unittest.TestCase):
         self.assertNotIn("volumes", app)
         self.assertNotIn("interfaces", app)
 
+    def test_lab_uses_bounded_peer_ports_without_enabling_public_exposure(self):
+        app = package.manifest(package.SPRY_REF)["app"]
+        args = app["container"]["custom_args"]
+        self.assertEqual(args[args.index("--relay-ports") + 1], "49160:49191")
+        self.assertNotIn("--public-ip", args)
+        self.assertNotIn("--tls-listen", args)
+        self.assertEqual(args[args.index("--listen") + 1], "127.0.0.1:3478")
+
     def test_mutable_or_unreviewed_refs_fail_before_reading_source(self):
         for ref in ("main", "v0.1.0", "a" * 40, "--help"):
             with self.subTest(ref=ref), mock.patch.object(package, "git_file") as read:
@@ -105,6 +113,8 @@ class SpryPackageTests(unittest.TestCase):
             receipt = json.loads((output / "prepared.json").read_text())
             self.assertEqual(receipt["discovery"], "disabled")
             self.assertFalse(receipt["built"] or receipt["deployed"])
+            self.assertEqual(receipt["udp_relay_ports"], {"first": 49160, "last": 49191})
+            self.assertEqual(receipt["public_tls"], "unconfigured")
             with mock.patch.object(package, "committed_source", return_value=data), self.assertRaises(FileExistsError):
                 package.prepare(Path("unused"), output)
 
