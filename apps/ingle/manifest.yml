@@ -4,7 +4,7 @@ app:
   version: 0.1.0
   upstream:
     kind: internal
-  description: Game hosting for your Keep. Today it hosts Stampede rooms that stay open between races. Players join by its six-letter room code or an invite link; the status page on the home network shows the code, who is in and the invites. Test identity, for the home network.
+  description: Game hosting for your Keep. Today it hosts Stampede rooms that stay open between races. Players join by its six-letter room code or an invite link, from anywhere, because the game's traffic goes out and in through a Proton VPN tunnel run inside this app. The home address is not shown and nothing else on the node uses the tunnel. The status page on the home network shows the code, who is in and the invites. Test identity.
   category: games
 
   container:
@@ -12,33 +12,31 @@ app:
     # loaded into the node's podman under this name (podman load + podman tag),
     # and the node never pulls a tag it already holds. The tag comes from
     # INGLE_TAG in PINS; every new build needs a new tag.
-    image: ghcr.io/forgesworn/ingle:k1e-6
+    image: ghcr.io/forgesworn/ingle:s1a-1
     pull_policy: if-not-present
-    # Host networking, deliberately. The Keep is a UDP/QUIC game host that
-    # announces its own address (--advertise) and needs to see each player's real
-    # address, which a published-port proxy would hide. It also keeps the install
-    # from tripping on archy's post-install port probe: ensure_host_port_listener
-    # (api/rpc/package/install.rs) TCP-connects to the first line of `podman port`,
-    # and with a published UDP and TCP port that line is chosen at random per
-    # create (podman's ParsePortMapping ranges over Go maps). A host-network
-    # container publishes nothing, so there is no `podman port` line to probe.
-    # The container still runs with all capabilities dropped, a read-only root and
-    # no-new-privileges; it listens on unprivileged ports only.
-    network: host
-    # Arguments after the image; the entrypoint is the image's stampede-headless.
+    # No host networking: the app has its own network namespace, so the tunnel below
+    # carries this app's traffic only and the node's other apps and the host are
+    # untouched. The default rootless network is used; the status page is published
+    # to the node (see ports). One image runs both gluetun (the Proton tunnel and its
+    # firewall, which is the kill switch: with the tunnel down the Keep has no route
+    # out) and the Keep, because a manifest is one container with no sidecar.
+    # Game traffic arrives through the tunnel, not through any node port.
+    #
+    # The WireGuard key is a node secret (secret_env below), never in this file.
+    #
+    # Arguments after the image: the image's entrypoint script passes them to the Keep.
     custom_args:
       - --online
       - --test-identity
       - --data-dir
       - /var/lib/stampede-keep/data
-      - --quic-port
-      - "47800"
       - --status
       - 0.0.0.0:8780
       - --seconds
       - "0"
-      # Announce only the address in STAMPEDE_ADVERTISE (derived_env below): no
-      # LAN, STUN or UPnP discovery.
+      # Announce only the tunnel's address (--advertise-only). The image's entrypoint
+      # adds --quic-port and --advertise from Proton's forwarded port and exit address,
+      # and restarts the Keep (new room code, invites kept) when they change.
       - --advertise-only
       # Relays for the room code and the owner's messages. relay.damus.io is left
       # out for now: it demands NIP-42 AUTH for these reads and then rejects every
@@ -47,11 +45,13 @@ app:
       - wss://nos.lol
       - --relay
       - wss://relay.primal.net
-    # The address phones are told to dial: the node's own address, filled in by
-    # the node when the app is installed.
-    derived_env:
-      - key: STAMPEDE_ADVERTISE
-        template: "{{HOST_IP}}:47800"
+    # The Proton WireGuard key. Make a WireGuard config at account.protonvpn.com for
+    # this node (port forwarding on, a P2P server) and put its PrivateKey value, alone
+    # on one line, in /var/lib/archipelago/secrets/ingle-proton-wireguard-key
+    # (owner archipelago, mode 0600). The node injects it as a podman secret.
+    secret_env:
+      - key: WIREGUARD_PRIVATE_KEY
+        secret_file: ingle-proton-wireguard-key
     # The image runs as its `keep` user (uid/gid 999). Rootless podman maps that
     # to host uid/gid 100998 (subuid 100000 + 999 - 1); this chowns the data dir.
     data_uid: "999:999"
@@ -63,26 +63,33 @@ app:
     memory_limit: 256Mi
     cpu_limit: 1
 
-  security:
-    capabilities: []
-    readonly_root: true
-    no_new_privileges: true
-    network_policy: host
+  # Proton server choice, not secret. The image already asks for WireGuard and
+  # port-forwarding (P2P) servers only.
+  environment:
+    - SERVER_COUNTRIES=United Kingdom
 
-  # Host networking: these are what the Keep listens on, declared so the node
-  # knows them (the install waits for 8780 to answer). Nothing is published.
-  # Both stay LAN-only through the node firewall.
+  # The tunnel interface.
+  devices:
+    - /dev/net/tun
+
+  security:
+    # NET_ADMIN: the tunnel and its firewall. SETUID and SETGID: the entrypoint drops
+    # to the unprivileged keep user for the Keep, which holds no capabilities.
+    capabilities: [NET_ADMIN, SETUID, SETGID]
+    # The tunnel software rewrites /etc/resolv.conf at start, so the root filesystem
+    # cannot be read-only. The Keep runs as an unprivileged user and cannot write it.
+    readonly_root: false
+    no_new_privileges: true
+    network_policy: isolated
+
+  # Only the status page is published, to the node's network. UDP 47800 is not: the
+  # game arrives through the tunnel. LAN phones reach the Keep through Proton too.
   ports:
     - host: 8780
       container: 8780
       protocol: tcp
       auth: none
-      auth_rationale: Home-network status page with no login of its own, by design. It shows the room code and live invite links, and shows the owner-pairing link only to requests that come from the node itself, so the app gate's proxy must not sit in front of it. It answers only requests addressed to an IP address or localhost. Keep it reachable from the home network only and never forward it on the router.
-    - host: 47800
-      container: 47800
-      protocol: udp
-      auth: none
-      auth_rationale: QUIC game traffic from players' phones. Players are authenticated by the Keep itself (room code or invite) and the protocol is not HTTP, so a dashboard login cannot sit in front of it.
+      auth_rationale: Home-network status page with no login of its own, by design. It shows the room code and live invite links, and shows the owner-pairing link only to requests that come from the node itself (behind the published port requests may no longer look local; the pairing link is then in the app's log), so the app gate's proxy must not sit in front of it. It answers only requests addressed to an IP address or localhost. Keep it reachable from the home network only and never forward it on the router.
 
   volumes:
     # The Keep's identity, owner claim, invites and cursor. Losing this cancels
