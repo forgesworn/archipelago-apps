@@ -24,4 +24,4 @@ FRONTEND_PATCH_LEVEL=8
 FRONTEND_NODE_MAJOR=20
 # Ingle (game hosting on a Keep; today Stampede's headless host): hand-loaded into the node's podman, not built or pushed by CI.
 # Bump to the new build's tag whenever the image changes: the node never re-pulls a tag it has.
-INGLE_TAG=s1a-1
+INGLE_TAG=s1a-2
