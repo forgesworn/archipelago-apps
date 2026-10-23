@@ -1,5 +1,8 @@
 # Independent call endpoint plan
 
+**Later qualification:** see the [public candidate handover](archy-spry-public-20261023.md).
+This document retains the original plan and local-preparation snapshot.
+
 23 October 2026. Operator checklist for a later public candidate, not an
 installation command or deployment evidence. The prepared `spry-turn-lab`
 package remains loopback-only, unlisted and without a TLS endpoint.

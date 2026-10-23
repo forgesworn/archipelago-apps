@@ -1,15 +1,16 @@
 # Operator-owned call services on Archy
 
-23 October 2026. Local package experiment and proposed discovery boundary.
-This is not a public installation, signed service-discovery implementation,
-complete call stack or legal advice.
+23 October 2026. Package experiment, owner-operated public transport
+qualification and proposed discovery boundary. This is not a complete call
+stack, implemented signed discovery or legal advice.
 
-**Current qualification:** the owner-controlled node now runs the lab after
-signer-authorised installation through Archy's package API. Kernel limits,
-node-secret isolation, scoped container logging and UDP/TCP traffic across
-restart passed. It remains loopback-only. See the [installed-service
-handover](archy-spry-installed-20261023.md); earlier receipts below describe
-their own preparation snapshots.
+**Current qualification:** after signer-authorised lab installation, the owner
+promoted this instance to invited public TURN. External UDP/TCP/trusted-TLS
+data and generated browser media passed, including after certificate-renewal
+dry-run/restart. The dashboard remains private; credentials are minted offline
+and discovery is unfinished. See the [public candidate handover](archy-spry-public-20261023.md).
+Earlier receipts describe their own snapshots; the base preparer still
+produces a loopback-only lab.
 
 The owner has chosen software and protocols: people install services on their
 own Archy nodes, run and manage them themselves, and choose which services

@@ -1,5 +1,9 @@
 # Spry installed through signer-authorised Archy access
 
+**Later state:** this records initial loopback installation. The
+[public candidate handover](archy-spry-public-20261023.md) records the explicit
+owner promotion, external tests and remaining gates.
+
 23 October 2026. The loopback-only Spry lab is now installed and running on
 the owner-controlled Archy qualification node. It was installed through
 Archy's normal package API after approval on an enrolled signer. It is not
