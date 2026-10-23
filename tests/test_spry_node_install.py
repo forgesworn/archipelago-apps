@@ -14,6 +14,55 @@ spec.loader.exec_module(installer)
 
 
 class InstallBoundaryTests(unittest.TestCase):
+    def test_existing_full_login_does_not_prompt_for_a_code(self):
+        dashboard = mock.Mock()
+        dashboard.call.side_effect = [None, {}]
+        prompt = mock.Mock()
+        self.assertFalse(installer.authenticate(dashboard, "generated fixture", prompt))
+        prompt.assert_not_called()
+        self.assertEqual(dashboard.call.call_args_list, [
+            mock.call("auth.login", {"password": "generated fixture"}), mock.call("server.get-state")])
+
+    def test_password_rejection_does_not_request_or_send_a_2fa_code(self):
+        dashboard = mock.Mock()
+        dashboard.call.side_effect = installer.Refused("Dashboard RPC refused auth.login")
+        prompt = mock.Mock(return_value="123456")
+        with self.assertRaises(installer.Refused):
+            installer.authenticate(dashboard, "generated fixture", prompt)
+        prompt.assert_not_called()
+        dashboard.call.assert_called_once_with("auth.login", {"password": "generated fixture"})
+
+    def test_pending_2fa_session_cannot_continue_without_code(self):
+        dashboard = mock.Mock()
+        dashboard.call.return_value = {"requires_totp": True}
+        with self.assertRaisesRegex(installer.Refused, "requires 2FA"):
+            installer.authenticate(dashboard, "generated fixture")
+        dashboard.call.assert_called_once_with("auth.login", {"password": "generated fixture"})
+
+    def test_2fa_requires_current_code_and_confirms_full_session(self):
+        for code in ("123456", "long-generated-authenticator-seed", "12345", "１２３４５６"):
+            dashboard = mock.Mock()
+            dashboard.call.side_effect = [{"requires_totp": True}, {}, {}]
+            prompt = mock.Mock(return_value=code)
+            with self.subTest(valid=code == "123456"):
+                if code == "123456":
+                    self.assertTrue(installer.authenticate(dashboard, "generated fixture", prompt))
+                    self.assertEqual(dashboard.call.call_args_list, [
+                        mock.call("auth.login", {"password": "generated fixture"}),
+                        mock.call("auth.login.totp", {"code": "123456"}),
+                        mock.call("server.get-state")])
+                else:
+                    with self.assertRaisesRegex(installer.Refused, "six-digit"):
+                        installer.authenticate(dashboard, "generated fixture", prompt)
+                    self.assertEqual(dashboard.call.call_count, 1)
+
+    def test_2fa_refusal_does_not_confirm_a_full_session(self):
+        dashboard = mock.Mock()
+        dashboard.call.side_effect = [{"requires_totp": True}, installer.Refused("Dashboard RPC refused auth.login.totp")]
+        with self.assertRaises(installer.Refused):
+            installer.authenticate(dashboard, "generated fixture", lambda _: "123456")
+        self.assertEqual(dashboard.call.call_count, 2)
+
     def test_password_symlink_is_refused_without_reading_target(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)

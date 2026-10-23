@@ -35,6 +35,15 @@ a public Spry service from this node on this evidence.
 
 ## Authenticated installation
 
+The owner reports holding a 2FA code without the dashboard password.
+The supplied temporary login input was rejected and removed. A separately
+prepared [owner SSH recovery procedure](dashboard-login-recovery.md) requires
+private new-password entry and explicit acknowledgement of 2FA re-enrolment;
+the agent has not reset the live login. The installer now supports
+`--interactive-login` for normal password and TOTP entry on the node.
+The original five-test installer receipt below is historical; the recovery
+receipt records the expanded ten-test authentication coverage.
+
 The [node installer](../node/install-spry-lab.py) accepts only the exact
 reviewed loopback manifest checksum and the expected local image. It uses
 Archy's existing `auth.login` and `package.install` API over verified HTTPS;

@@ -1,0 +1,34 @@
+{
+  "date": "2026-10-23",
+  "live_password_reset_performed": false,
+  "live_two_factor_settings_changed": false,
+  "rejected_temporary_login_input_removed": true,
+  "recovery_helper_staged_on_node": true,
+  "recovery_tests_macos": 5,
+  "recovery_tests_linux_node": 5,
+  "installer_boundary_tests": 10,
+  "argon2_parameters_verified_on_node": {
+    "algorithm": "argon2id",
+    "version": 19,
+    "memory": 65536,
+    "time": 3,
+    "parallelism": 4
+  },
+  "node_dependency_prepared": "Debian python3-argon2 21.1.0-3 and libargon2-1",
+  "crypto_or_auth_values_in_evidence": false,
+  "owner_confirmation_required": "RESET LOGIN AND RE-ENROL 2FA",
+  "fixture_cleanup_complete": true,
+  "not_established": [
+    "successful live password reset",
+    "fresh dashboard login",
+    "new TOTP enrolment",
+    "actual Archy package installation",
+    "public TURN reachability or discovery"
+  ],
+  "source_sha256": {
+    "node/reset-dashboard-login.py": "672dc791919a5e308d77bf99b232c2faed501f27439c7a4ad1f5ca5dd4ae30cd",
+    "tests/test_dashboard_recovery.py": "967b1aa208da2465428c60924602518e79e609c44f0e28807311c43a3bbb57c9",
+    "node/install-spry-lab.py": "f5b98f497b40cb3511e0e44ca194f1dcacd962045093cdf8bd424d210ec1e84e",
+    "tests/test_spry_node_install.py": "424e191c4ec1eebe35ec8b49f2a963376dbf755aece6a93c1f1dacc5576ef1a9"
+  }
+}

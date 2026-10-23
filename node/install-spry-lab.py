@@ -5,6 +5,7 @@ Run on the node as root. No firewall, DNS, discovery or certificate changes.
 The dashboard password is consumed on the node, never sent back to a caller.
 """
 import argparse
+import getpass
 import hashlib
 import http.cookiejar
 import json
@@ -13,6 +14,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -106,9 +108,28 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise Refused("Dashboard redirect refused")
 
 
+def authenticate(dashboard, password, code_prompt=None):
+    result = dashboard.call("auth.login", {"password": password})
+    requires_totp = isinstance(result, dict) and result.get("requires_totp") is True
+    if requires_totp:
+        if code_prompt is None:
+            raise Refused("Archy requires 2FA; run this installer in your SSH terminal with --interactive-login")
+        code = code_prompt("Current six-digit Archy authenticator code: ")
+        if not re.fullmatch(r"[0-9]{6}", code):
+            raise Refused("Enter the current six-digit code, not an authenticator seed or QR token")
+        try:
+            dashboard.call("auth.login.totp", {"code": code})
+        finally:
+            del code
+    dashboard.call("server.get-state")  # Verify full authentication before mutation.
+    return requires_totp
+
+
 def install(args):
     if os.geteuid() != 0:
         raise Refused("Run on the Archy node as root")
+    if args.interactive_login and not sys.stdin.isatty():
+        raise Refused("Interactive login requires an SSH terminal; connect with ssh -t")
     body, app = verified_manifest(args.manifest, args.manifest_sha256)
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", args.image_id):
         raise Refused("Expected the local image's immutable ID")
@@ -122,12 +143,13 @@ def install(args):
     # Authenticate before staging/restarting anything. Credentials and cookies
     # stay in this process; the file is deleted after successful full login.
     dashboard = Dashboard(args.dashboard_origin)
-    password = private_password(PASSWORD_FILE)
-    dashboard.call("auth.login", {"password": password})
-    del password
     try:
-        dashboard.call("server.get-state")  # Refuses partial/TOTP-only sessions.
-        PASSWORD_FILE.unlink()
+        password = getpass.getpass("Archy dashboard password: ") if args.interactive_login else private_password(PASSWORD_FILE)
+        try:
+            used_totp = authenticate(dashboard, password, getpass.getpass if args.interactive_login else None)
+        finally:
+            del password
+        PASSWORD_FILE.unlink(missing_ok=True)
         destination = RUNTIME / APP
         if destination.exists():
             if (destination / "manifest.yml").read_bytes() != body:
@@ -178,6 +200,7 @@ def install(args):
         if not hidden:
             raise Refused("Node secret appeared in container inspection")
         print(json.dumps({"app": APP, "running": True, "image_id": args.image_id,
+            "totp_challenge_completed": used_totp,
             "manifest_sha256": args.manifest_sha256, "node_generated_secret_mode": "0600",
             "secret_existed_before_install": secret_preexisted,
             "secret_owner_uid": info.st_uid, "secret_absent_from_container_inspect": hidden,
@@ -199,6 +222,8 @@ def main():
     parser.add_argument("--manifest-sha256", required=True)
     parser.add_argument("--image-id", required=True)
     parser.add_argument("--dashboard-origin", required=True)
+    parser.add_argument("--interactive-login", action="store_true",
+                        help="Prompt privately for the dashboard password and any 2FA code on the node")
     args = parser.parse_args()
     try:
         install(args)

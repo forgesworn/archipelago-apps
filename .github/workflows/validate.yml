@@ -15,6 +15,7 @@ jobs:
       - run: python3 tests/test-sales-config.py
       - run: python3 tests/test-discovery-config.py
       - run: python3 -m unittest discover -s tests -p 'test_spry*.py' -v
+      - run: python3 -m unittest discover -s tests -p test_dashboard_recovery.py -v
       - run: python3 -m unittest discover -s tests -p test_payment_recovery.py -v
       - run: scripts/fetch-archy.sh
       - run: scripts/apply-patches.sh
