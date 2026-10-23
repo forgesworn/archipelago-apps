@@ -12,7 +12,7 @@ app:
     # loaded into the node's podman under this name (podman load + podman tag),
     # and the node never pulls a tag it already holds. The tag comes from
     # INGLE_TAG in PINS; every new build needs a new tag.
-    image: ghcr.io/forgesworn/ingle:k2-1
+    image: ghcr.io/forgesworn/ingle:k2-2
     pull_policy: if-not-present
     # No host networking: the app has its own network namespace, so the tunnel below
     # carries this app's traffic only and the node's other apps and the host are
