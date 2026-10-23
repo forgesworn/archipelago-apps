@@ -175,6 +175,12 @@ No new service-launch deadline or cost is assigned by this local experiment.
 
 No public node or service was deployed by this work.
 
+The subsequent [existing-node qualification](archy-spry-node-qualification.md)
+built the same pinned source for Linux AMD64, loaded the verified image into
+an owner-controlled Archy node's rootless store and passed 22 disposable
+socket tests there. Authenticated Archy installation, public exposure and
+discovery remain pending; staged image availability is not installation.
+
 The [revision 2 evidence](evidence/archy-spry-bounded-20261023.json) records
 eleven passing package tests, both manifest validators, the refreshed Linux
 ARM64 image build and isolated process/credential smoke. The image was not
