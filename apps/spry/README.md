@@ -4,8 +4,10 @@
 2. Open it and choose **Pair with KithMoot**. Approve the pairing.
 3. Use KithMoot's normal Call button, in a conversation or group.
 
-The matching ForgeSworn 1.9.1 bundle update includes backend p2 and catalogue p3.
+The matching ForgeSworn 1.9.1 bundle update includes backend p2 and catalogue p4.
 Older bundles need that node update before installing this package.
+Catalogue p4 corrects the peer resolver to Archipelago's existing IPv4
+loopback DNS listener. The backend and Spry image are unchanged.
 
 Each home node runs its own Spry. Once both people have paired, their nodes
 connect over Archipelago's existing mesh. A third participant's VPS is not

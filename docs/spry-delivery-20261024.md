@@ -1,7 +1,12 @@
 # Spry pairing delivery — 24 October 2026
 
+Update, 25 October: catalogue **p4** corrects the peer DNS endpoint to
+Archipelago's configured `127.0.0.1:5354`. Backend p2 and the Spry image
+remain unchanged. The p3 release receipt below remains the original delivery
+record; the corrected catalogue is required for the default host resolver.
+
 For an existing ForgeSworn Archipelago bundle, install the matching 1.9.1
-backend p2 and catalogue p3 update using the
+backend p2 and catalogue p4 update using the
 [existing-node update command](existing-node-update.md) on a compatible
 installed 1.9.1 node. Then:
 
