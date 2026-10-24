@@ -17,6 +17,7 @@ jobs:
       - run: python3 -m unittest discover -s tests -p 'test_spry*.py' -v
       - run: python3 -m unittest discover -s tests -p test_dashboard_recovery.py -v
       - run: python3 -m unittest discover -s tests -p test_payment_recovery.py -v
+      - run: python3 -m unittest discover -s tests -p test_node_bundle_update.py -v
       - run: scripts/fetch-archy.sh
       - run: scripts/apply-patches.sh
       - run: scripts/validate.sh
