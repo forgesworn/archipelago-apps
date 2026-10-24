@@ -1,0 +1,111 @@
+From bb5b8c67b1dfbbfcb22e563f18b168a82dd6d3f8 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <147930957+TheCryptoDonkey@users.noreply.github.com>
+Date: Sun, 25 Oct 2026 00:53:16 +0100
+Subject: [PATCH] Refresh App Store cache when the bundle catalogue changes
+
+---
+ neode-ui/src/views/Discover.vue               |  4 +--
+ neode-ui/src/views/Marketplace.vue            |  4 +--
+ .../__tests__/bundleCatalogue.test.ts         | 28 +++++++++++++++++++
+ neode-ui/src/views/discover/curatedApps.ts    |  6 ++++
+ 4 files changed, 38 insertions(+), 4 deletions(-)
+ create mode 100644 neode-ui/src/views/discover/__tests__/bundleCatalogue.test.ts
+
+diff --git a/neode-ui/src/views/Discover.vue b/neode-ui/src/views/Discover.vue
+index e9ce980..90ee10b 100644
+--- a/neode-ui/src/views/Discover.vue
++++ b/neode-ui/src/views/Discover.vue
+@@ -356,7 +356,7 @@ import CompanionBanner from './discover/CompanionBanner.vue'
+ import AppGrid from './discover/AppGrid.vue'
+ import InstallVersionModal from '@/components/InstallVersionModal.vue'
+ import type { MarketplaceApp, FeaturedApp } from './discover/types'
+-import { getCuratedAppList, INSTALLED_ALIASES, FEATURED_DEFINITIONS, categorizeCommunityApp, fetchAppCatalog, type CatalogFeatured, type CatalogStorefront } from './discover/curatedApps'
++import { APP_CATALOG_CACHE_KEY, getCuratedAppList, INSTALLED_ALIASES, FEATURED_DEFINITIONS, categorizeCommunityApp, fetchAppCatalog, type CatalogFeatured, type CatalogStorefront } from './discover/curatedApps'
+ import { isServiceContainer } from './apps/serviceNames'
+ 
+ const router = useRouter()
+@@ -377,7 +377,7 @@ const searchQuery = ref('')
+ // happens to trigger a given fetch — the store doesn't care which caller's
+ // fetcher ran, only the resulting cached value.
+ const catalogResource = useCachedResource<MarketplaceApp[]>({
+-  key: 'app-catalog',
++  key: APP_CATALOG_CACHE_KEY,
+   // Preserves this view's existing dynamic-catalog-first behavior (Marketplace's
+   // own fetcher for this key is the simpler getCuratedAppList()-only form —
+   // both are valid producers of the same shared cache entry).
+diff --git a/neode-ui/src/views/Marketplace.vue b/neode-ui/src/views/Marketplace.vue
+index 69195ad..8f4df2d 100644
+--- a/neode-ui/src/views/Marketplace.vue
++++ b/neode-ui/src/views/Marketplace.vue
+@@ -190,7 +190,7 @@ import {
+   categorizeCommunityApp,
+   getCuratedAppList,
+ } from './marketplace/marketplaceData'
+-import { fetchAppCatalog } from './discover/curatedApps'
++import { APP_CATALOG_CACHE_KEY, fetchAppCatalog } from './discover/curatedApps'
+ import { isServiceContainer } from './apps/serviceNames'
+ 
+ const router = useRouter()
+@@ -264,7 +264,7 @@ watch(() => route.query.category, (category) => {
+ // without a dashboard release — the static list below is only the offline
+ // fallback (same fetcher contract as Discover.vue for this shared key).
+ const catalogResource = useCachedResource<MarketplaceApp[]>({
+-  key: 'app-catalog',
++  key: APP_CATALOG_CACHE_KEY,
+   fetcher: async () => {
+     const catalog = await fetchAppCatalog()
+     if (catalog && catalog.apps.length) return catalog.apps
+diff --git a/neode-ui/src/views/discover/__tests__/bundleCatalogue.test.ts b/neode-ui/src/views/discover/__tests__/bundleCatalogue.test.ts
+new file mode 100644
+index 0000000..81fe542
+--- /dev/null
++++ b/neode-ui/src/views/discover/__tests__/bundleCatalogue.test.ts
+@@ -0,0 +1,28 @@
++import { afterEach, expect, it, vi } from 'vitest'
++
++afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetModules() })
++
++it('loads a bundled relay beside signed apps without replacing signed image pins', async () => {
++  vi.resetModules()
++  vi.stubEnv('VITE_CATALOGUE_REVISION', 'new-bundle')
++  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
++    if (url === '/api/node-app-catalog') return { ok: false }
++    if (url === '/api/app-catalog') return { ok: true, json: async () => ({ apps: {
++      'fixture-app': { version: '2', image: 'fixture/app@sha256:verified' },
++    } }) }
++    if (url === '/catalog.json') return { ok: true, json: async () => ({ version: 2, apps: [
++      { id: 'fixture-app', title: 'Fixture', version: '1', dockerImage: 'fixture/app:old' },
++      { id: 'spry', title: 'Spry', dockerImage: 'ghcr.io/forgesworn/spry:0.1.0-2efb051-2', source: 'forgesworn-bundle' },
++    ] }) }
++    throw new Error(`Unexpected catalogue request: ${url}`)
++  }))
++  const { APP_CATALOG_CACHE_KEY, fetchAppCatalog } = await import('../curatedApps')
++  expect(APP_CATALOG_CACHE_KEY).not.toBe('app-catalog')
++  const catalogue = await fetchAppCatalog()
++  expect(catalogue?.apps.find(app => app.id === 'spry')).toMatchObject({
++    title: 'Spry', dockerImage: 'ghcr.io/forgesworn/spry:0.1.0-2efb051-2', source: 'forgesworn-bundle',
++  })
++  expect(catalogue?.apps.find(app => app.id === 'fixture-app')).toMatchObject({
++    title: 'Fixture', version: '2', dockerImage: 'fixture/app@sha256:verified',
++  })
++})
+diff --git a/neode-ui/src/views/discover/curatedApps.ts b/neode-ui/src/views/discover/curatedApps.ts
+index c9631cf..5f8199b 100644
+--- a/neode-ui/src/views/discover/curatedApps.ts
++++ b/neode-ui/src/views/discover/curatedApps.ts
+@@ -3,6 +3,12 @@ import { isStoreListedApp, normalizeStoreApps } from '../apps/serviceNames'
+ 
+ const R = 'source.archipelago-foundation.org/lfg2025'
+ 
++// A newly installed bundle must not reuse a previous catalogue's persisted
++// session entry. Leave unrelated session data and owner credentials intact.
++export const APP_CATALOG_CACHE_KEY = import.meta.env.VITE_CATALOGUE_REVISION
++  ? `app-catalog:${import.meta.env.VITE_CATALOGUE_REVISION}`
++  : 'app-catalog'
++
+ // ---------- Dynamic catalog from registry ----------
+ export interface CatalogFeatured {
+   id: string
+-- 
+2.39.5 (Apple Git-154)
+

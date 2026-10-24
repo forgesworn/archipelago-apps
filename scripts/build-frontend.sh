@@ -62,10 +62,18 @@ mkdir "$work/tree"; tar -xzf "$base" -C "$work/tree"
 
 # 2. Build neode-ui as upstream's scripts/create-release.sh does (npm run build
 # into web/dist/neode-ui); the same staleness check on the embedded version.
+# Use the existing community catalogue extension point as well as the runtime
+# manifest: an app with only the latter cannot be found in the App Store.
+python3 "$root/scripts/include-bundle-app.py" \
+  --catalogue "$archy/app-catalog/catalog.json" --manifest "$root/apps/spry/manifest.yml"
+catalogue_revision=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$archy/app-catalog/catalog.json")
 rm -rf "$archy/web/dist/neode-ui"
-(cd "$archy/neode-ui" && npm ci --no-audit --no-fund && npm run build)
+(cd "$archy/neode-ui" && npm ci --no-audit --no-fund && VITE_CATALOGUE_REVISION="$catalogue_revision" npm run build)
 dist=$archy/web/dist/neode-ui
 test -f "$dist/index.html"
+# npm's prebuild copies the source catalogue into public/. Check the shipped
+# file too, so that a later upstream hook cannot silently remove the listing.
+cmp "$archy/app-catalog/catalog.json" "$dist/catalog.json"
 grep -rqo "${ARCHY_RELEASE#v}" "$dist"/assets/*.js \
   || { echo "$dist does not embed ${ARCHY_RELEASE#v}: build no-opped or is stale" >&2; exit 1; }
 for kept in aiui archipelago-runtime; do
