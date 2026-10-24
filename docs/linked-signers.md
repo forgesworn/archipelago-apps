@@ -129,3 +129,10 @@ always keeps working.
   node's pairing keys; revoke the node's client on the signer too.
 - **Linking happens from a script.** There's no dashboard screen for it yet
   (see `upstream-notes.md`).
+- **Keep updates on manual.** Archy's own updater installs upstream's stock
+  build, which has none of these patches. "Log in with your signer" then
+  disappears from the login page and the node refuses
+  `auth.login.signer.available` with 401. Set the update schedule to `manual`
+  and install this repository's `backend-*` and `frontend-*` releases yourself.
+  To check a node, run `grep -ac auth.login.signer.available
+  /usr/local/bin/archipelago`: 0 means the running backend is unpatched.
