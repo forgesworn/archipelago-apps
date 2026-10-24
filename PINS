@@ -16,7 +16,7 @@ WILDBLOOM_REF=bb082787a7da0bd18dc6c640364f06c5253f5bf3
 WILDBLOOM_NODE_REF=b9a7cf48752037fe3588e62ec3a6a12aaebf7ee5
 # Packaging revisions: bump when the image changes without an upstream pin change.
 # The node never re-pulls an existing tag, so every image change needs a new tag.
-WILDBLOOM_PKG_REV=2
+WILDBLOOM_PKG_REV=3
 WILDBLOOM_NODE_PKG_REV=2
 SPRY_REF=367efc77c84db7a20eddf70ab243dcd13d9065ef
 SPRY_PKG_REV=1
