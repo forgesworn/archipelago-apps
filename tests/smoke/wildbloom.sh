@@ -38,6 +38,17 @@ for path in /api/nostr-auth/health /api/auth/nostr/session; do
   code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:3743$path")
   [ "$code" = 404 ] || { echo "FAIL: $path expected 404, got $code"; exit 1; }
 done
+# The pairing pages answer at /get and /send only, without the signer injection.
+for pair in 'get:Get your file' 'send:Send a file'; do
+  page=${pair%%:*}
+  body=$(curl -fsS "http://127.0.0.1:3743/$page")
+  grep -qF "<title>${pair#*:} · Wildbloom</title>" <<<"$body" || { echo "FAIL: /$page is not its pairing page"; exit 1; }
+  ! grep -qF 'nostr-provider.js' <<<"$body" || { echo "FAIL: /$page has the signer injected"; exit 1; }
+  location=$(curl -sS -o /dev/null -D - "http://127.0.0.1:3743/$page/" | tr -d "\r" | awk 'NR==1{c=$2} tolower($1)=="location:"{l=$2} END{print c" "l}')
+  [ "$location" = "301 /$page" ] || { echo "FAIL: /$page/ expected 301 to /$page, got $location"; exit 1; }
+  code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:3743/$page.html")
+  [ "$code" = 404 ] || { echo "FAIL: /$page.html expected 404, got $code"; exit 1; }
+done
 # The pinned client must include the refreshed local recovery and service UI.
 for marker in 'id="demo-result"' 'Saved event or pool receipt' 'id="client-retrieve"' 'id="saved-recovery"' 'id="storage-layout-summary"' 'id="storage-audit"' 'id="checkout-offers"' 'id="storage-service-results"' 'id="discover-storage-services"' 'id="recovery-film"' 'Read the story instead' "media-src 'self'"; do
   grep -qF "$marker" <<<"$html"
