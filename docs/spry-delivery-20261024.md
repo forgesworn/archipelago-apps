@@ -1,11 +1,17 @@
 # Spry pairing delivery — 24 October 2026
 
+Update, 25 October: catalogue **p4** adds the missing Spry App Store listing,
+refreshes the dashboard's catalogue cache after a bundle update and corrects
+the peer DNS endpoint to Archipelago's configured `127.0.0.1:5354`.
+Backend p2 and the Spry image remain unchanged. The p3 release receipt below
+remains the original delivery record.
+
 For an existing ForgeSworn Archipelago bundle, install the matching 1.9.1
-backend p2 and catalogue p3 update using the
+backend p2 and catalogue p4 update using the
 [existing-node update command](existing-node-update.md) on a compatible
 installed 1.9.1 node. Then:
 
-1. Install **Spry** from the dashboard.
+1. Open **App Store** beside **My Apps**, search **Spry** and choose **Install**.
 2. Open it, choose **Pair with KithMoot** and approve the pairing.
 3. Use KithMoot's normal Call button for a conversation or group.
 

@@ -9,6 +9,7 @@ on:
       - scripts/fetch-archy.sh
       - scripts/apply-patches.sh
       - scripts/build-frontend.sh
+      - scripts/include-bundle-app.py
       - scripts/frontend-inputs.sh
       - scripts/lib/patches.bash
       - scripts/frontend-release-plan.sh
@@ -49,11 +50,13 @@ jobs:
         run: scripts/apply-patches.sh .cache/archy-frontend
       - name: Build frontend
         if: steps.plan.outputs.skip != 'true'
-        run: scripts/build-frontend.sh .cache/archy-frontend
-      - name: Storage settings UI tests
+        run: |
+          sudo apt-get update && sudo apt-get install -y python3-yaml
+          scripts/build-frontend.sh .cache/archy-frontend
+      - name: Dashboard UI tests
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy-frontend/neode-ui
-        run: npm test -- --run src/views/settings/__tests__/StorageSelling.test.ts src/views/settings/__tests__/StorageSales.test.ts src/views/settings/__tests__/StorageRefund.test.ts src/views/__tests__/settings.test.ts src/router/__tests__/routes.test.ts src/views/appSession/__tests__/nostrBridgeLinked.test.ts
+        run: npm test -- --run src/views/settings/__tests__/StorageSelling.test.ts src/views/settings/__tests__/StorageSales.test.ts src/views/settings/__tests__/StorageRefund.test.ts src/views/__tests__/settings.test.ts src/router/__tests__/routes.test.ts src/views/appSession/__tests__/nostrBridgeLinked.test.ts src/views/discover/__tests__
       - name: Storage settings browser acceptance
         if: steps.plan.outputs.skip != 'true'
         run: |
