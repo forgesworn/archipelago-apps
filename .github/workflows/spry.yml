@@ -2,9 +2,9 @@ name: spry
 on:
   push:
     branches: ['**']
-    paths: [apps/spry/**, Cargo.toml, Cargo.lock, PINS, .github/workflows/spry.yml]
+    paths: [apps/spry/**, Cargo.toml, Cargo.lock, PINS, scripts/image-plan.sh, scripts/lib/app-image.bash, .github/workflows/spry.yml]
   pull_request:
-    paths: [apps/spry/**, Cargo.toml, Cargo.lock, PINS, .github/workflows/spry.yml]
+    paths: [apps/spry/**, Cargo.toml, Cargo.lock, PINS, scripts/image-plan.sh, scripts/lib/app-image.bash, .github/workflows/spry.yml]
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,8 +21,22 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
+  # Ask the registry first, then the diff (see the script): an unpublished tag
+  # is built and pushed; a published one is never replaced, and is rebuilt and
+  # tested without pushing only when something it is built or tested from changed.
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      push: ${{ steps.plan.outputs.push }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - id: plan
+        run: scripts/image-plan.sh spry "${{ github.event.before }}" "${{ github.event_name }}"
   image:
-    needs: verify
+    needs: [verify, plan]
+    if: needs.plan.outputs.build == 'true'
     strategy:
       matrix:
         include:
@@ -59,7 +73,7 @@ jobs:
       - name: Real native socket interop
         run: python3 .local/relay-source/tests/interop.py --binary "$RUNNER_TEMP/spry-turn" --tls
       - name: Publish immutable architecture image
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: needs.plan.outputs.push == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
           tag='${{ steps.image.outputs.tag }}-${{ matrix.arch }}'
           echo '${{ github.token }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
@@ -72,8 +86,8 @@ jobs:
           fi
           docker push "$tag"
   publish:
-    needs: image
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [plan, image]
+    if: needs.plan.outputs.push == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     permissions:
       packages: write
