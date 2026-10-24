@@ -6,6 +6,7 @@ import secrets
 import ssl
 import subprocess
 import time
+import urllib.error
 import urllib.request
 
 context = ssl.create_default_context(cafile='/etc/archipelago/ssl/ca.crt')
@@ -73,6 +74,22 @@ def ready():
 
 
 wait(ready, 'Installed Spry did not become ready on the seeded mesh')
+# The dashboard can launch by LAN address while the owner proof uses mDNS.
+# Both are this node's UI; an unrelated website still receives no access.
+environment = dict(item.split('=', 1) for item in inspection['Config']['Env'])
+for origin in [f'https://{environment["SPRY_RELAY_IP"]}:3744', environment['SPRY_OWNER_URL']]:
+    request = urllib.request.Request('https://127.0.0.1:3744/v1/pairings',
+        headers={'Origin': origin}, method='OPTIONS')
+    with client.open(request, timeout=5) as response:
+        assert response.status == 204
+        assert response.headers['Access-Control-Allow-Origin'] == origin
+request = urllib.request.Request('https://127.0.0.1:3744/v1/pairings',
+    headers={'Origin': 'https://unrelated.invalid'}, method='OPTIONS')
+try:
+    client.open(request, timeout=5)
+    raise AssertionError('Foreign owner-control origin was accepted')
+except urllib.error.HTTPError as error:
+    assert error.code == 403
 with client.open('https://127.0.0.1:3744/', timeout=5) as response:
     assert 'Pair with KithMoot' in response.read().decode()
 dropin = Path('/etc/fips/fips.d/86-spry.nft')
@@ -84,4 +101,5 @@ wait(lambda: not dropin.exists() and subprocess.run(
 print(json.dumps({'passed': True, 'scope': 'fresh-debian-docker-host-install',
     'realRustController': True, 'existingDockerRuntime': True, 'seededFips': True,
     'spryReady': True, 'ownerPairingScreen': True, 'spryUninstall': True,
+    'ownerLanAndMdnsOrigins': True, 'foreignOriginRefused': True,
     'physicalHomeNetwork': False, 'dockerDesktopQualified': False}))

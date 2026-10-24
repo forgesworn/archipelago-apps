@@ -17,7 +17,7 @@ app:
       - { key: SPRY_RELAY_IP, template: '{{HOST_IP}}' }
       - { key: SPRY_PEER_NAME, template: '{{MESH_HOST}}' }
       - { key: SPRY_OWNER_KEYS, template: '{{NODE_IDENTITY_PUBKEYS}}' }
-      - { key: SPRY_DASHBOARD_ORIGINS, template: 'https://{{HOST_IP}},https://{{HOST_MDNS}}' }
+      - { key: SPRY_DASHBOARD_ORIGINS, template: 'https://{{HOST_IP}},https://{{HOST_MDNS}},https://{{HOST_IP}}:3744,https://{{HOST_MDNS}}:3744' }
   environment: ["SPRY_PEER_INTERFACE=fips0", "SPRY_PEER_RESOLVER=[::1]:5354", "SPRY_PEER_ZONE=fips", "SPRY_TLS_GATE=true", "SPRY_ALLOWED_ORIGINS=https://kithmoot.app,https://kithmoot.forgesworn.dev"]
   resources:
     memory_limit: 128m
