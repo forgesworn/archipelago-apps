@@ -387,6 +387,23 @@ orchestrator, `wait_for_manifest_host_ports`, already skips non-TCP ports for th
 reason; `published_host_port` should skip lines ending in `/udp` or `/sctp` too (or
 the caller should pass the manifest's first TCP host port as `runtime_ports`).
 
+A second fault sits behind the first. The repair restarts the container with a bare
+`podman restart`. The container runs `--rm` under a Quadlet unit, so that restart
+races the unit's own stop and remove: the new network helper (pasta) can start while
+the old one still holds the port and fail with "Address already in use", and systemd
+then restarts the unit anyway. A failed probe therefore turns into a failed install
+("INSTALL REPAIR ... host port N missing", then "INSTALL FAIL ... pasta failed").
+Restarting through the unit (`quadlet::restart_service("<name>.service")`, which stops
+the unit, waits for it to leave `deactivating`, then starts it) does not race.
+
+We carry the fix as `upstream/patches/0025-*`, checked against archy `7abd04a` with
+0001-0024 applied. It does two things. `published_host_port` now goes through
+`first_tcp_host_port`, which takes the host port of the first `/tcp` line only (with a
+unit test for either order, UDP only, an IPv6 host side and empty output). And the
+repair restarts through the Quadlet unit when `quadlet::unit_exists(<container>)`,
+falling back to `podman restart` for a container with no unit. Upstream could take
+the same change, or pass the manifest's first TCP host port down instead.
+
 `apps/ingle` sidesteps it with `network: host`: a host-network container has
 no port mappings (podman drops them in `namespaces.go` for the host mode), so there is
 no `podman port` line to probe.
