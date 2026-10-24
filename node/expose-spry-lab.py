@@ -87,8 +87,11 @@ def private_write(path, body, uid=0):
     temporary.replace(path)
 
 
-def copy_certificate(hostname):
-    source = Path("/etc/letsencrypt/live") / hostname
+def copy_certificate(hostname, lineage=None):
+    name = lineage or hostname
+    if len(name) > 253 or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", name):
+        raise ValueError("Expected a certificate lineage name, not a path")
+    source = Path("/etc/letsencrypt/live") / name
     run(["openssl", "x509", "-in", str(source / "fullchain.pem"), "-noout", "-checkhost", hostname])
     run(["openssl", "x509", "-in", str(source / "fullchain.pem"), "-noout", "-checkend", "3600"])
     cert_public = run(["openssl", "x509", "-in", str(source / "fullchain.pem"), "-pubkey", "-noout"])
@@ -220,6 +223,27 @@ def rollback(config):
     private_write(STATE / "config.json", json.dumps(config).encode())
 
 
+def select_certificate(config, lineage):
+    # Keep the previous operator key on the node for rollback. This changes
+    # no dashboard certificate, firewall rule, image or transport credential.
+    backup = STATE / ("tls-before-" + time.strftime("%Y%m%d%H%M%S", time.gmtime()))
+    backup.mkdir(mode=0o700)
+    for name in ("fullchain.pem", "privkey.pem"):
+        private_write(backup / name, (TLS / name).read_bytes())
+    private_write(backup / "config.json", json.dumps(config).encode())
+    try:
+        copy_certificate(config["hostname"], lineage)
+        run(["systemctl", "--user", "restart", APP + ".service"], user=True)
+        verify_runtime(config["ip"])
+        updated = {**config, "certificate_lineage": lineage}
+        private_write(STATE / "config.json", json.dumps(updated).encode())
+    except BaseException:
+        for name in ("fullchain.pem", "privkey.pem"):
+            private_write(TLS / name, (backup / name).read_bytes(), 1000)
+        run(["systemctl", "--user", "restart", APP + ".service"], user=True)
+        raise
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
@@ -230,6 +254,8 @@ def main():
     activate_parser.add_argument("--nginx-sha256", required=True)
     sub.add_parser("renew")
     sub.add_parser("rollback")
+    certificate = sub.add_parser("certificate")
+    certificate.add_argument("--lineage", required=True)
     profile = sub.add_parser("profile")
     profile.add_argument("--output", type=Path, required=True)
     profile.add_argument("--ttl", type=int, default=3600)
@@ -247,12 +273,16 @@ def main():
                 raise ValueError("Public qualification is not active")
             elif args.action == "renew":
                 lineage = os.environ.get("RENEWED_LINEAGE")
-                if lineage and Path(lineage).name != config["hostname"]:
+                selected = config.get("certificate_lineage", config["hostname"])
+                if lineage and Path(lineage).name != selected:
                     return
-                copy_certificate(config["hostname"])
+                copy_certificate(config["hostname"], selected)
                 run(["systemctl", "--user", "restart", APP + ".service"], user=True)
                 verify_runtime(config["ip"])
                 print("Certificate copied and Spry restarted; previous allocations are lost.")
+            elif args.action == "certificate":
+                select_certificate(config, args.lineage)
+                print("Selected operator certificate and restarted Spry; previous allocations are lost.")
             else:
                 if not 60 <= args.ttl <= 86400:
                     raise ValueError("Credential TTL must be 60..86400 seconds")

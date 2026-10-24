@@ -68,6 +68,13 @@ class PublicQualification(unittest.TestCase):
                 public.copy_certificate("calls.example.org")
             write.assert_not_called()
 
+    def test_certificate_lineage_cannot_escape_lets_encrypt(self):
+        for lineage in ("../private", "/etc/shadow", "a/b", "..", "name;command"):
+            with self.subTest(lineage=lineage), patch.object(public, "run") as run:
+                with self.assertRaises(ValueError):
+                    public.copy_certificate("calls.example.org", lineage)
+                run.assert_not_called()
+
     def test_renderer_timeout_refuses_before_spry_restart(self):
         with patch.object(public, "run", return_value=b'[{"State":{"Running":false},"Config":{"Cmd":[]}}]') as run, patch.object(public.time, "sleep"), \
                 patch.object(public.Path, "exists", return_value=False):
