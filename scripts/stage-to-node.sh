@@ -64,35 +64,67 @@ unset ARCHY_PASSWORD
 echo "package.install $app ($image):"
 rpc_result package.install "{\"id\":\"$app\",\"dockerImage\":\"$image\"}"
 
+podman_as_app() {
+  (cd / && runuser -u archipelago -- env "XDG_RUNTIME_DIR=/run/user/$(id -u archipelago)" podman "$@")
+}
+running_image() { podman_as_app inspect --format '{{.ImageName}}' "$app" 2>/dev/null || true; }
+container_id() { podman_as_app inspect --format '{{.Id}}' "$app" 2>/dev/null || true; }
+fail_logs() {
+  journalctl -u archipelago --since '-15min' --no-pager | grep -F "$app" | tail -20 >&2
+  exit 1
+}
+
 # Bounded wait: running and healthy (or no health reported), fail fast on a
 # terminal failure. A failed install with no container removes the entry; one
 # that left a container behind is set to stopped with the reason attached.
-deadline=$(( $(date +%s) + timeout )); seen=0
-while (( $(date +%s) < deadline )); do
-  entry=$(rpc_result server.get-state | jq -c --arg id "$app" '.data["package-data"][$id] // empty')
-  if [ -z "$entry" ]; then
-    if [ "$seen" = 1 ]; then
-      echo "FAIL: $app install entry vanished (install failed with nothing left behind)" >&2
-      journalctl -u archipelago --since '-15min' --no-pager | grep -F "$app" | tail -20 >&2
-      exit 1
+# With an old container id, a restart is in progress: a missing or stopped
+# container is expected until a new one (on $image) is running.
+wait_running() {
+  local old_id=${1-} deadline=$(( $(date +%s) + timeout )) seen=0 entry state health
+  while (( $(date +%s) < deadline )); do
+    entry=$(rpc_result server.get-state | jq -c --arg id "$app" '.data["package-data"][$id] // empty')
+    if [ -z "$entry" ]; then
+      if [ "$seen" = 1 ] && [ -z "$old_id" ]; then
+        echo "FAIL: $app install entry vanished (install failed with nothing left behind)" >&2
+        fail_logs
+      fi
+    else
+      seen=1
+      state=$(jq -r '.state' <<<"$entry"); health=$(jq -r '.health // "none"' <<<"$entry")
+      case "$state" in
+        running)
+          if [ -n "$old_id" ]; then
+            local id; id=$(container_id)
+            { [ -n "$id" ] && [ "$id" != "$old_id" ] && [ "$(running_image)" = "$image" ]; } || { sleep 5; continue; }
+          fi
+          if [ "$health" = healthy ] || [ "$health" = none ]; then
+            echo "$app: state=$state health=$health"; return 0
+          fi ;;
+        stopped|exited)
+          if [ -z "$old_id" ]; then
+            echo "FAIL: $app state=$state: $(jq -r '.["install-progress"].message // "no message"' <<<"$entry")" >&2
+            fail_logs
+          fi ;;
+      esac
     fi
-  else
-    seen=1
-    state=$(jq -r '.state' <<<"$entry"); health=$(jq -r '.health // "none"' <<<"$entry")
-    case "$state" in
-      running) if [ "$health" = healthy ] || [ "$health" = none ]; then
-                 echo "$app: state=$state health=$health"; exit 0
-               fi ;;
-      stopped|exited)
-        echo "FAIL: $app state=$state: $(jq -r '.["install-progress"].message // "no message"' <<<"$entry")" >&2
-        journalctl -u archipelago --since '-15min' --no-pager | grep -F "$app" | tail -20 >&2
-        exit 1 ;;
-    esac
-  fi
-  sleep 5
-done
-echo "FAIL: $app not running and healthy within ${timeout}s" >&2
-exit 1
+    sleep 5
+  done
+  echo "FAIL: $app not running and healthy on $image within ${timeout}s" >&2
+  exit 1
+}
+wait_running
+
+# Installing an app that is already running rewrites its Quadlet unit but only
+# restarts it for port, network, command, health or security changes, so a new
+# image alone leaves the old container running. Restart it onto the new image.
+current=$(running_image)
+if [ "$current" != "$image" ]; then
+  echo "$app is running $current, not $image: restarting it"
+  old_id=$(container_id)
+  [ -n "$old_id" ] || { echo "FAIL: cannot read the $app container" >&2; exit 1; }
+  rpc_result package.restart "{\"id\":\"$app\"}"
+  wait_running "$old_id"
+fi
 EOF
 argv=$(printf '%q ' "$app" "$image" "$INSTALL_TIMEOUT")
 remote="$(cat "$root/scripts/lib/archy-login.bash")"$'\n'"$remote"

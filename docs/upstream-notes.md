@@ -451,6 +451,14 @@ stampede-keep.service` (as `archipelago`) applied it. Suggest: after rewriting a
 always apply it (or report the pending change), and have stage-to-node.sh check the running container's image
 against the manifest's.
 
+The image check is now in `scripts/stage-to-node.sh`: after the install, if the
+running container's image is not the manifest's, it restarts the app with
+`package.restart` and waits for a new container on the new image. The upstream
+behaviour is unchanged. `sync_quadlet_unit` (`prod_orchestrator.rs`) restarts a
+running app only for port, network alias, command, health or security drift,
+and an image change alone logs "Quadlet metadata updated; operator restart will
+apply it", so an image update outside the staged-update flow still needs a restart.
+
 ## Patches retired at v1.9.1-alpha (archy `7f0318c`)
 
 `0016` and `0017` were dropped when `ARCHY_REF` moved to v1.9.1-alpha. The
