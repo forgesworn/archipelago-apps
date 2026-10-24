@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 FROM rust:1.94.1-slim-trixie AS relay
-ARG SPRY_REF=367efc77c84db7a20eddf70ab243dcd13d9065ef
+ARG SPRY_REF=492eb708a282f666e6dcec550e4d94a1e56b9599
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN git init /src && cd /src && git remote add origin https://github.com/forgesworn/spry-turn.git && git fetch --depth 1 origin "$SPRY_REF" && git checkout --detach FETCH_HEAD && test "$(git rev-parse HEAD)" = "$SPRY_REF"
 WORKDIR /src

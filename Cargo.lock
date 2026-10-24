@@ -663,21 +663,41 @@ dependencies = [
 ]
 
 [[package]]
-name = "spry-node"
+name = "spry-access"
 version = "0.1.0"
+source = "git+https://github.com/forgesworn/spry-turn.git?rev=492eb708a282f666e6dcec550e4d94a1e56b9599#492eb708a282f666e6dcec550e4d94a1e56b9599"
 dependencies = [
  "base64",
- "bytes",
  "getrandom 0.3.4",
  "hmac",
- "http-body-util",
- "hyper",
- "hyper-util",
  "k256",
  "serde",
  "serde_json",
  "sha1",
  "sha2",
+ "url",
+]
+
+[[package]]
+name = "spry-node"
+version = "0.1.0"
+dependencies = [
+ "spry-access",
+ "spry-service",
+]
+
+[[package]]
+name = "spry-service"
+version = "0.1.0"
+source = "git+https://github.com/forgesworn/spry-turn.git?rev=492eb708a282f666e6dcec550e4d94a1e56b9599#492eb708a282f666e6dcec550e4d94a1e56b9599"
+dependencies = [
+ "bytes",
+ "getrandom 0.3.4",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "serde_json",
+ "spry-access",
  "tokio",
  "url",
 ]

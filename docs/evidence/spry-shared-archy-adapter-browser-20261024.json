@@ -1,0 +1,236 @@
+{
+  "schema": 1,
+  "passed": true,
+  "scope": "local-generated-media-pair-once-and-automatic-call-access",
+  "runtime": "Rust relay and Rust control service",
+  "nodeBinarySha256": "2aa19a136e039a0279e93291b5c2f53865ed091900af853db3850bef53fbb1c3",
+  "nodeBinaryBytes": 1200176,
+  "relayBinarySha256": "ad89ebd7f21fc01830c9c15cb046d7998bf6d62e806371bc1006098d5fda9677",
+  "pairingClaims": 1,
+  "distinctCredentialUsernames": 5,
+  "standingSeconds": 0,
+  "cameraEffects": "off for generated-media transport qualification",
+  "configuredThroughPairingUi": true,
+  "guestRelaySettingsRequired": false,
+  "injectedIceServers": false,
+  "invitationOmitsCredentials": true,
+  "pairedParticipantClosed": true,
+  "guestReloadedAfterPairedParticipantClosed": true,
+  "newGuestJoinedWithoutPairedParticipant": true,
+  "twoPerson": [
+    {
+      "frames": 8,
+      "audioBytes": 842,
+      "audioEnergy": 0.22000000000000006,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 2
+    },
+    {
+      "frames": 12,
+      "audioBytes": 2111,
+      "audioEnergy": 0.5100000000000002,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 2
+    }
+  ],
+  "group": [
+    {
+      "frames": 82,
+      "audioBytes": 15685,
+      "audioEnergy": 3.8290331659638275,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    },
+    {
+      "frames": 239,
+      "audioBytes": 49649,
+      "audioEnergy": 12.199999999999784,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    },
+    {
+      "frames": 179,
+      "audioBytes": 36679,
+      "audioEnergy": 8.9290359589005,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    }
+  ],
+  "withoutOwner": [
+    {
+      "frames": 22,
+      "audioBytes": 4329,
+      "audioEnergy": 1.0275879483168884,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    },
+    {
+      "frames": 232,
+      "audioBytes": 45899,
+      "audioEnergy": 11.531469896947494,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 4
+    },
+    {
+      "frames": 78,
+      "audioBytes": 15655,
+      "audioEnergy": 3.8099999999999787,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    }
+  ],
+  "standing": [
+    {
+      "frames": 45,
+      "audioBytes": 9351,
+      "audioEnergy": 2.2875879483168893,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    },
+    {
+      "frames": 257,
+      "audioBytes": 51038,
+      "audioEnergy": 12.81146989694748,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 4
+    },
+    {
+      "frames": 85,
+      "audioBytes": 17518,
+      "audioEnergy": 4.289999999999974,
+      "pairs": [
+        {
+          "local": "relay",
+          "remote": "relay"
+        },
+        {
+          "local": "relay",
+          "remote": "relay"
+        }
+      ],
+      "relayOnly": true,
+      "videos": 3
+    }
+  ],
+  "limits": [
+    "Same-host Chromium with generated media and loopback TURN; local-network checks disabled for this fixture",
+    "HTTPS control requests routed to the local Rust HTTP service; no public TLS or NAT proof",
+    "No physical Android or independent-node installation proof"
+  ]
+}

@@ -42,6 +42,11 @@ async function media(page) {
     if (await page.locator(id).getAttribute('data-on') !== 'true') await page.locator(id).click();
     await wait(() => page.locator(id).getAttribute('data-on'), value => value === 'true', 'Generated capture did not start');
   }
+  // The product pauses off-page gallery sinks. Select its full gallery so
+  // this transport check deliberately measures every remote camera.
+  await page.locator('#callExtras').click();
+  await page.locator('#callMoreMenu [role="menuitem"]').filter({ hasText: /^\s*Layout\s*$/ }).click();
+  await page.locator('#callMoreMenu .menuSub:not([hidden]) [role="menuitemradio"]').filter({ hasText: /^\s*Gallery\s*$/ }).click();
 }
 async function evidence(page) {
   return page.evaluate(async () => {
@@ -92,7 +97,7 @@ try {
   const appPort = appServer.address().port;
   browser = await chromium.launch({ headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--disable-audio-output', '--disable-features=LocalNetworkAccessChecks', '--host-resolver-rules=MAP relay.example 127.0.0.1'] });
   async function device() {
-    const context = await browser.newContext({ permissions: ['camera', 'microphone'], serviceWorkers: 'block' }); contexts.push(context);
+    const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, permissions: ['camera', 'microphone'], serviceWorkers: 'block' }); contexts.push(context);
     await context.exposeFunction('__sprySign', event => finalizeEvent(event, owner));
     await context.addInitScript(({ relay }) => {
       if (location.hostname === 'relay.example') window.nostr = { signEvent: event => window.__sprySign(event) };
