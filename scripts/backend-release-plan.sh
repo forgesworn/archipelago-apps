@@ -19,7 +19,7 @@ no() { echo "skip=false"; echo "reason: $1" >&2; exit 0; }
 [ "$event" = push ] || no "event is $event, not push"
 [ -n "$before" ] && ! [[ "$before" =~ ^0+$ ]] || no "no usable before sha"
 git cat-file -e "$before^{commit}" 2>/dev/null || no "before sha not in the clone"
-git diff --quiet "$before" HEAD -- .github/workflows/backend.yml scripts/fetch-archy.sh scripts/apply-patches.sh \
+git diff --quiet "$before" HEAD -- .github/workflows/backend.yml node tests/node scripts/test-docker-host.sh scripts/fetch-archy.sh scripts/apply-patches.sh \
   scripts/backend-inputs.sh scripts/backend-release-plan.sh scripts/lib/patches.bash || no "backend.yml or a script it runs changed"
 gh release view "$tag" >/dev/null 2>&1 || no "release $tag does not exist"
 prev=$(mktemp -d)

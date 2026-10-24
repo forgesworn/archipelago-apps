@@ -3,7 +3,7 @@ on:
   push:
     # Branches only: a tag push would otherwise run every workflow again.
     branches: ['**']
-    paths: [apps/**, tests/smoke/**, PINS, scripts/image-plan.sh, scripts/lib/app-image.bash, scripts/configure-wildbloom-sales.py, scripts/configure-wildbloom-discovery.py, docs/wildbloom-sales.example.json, docs/wildbloom-discovery.example.json, .github/workflows/images.yml]
+    paths: [apps/**, tests/smoke/**, tests/test_image_plan.py, PINS, scripts/image-plan.sh, scripts/lib/app-image.bash, scripts/configure-wildbloom-sales.py, scripts/configure-wildbloom-discovery.py, docs/wildbloom-sales.example.json, docs/wildbloom-discovery.example.json, .github/workflows/images.yml]
   workflow_dispatch:
 # Two runs must not both see a tag as unpublished and push it.
 concurrency:
@@ -18,6 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
+      - run: python3 -m unittest discover -s tests -p test_image_plan.py
       # Ask the registry first, then the diff (see the script): an unpublished
       # tag is built and pushed; a published one is never replaced.
       - id: plan
@@ -56,6 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
+      - run: python3 -m unittest discover -s tests -p test_image_plan.py
       - uses: actions/setup-node@v4
         with: { node-version: "24" }
       # Ask the registry first, then the diff (see the script): an unpublished

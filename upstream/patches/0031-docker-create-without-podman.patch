@@ -1,0 +1,27 @@
+From 07d12c60f7ea6dbb5e44108b829e513726f1d9b8 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <147930957+TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 21:19:59 +0100
+Subject: [PATCH] Do not require a Podman socket for Docker container creation
+
+---
+ core/archipelago/src/container/prod_orchestrator.rs | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
+index 2ef13f6..1d9d9e8 100644
+--- a/core/archipelago/src/container/prod_orchestrator.rs
++++ b/core/archipelago/src/container/prod_orchestrator.rs
+@@ -3244,7 +3244,9 @@ impl ProdContainerOrchestrator {
+             self.install_via_quadlet(&resolved_manifest, &name).await?;
+         } else {
+             self.remove_quadlet_unit_if_present(&name).await?;
+-            ensure_user_podman_socket().await?;
++            if self.runtime.cli_name() == "podman" {
++                ensure_user_podman_socket().await?;
++            }
+             // Legacy path. Production until tests/lifecycle/run-gate.sh
+             // goes green against the Quadlet path.
+             self.runtime
+-- 
+2.39.5 (Apple Git-154)
+

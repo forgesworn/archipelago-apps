@@ -4,6 +4,56 @@ Observations about Archipelago (archy) made while packaging apps, kept here so
 they can be offered to the maintainers. Each entry names the archy commit it was
 checked against.
 
+## Manifest lifecycle controls on Docker (archy `7f0318c`)
+
+The production orchestrator already selects Docker from the node configuration,
+but the package RPC layer still probes Podman during failed-install cleanup and
+uninstall. Start, Stop and Restart also use a fixed list of single-container
+apps, so a newly packaged manifest can fall back to legacy Podman operations.
+
+`0028-manifest-app-runtime-controls.patch` routes known single-app manifests
+through the existing orchestrator and uses the explicitly configured Docker
+runtime for those two probes. Stack ordering and the legacy Auto/Podman fallback
+are retained. This is an app-manager integration fix, without a Spry dependency
+or a second container runtime implementation. The disposable Debian host fixture
+exercises the real install, Stop, Start, Restart and uninstall RPCs.
+
+`0029-docker-no-new-privileges.patch` also makes Docker honour the manifest's
+existing `no_new_privileges` setting. The host fixture checks the actual
+container's capabilities, root filesystem, memory limit and security option.
+
+`0031-docker-create-without-podman.patch` guards the pre-create Podman socket
+repair by the selected runtime. Without that guard a real Docker installation
+stops before creating its container, despite the runtime adapter being correct.
+
+`0033-host-network-readiness-and-spry-rule.patch` probes the node's own primary
+IPv4 address as well as loopback for host-network containers. Spry's TURN and
+TLS listeners bind that address, so loopback alone incorrectly marks a working
+installation as failed. Each connection attempt and the total wait are bounded;
+the socket test checks a closed address and a subsequent reachable address.
+The orchestrator install path also installs Spry's existing fixed mesh rule,
+as the legacy path already does. The installed-host fixture checks both the
+drop-in and the live nftables rule before exercising dashboard lifecycle RPCs.
+
+## Configured relays through NIP-07 (archy `7f0318c`)
+
+The signer bridge implements `getRelays` with an empty object. Apps cannot use
+the node's configured relay list, so Spry pairing stops even on a node with
+enabled relays. `0030-nip07-configured-relays.patch` reads `nostr.list-relays`
+through the existing authenticated dashboard RPC and returns enabled entries
+in NIP-07 form. It adds no relay defaults and keeps an explicitly empty list
+empty. The same bridge serves dashboard frames and detached signer tabs.
+Its tests cover enabled/disabled relays, an empty list and lookup failure.
+
+`0032-dashboard-dompurify-3.4.17.patch` raises the existing DOMPurify dependency
+and lock from 3.4.16 to 3.4.17. The patched version clears the production npm
+audit findings; see the [maintainer's advisory](https://github.com/cure53/DOMPurify/security/advisories/GHSA-cg2g-xh64-v4q7).
+
+The fixture waits for startup recovery's existing lifecycle lock before making
+an install request and supplies the catalogue's image field. HTTP readiness
+alone precedes completion of startup recovery; an asynchronous install response
+alone does not prove an installation succeeded.
+
 ## Node Nostr public key file name (archy `6d5f3ff`)
 
 `read_nostr_pubkey_hex` in `core/archipelago/src/api/rpc/package/config.rs`

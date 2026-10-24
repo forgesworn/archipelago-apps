@@ -5,6 +5,11 @@
 (`wildbloom-node` on 3742, `wildbloom` on 3743) against the real backend, nginx and
 rootless Podman layout, without the cost of a full install.
 
+The optional [Docker host recipe](docker.md) uses the same real controller
+and its existing Docker runtime, and additionally installs pinned FIPS for
+Spry. It requires a fresh Debian host and has a separate install qualification
+gate; it does not migrate existing Podman containers.
+
 ## What it contains
 
 - The patched backend from this repository's `backend-<ARCHY_RELEASE>-p<BACKEND_PATCH_LEVEL>`

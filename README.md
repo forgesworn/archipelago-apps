@@ -17,7 +17,8 @@ For existing installations, see the [Wildbloom upgrade guide](docs/wildbloom-upg
 
 With the matching ForgeSworn node update, install **Spry**, open it and choose
 **Pair with KithMoot**. Then use the normal Call button in a conversation or
-group; guests need no relay settings. See the [Spry guide](apps/spry/README.md)
+group. On private home nodes, each person pairs their own node once; a public
+Spry can also serve guests without a node. See the [Spry guide](apps/spry/README.md)
 for node requirements and qualification limits. Its install catalogue is
 released only after the public image is available for both architectures.
 
@@ -41,7 +42,8 @@ Validate locally: `scripts/fetch-archy.sh && scripts/apply-patches.sh && scripts
 
 MIT licence.
 
-`apps/wildbloom/nostr-provider.js` is Archipelago's NIP-07 provider
+`apps/wildbloom/nostr-provider.js` and `apps/spry/public/nostr-provider.js`
+contain Archipelago's NIP-07 provider
 (`neode-ui/public/nostr-provider.js`), vendored unchanged at the pinned
 `ARCHY_REF`. Copyright (c) 2026 Dorian and the Archipelago Project
 contributors, MIT licence.

@@ -10,6 +10,7 @@
 #   Tag published, image inputs unchanged build and smoke-test without pushing
 #     if the smoke test or its helpers changed, on a manual run, or when the
 #     change cannot be determined (no usable "before" sha); otherwise nothing.
+#   Branch inherits published main inputs  build and test without replacing them.
 #
 # A published tag is never replaced: the node never re-pulls a tag it has.
 # Image inputs are the Docker build context (apps/<id>/ without manifest.yml,
@@ -53,6 +54,13 @@ decide() { # build push message-kind message
 }
 die() { echo "::error::$app: $1"; exit 1; }
 
+same_image_inputs() {
+  git diff --quiet "$1" HEAD -- "${context[@]}" || return 1
+  local pins
+  pins=$(git show "$1:PINS" 2>/dev/null | grep -E "$pin_re") || return 1
+  [ "$pins" = "$(grep -E "$pin_re" PINS)" ]
+}
+
 # 1. The registry.
 if probe=$(docker manifest inspect "$APP_TAG" 2>&1); then
   published=true
@@ -71,13 +79,18 @@ elif ! git cat-file -e "$before^{commit}" 2>/dev/null; then comparable=false why
 fi
 
 if [ "$comparable" = true ]; then
-  image_changed=false
-  git diff --quiet "$before" HEAD -- "${context[@]}" || image_changed=true
-  old=$(git show "$before:PINS" 2>/dev/null | grep -E "$pin_re" || true)
-  new=$(grep -E "$pin_re" PINS || true)
-  [ "$old" = "$new" ] || image_changed=true
-  [ "$image_changed" = false ] \
-    || die "$APP_TAG is already published but its image inputs changed since $before; bump the app's PKG_REV in PINS (and the manifest tag)"
+  if ! same_image_inputs "$before"; then
+    # Merging main can bring an image already published from that main tree.
+    # Re-test those exact inputs without replacing the immutable tag. Main's
+    # own checkout has HEAD == upstream and cannot use this exception.
+    upstream=$(git merge-base HEAD refs/remotes/origin/main 2>/dev/null || true)
+    if [ -n "$upstream" ] && [ "$upstream" != "$(git rev-parse HEAD)" ] \
+        && same_image_inputs "$upstream" \
+        && git diff --quiet "$upstream" HEAD -- scripts/lib/app-image.bash; then
+      decide true false notice "$APP_TAG already matches the branch's upstream inputs; building and testing without replacing it"
+    fi
+    die "$APP_TAG is already published but its image inputs changed since $before; bump the app's PKG_REV in PINS (and the manifest tag)"
+  fi
   if git diff --quiet "$before" HEAD -- "${smoke[@]}"; then
     decide false false notice "$APP_TAG is already published and nothing it is built or tested from changed; nothing to do"
   fi
