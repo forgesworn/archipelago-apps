@@ -1,4 +1,6 @@
 """Actual installed controller -> Docker runtime -> Spry, disposable host only."""
+import base64
+import hashlib
 import http.cookiejar
 import json
 from pathlib import Path
@@ -83,6 +85,24 @@ for origin in [f'https://{environment["SPRY_RELAY_IP"]}:3744', environment['SPRY
     with client.open(request, timeout=5) as response:
         assert response.status == 204
         assert response.headers['Access-Control-Allow-Origin'] == origin
+    with client.open('https://127.0.0.1:3744/v1/status', timeout=5) as response:
+        state = json.load(response)
+    body = b'{}'
+    event = {'kind': 27235, 'created_at': int(time.time()), 'content': '', 'tags': [
+        ['u', state['endpoint'].rstrip('/') + '/v1/pairings/list'], ['method', 'POST'],
+        ['payload', hashlib.sha256(body).hexdigest()], ['nonce', secrets.token_urlsafe(32)],
+        ['aud', state['audience']]]}
+    proof = rpc('identity.nostr-sign', {'id': identity['id'], 'event': event})
+    header = 'Nostr ' + base64.b64encode(json.dumps(proof).encode()).decode()
+    request = urllib.request.Request('https://127.0.0.1:3744/v1/pairings/list', body,
+        {'Origin': origin, 'Content-Type': 'application/json', 'Authorization': header})
+    with client.open(request, timeout=5) as response:
+        assert json.load(response)['pairings'] == []
+    try:
+        client.open(request, timeout=5)
+        raise AssertionError('Owner proof replay was accepted')
+    except urllib.error.HTTPError as error:
+        assert error.code == 401
 request = urllib.request.Request('https://127.0.0.1:3744/v1/pairings',
     headers={'Origin': 'https://unrelated.invalid'}, method='OPTIONS')
 try:
@@ -102,4 +122,5 @@ print(json.dumps({'passed': True, 'scope': 'fresh-debian-docker-host-install',
     'realRustController': True, 'existingDockerRuntime': True, 'seededFips': True,
     'spryReady': True, 'ownerPairingScreen': True, 'spryUninstall': True,
     'ownerLanAndMdnsOrigins': True, 'foreignOriginRefused': True,
+    'realNodeOwnerApprovals': True, 'ownerProofReplayRefused': True,
     'physicalHomeNetwork': False, 'dockerDesktopQualified': False}))
