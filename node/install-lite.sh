@@ -43,8 +43,11 @@ apt-get -o DPkg::Lock::Timeout=600 update
 runtime_packages=()
 if [ "$runtime" = podman ]; then
   runtime_packages=(podman netavark aardvark-dns passt uidmap slirp4netns fuse-overlayfs)
-elif ! command -v docker >/dev/null; then
-  runtime_packages=(docker.io docker-cli)
+else
+  runtime_packages=(nftables)
+  if ! command -v docker >/dev/null; then
+    runtime_packages+=(docker.io docker-cli)
+  fi
 fi
 apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends "${runtime_packages[@]}" \
   dbus-user-session nginx avahi-daemon openssl curl jq \
