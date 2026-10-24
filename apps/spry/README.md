@@ -9,6 +9,14 @@ The node runs the Rust Spry relay and a separate Rust pairing service. The
 browser interface uses JavaScript; Android uses Kotlin and native WebRTC.
 There is no Node interpreter in the installed package.
 
+Spry is a standalone ForgeSworn product. Its relay, access library and HTTP
+service live in the [Spry repository](https://github.com/forgesworn/spry-turn).
+This package consumes pinned `spry-access` and `spry-service` libraries and
+supplies the Archipelago dashboard/signing assets. The app manager supplies
+installation and owner keys; the app gate supplies host HTTPS. Shared pairing
+and credential logic is maintained in Spry and tested there. Other ForgeSworn
+applications can use the same libraries without installing Archipelago.
+
 ## Node prerequisites
 
 This package needs an Archipelago node with a public IPv4 address, a public
@@ -63,3 +71,9 @@ Playwright Chromium, the Rust control executable and a Spry relay executable.
 Its receipt distinguishes local browser/loopback proof from public TLS/NAT,
 independent-node installation and physical Android acceptance. Raw failure
 artifacts belong in ignored local storage.
+
+The [standalone-library receipt](../../docs/evidence/spry-standalone-libraries-browser-20261024.json)
+uses the executable built directly from Spry, including its independent UI.
+It verifies pairing, group media, a new guest and a guest reload with the
+paired participant closed. That extraction check does not repeat the earlier
+330-second renewal run and does not establish cross-home-network operation.
