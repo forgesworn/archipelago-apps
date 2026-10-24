@@ -1,8 +1,7 @@
-From b98eadb19f2a53ebaadb4d0ac055a03ca6607d40 Mon Sep 17 00:00:00 2001
+From 8885c3083d7870e4b41fe9e46f769249f68a1703 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 09:05:19 +0200
-Subject: [PATCH 07/14] feat: dashboard login and onboarding with a linked
- signer
+Subject: [PATCH] feat: dashboard login and onboarding with a linked signer
 
 Log in to the dashboard by approving on a linked signer: a button above
 the password form when a signer is enrolled, the code shown large, and
@@ -32,8 +31,7 @@ dialog. Mock backend entries cover every new method.
  neode-ui/src/locales/en.json                  | 116 +++++
  neode-ui/src/locales/es.json                  | 116 +++++
  neode-ui/src/stores/__tests__/app.test.ts     |   8 +
- .../src/stores/__tests__/appLauncher.test.ts  |  36 ++
- neode-ui/src/stores/appLauncher.ts            |   9 +-
+ .../src/stores/__tests__/appLauncher.test.ts  |  40 ++
  neode-ui/src/stores/auth.ts                   |   4 +-
  neode-ui/src/views/AppSession.vue             |   2 +
  neode-ui/src/views/Dashboard.vue              |   2 +
@@ -43,15 +41,16 @@ dialog. Mock backend entries cover every new method.
  .../__tests__/nostrBridgeLinked.test.ts       |  53 +++
  .../src/views/appSession/useAppIdentity.ts    |   2 +
  .../src/views/appSession/useNostrBridge.ts    |   7 +
+ .../apps/__tests__/AppsUninstallModal.test.ts |   2 +-
  .../src/views/dashboard/SignerLoginNotice.vue |  72 +++
  .../__tests__/SignerLoginNotice.test.ts       | 144 ++++++
  .../src/views/settings/AccountSection.vue     |   2 +
  .../views/settings/LoginSignersSection.vue    | 312 +++++++++++++
  .../__tests__/LoginSignersSection.test.ts     | 244 ++++++++++
- neode-ui/src/views/web5/Web5Identities.vue    |  31 +-
+ neode-ui/src/views/web5/Web5Identities.vue    |  27 +-
  .../web5/__tests__/Web5Identities.test.ts     |  46 ++
  neode-ui/src/views/web5/types.ts              |   3 +
- 39 files changed, 3386 insertions(+), 22 deletions(-)
+ 39 files changed, 3380 insertions(+), 21 deletions(-)
  create mode 100644 neode-ui/src/api/__tests__/signerLogin.test.ts
  create mode 100644 neode-ui/src/api/signer-login.ts
  create mode 100644 neode-ui/src/components/signer/ConnectSignerStep.vue
@@ -71,10 +70,10 @@ dialog. Mock backend entries cover every new method.
  create mode 100644 neode-ui/src/views/settings/__tests__/LoginSignersSection.test.ts
 
 diff --git a/neode-ui/mock-backend.js b/neode-ui/mock-backend.js
-index 7628123..040da3a 100755
+index a7baaa5..da27cd1 100755
 --- a/neode-ui/mock-backend.js
 +++ b/neode-ui/mock-backend.js
-@@ -1820,7 +1820,7 @@ app.post(['/app/bitcoin-ui/rpc/v1', '/app/bitcoin-core/rpc/v1', '/app/bitcoin-kn
+@@ -1822,7 +1822,7 @@ app.post(['/app/bitcoin-ui/rpc/v1', '/app/bitcoin-core/rpc/v1', '/app/bitcoin-kn
  })
  
  // RPC endpoint
@@ -83,7 +82,7 @@ index 7628123..040da3a 100755
    const { method, params } = req.body
    console.log(`[RPC] ${method}`)
  
-@@ -1989,6 +1989,11 @@ app.post('/rpc/v1', (req, res) => {
+@@ -1996,6 +1996,11 @@ app.post('/rpc/v1', (req, res) => {
            })
          }
  
@@ -95,7 +94,7 @@ index 7628123..040da3a 100755
          const sessionId = `session-${Date.now()}`
          sessions.set(sessionId, {
            createdAt: new Date(),
-@@ -2221,6 +2226,113 @@ app.post('/rpc/v1', (req, res) => {
+@@ -2228,6 +2233,113 @@ app.post('/rpc/v1', (req, res) => {
          return res.json({ result: 'ok' })
        }
  
@@ -209,7 +208,7 @@ index 7628123..040da3a 100755
        case 'auth.totp.status': {
          return res.json({ result: { enabled: false } })
        }
-@@ -2250,6 +2362,13 @@ app.post('/rpc/v1', (req, res) => {
+@@ -2257,6 +2369,13 @@ app.post('/rpc/v1', (req, res) => {
  
        case 'auth.login.totp':
        case 'auth.login.backup': {
@@ -223,7 +222,7 @@ index 7628123..040da3a 100755
          return res.json({ result: { success: true } })
        }
  
-@@ -2334,6 +2453,7 @@ app.post('/rpc/v1', (req, res) => {
+@@ -2341,6 +2460,7 @@ app.post('/rpc/v1', (req, res) => {
                  nostr_npub: 'npub1mockmerchantidentitypubkeyvalue000000000000000000000000def',
                  profile: { display_name: 'My Shop', website: 'https://myshop.onion', picture: '/demo-avatars/business.svg' },
                },
@@ -231,7 +230,7 @@ index 7628123..040da3a 100755
              ],
            },
          })
-@@ -6170,6 +6290,63 @@ function sessionBucketProxy(bucket) {
+@@ -6183,6 +6303,63 @@ function sessionBucketProxy(bucket) {
  const mockData = sessionBucketProxy('mockData')
  const walletState = sessionBucketProxy('walletState')
  const userState = sessionBucketProxy('userState')
@@ -464,10 +463,10 @@ index 0000000..8a6ae3a
 +  })
 +})
 diff --git a/neode-ui/src/api/rpc-client.ts b/neode-ui/src/api/rpc-client.ts
-index ce3c274..7321304 100644
+index a18f46f..501a926 100644
 --- a/neode-ui/src/api/rpc-client.ts
 +++ b/neode-ui/src/api/rpc-client.ts
-@@ -244,7 +244,7 @@ class RPCClient {
+@@ -255,7 +255,7 @@ class RPCClient {
    }
  
    // Convenience methods
@@ -648,10 +647,10 @@ index 0000000..092eae3
 +  },
 +}
 diff --git a/neode-ui/src/components/AppLauncherOverlay.vue b/neode-ui/src/components/AppLauncherOverlay.vue
-index a0ac81a..428ffb0 100644
+index 0636c7d..e3afb24 100644
 --- a/neode-ui/src/components/AppLauncherOverlay.vue
 +++ b/neode-ui/src/components/AppLauncherOverlay.vue
-@@ -183,6 +183,8 @@
+@@ -190,6 +190,8 @@
                :app-name="store.consentRequest?.appName ?? ''"
                :method="store.consentRequest?.method ?? ''"
                :identity-label="store.consentRequest?.identityLabel"
@@ -673,7 +672,7 @@ index 2c5426c..67f3a1f 100644
  
  const props = defineProps<{
 diff --git a/neode-ui/src/components/NostrSignConsent.vue b/neode-ui/src/components/NostrSignConsent.vue
-index f604efc..f72c3a9 100644
+index 23168fd..89dd429 100644
 --- a/neode-ui/src/components/NostrSignConsent.vue
 +++ b/neode-ui/src/components/NostrSignConsent.vue
 @@ -6,8 +6,9 @@
@@ -688,7 +687,7 @@ index f604efc..f72c3a9 100644
            </div>
          </template>
  
-@@ -64,6 +65,8 @@ const METHOD_LABELS: Record<string, string> = {
+@@ -69,6 +70,8 @@ const METHOD_LABELS: Record<string, string> = {
  }
  const props = withDefaults(defineProps<{
    show: boolean; appName: string; method: string; identityLabel?: string; eventKind?: number; content?: string
@@ -697,7 +696,7 @@ index f604efc..f72c3a9 100644
    phase?: 'review' | 'signing' | 'success' | 'error'; error?: string
  }>(), { phase: 'review', error: '' })
  const emit = defineEmits<{ approve: [remember: boolean]; deny: [] }>()
-@@ -76,7 +79,13 @@ useModalKeyboard(modalRef, computed(() => props.show), () => {
+@@ -81,7 +84,13 @@ useModalKeyboard(modalRef, computed(() => props.show), () => {
  })
  const methodLabel = computed(() => METHOD_LABELS[props.method] ?? props.method)
  const requestTitle = computed(() => props.method === 'getPublicKey' ? 'Share this identity?' : 'Approve this request?')
@@ -710,8 +709,8 @@ index f604efc..f72c3a9 100644
 +const footerNote = computed(() => !linked.value ? 'NIP-07 · signed locally'
 +  : sharesKey.value ? 'NIP-46 · key held on your signer' : 'NIP-46 · signed on your signer')
  const successTitle = computed(() => props.method === 'getPublicKey' ? 'Identity shared' : 'Request signed')
- const contentPreview = computed(() => !props.content ? '' : props.content.length > 200 ? `${props.content.slice(0, 200)}…` : props.content)
- const eventKindLabel = computed(() => props.eventKind === undefined ? '' : EVENT_KIND_LABELS[props.eventKind] ?? 'Unknown')
+ const mediaApproval = computed(() => {
+   if (![27236, 27237].includes(props.eventKind ?? 0) || !props.content) return null
 diff --git a/neode-ui/src/components/__tests__/NostrSignConsent.test.ts b/neode-ui/src/components/__tests__/NostrSignConsent.test.ts
 index 02724be..57d2c38 100644
 --- a/neode-ui/src/components/__tests__/NostrSignConsent.test.ts
@@ -1854,10 +1853,10 @@ index 0000000..7109bcb
 +  return { phase, code, error, rawError, result, reachedWaiting, waitingInBackground, late, run, cancel, stop, reset }
 +}
 diff --git a/neode-ui/src/locales/en.json b/neode-ui/src/locales/en.json
-index 7cfa192..43877c6 100644
+index a7f8b50..2b3b4c2 100644
 --- a/neode-ui/src/locales/en.json
 +++ b/neode-ui/src/locales/en.json
-@@ -819,5 +819,121 @@
+@@ -824,5 +824,121 @@
      "done": "Done",
      "inProgress": "In Progress",
      "start": "Start"
@@ -1980,10 +1979,10 @@ index 7cfa192..43877c6 100644
    }
  }
 diff --git a/neode-ui/src/locales/es.json b/neode-ui/src/locales/es.json
-index 950e2e6..2064670 100644
+index 48f7d7c..0f4ae42 100644
 --- a/neode-ui/src/locales/es.json
 +++ b/neode-ui/src/locales/es.json
-@@ -800,5 +800,121 @@
+@@ -805,5 +805,121 @@
      "done": "Listo",
      "inProgress": "En progreso",
      "start": "Iniciar"
@@ -2125,107 +2124,59 @@ index 7754fb1..50bd1e4 100644
      mockedRpc.login.mockRejectedValue(new Error('Invalid password'))
      const store = useAppStore()
 diff --git a/neode-ui/src/stores/__tests__/appLauncher.test.ts b/neode-ui/src/stores/__tests__/appLauncher.test.ts
-index 68bf8ee..46d95d1 100644
+index 87c2aa4..6a2fb40 100644
 --- a/neode-ui/src/stores/__tests__/appLauncher.test.ts
 +++ b/neode-ui/src/stores/__tests__/appLauncher.test.ts
-@@ -531,4 +531,40 @@ describe('useAppLauncherStore', () => {
+@@ -703,4 +703,44 @@ describe('useAppLauncherStore', () => {
        expect(senderMatchesApp('', 'https://framework-pt.local:7778')).toBe(false)
      })
    })
 +
 +  describe('consent copy source', () => {
-+    const appUrl = 'http://192.0.2.10:3001/'
++    const appUrl = 'http://192.0.2.10:19998'
 +
 +    async function askToSign(stored: Record<string, unknown> | null) {
 +      localStorage.clear()
 +      if (stored) localStorage.setItem(`archipelago_app_identity_${appUrl.replace(/[^a-z0-9]/gi, '_')}`, JSON.stringify(stored))
++      setActivePinia(createPinia())
 +      const store = useAppLauncherStore()
-+      store.url = appUrl
-+      store.title = 'Gitea'
-+      store.isOpen = true
-+      await Promise.resolve()
-+      window.dispatchEvent(new MessageEvent('message', {
++      const frame = { postMessage: vi.fn() } as unknown as Window
++      store.open({ url: appUrl, title: 'Custom app' })
++      store.setNostrFrame(frame)
++      const event = new MessageEvent('message', {
 +        data: { type: 'nostr-request', id: 1, method: 'signEvent', params: { event: { kind: 1, content: 'hi' } } },
-+        origin: 'http://192.0.2.10:3001',
-+        source: window,
-+      }))
-+      await Promise.resolve()
++        origin: appUrl,
++      })
++      Object.defineProperty(event, 'source', { value: frame })
++      window.dispatchEvent(event)
++      // The shared bridge queues requests; wait for this one to reach consent.
++      await vi.waitFor(() => expect(store.consentRequest).not.toBeNull())
 +      return store
 +    }
 +
 +    it('marks a linked identity so the dialog waits for the signer', async () => {
 +      const store = await askToSign({ id: 'linked-1', name: 'Heartwood', origin: 'linked' })
 +      expect(store.consentRequest).toMatchObject({ origin: 'linked', signerLabel: 'Heartwood' })
-+      store.isOpen = false
++      store.close(); store.$dispose()
 +    })
 +
 +    it('leaves local and unmarked identities with the local copy', async () => {
 +      const local = await askToSign({ id: 'id-primary', name: 'Primary', origin: 'local' })
++      expect(local.consentRequest).toMatchObject({ identityLabel: 'Primary' })
 +      expect(local.consentRequest?.origin).toBeUndefined()
-+      local.isOpen = false
++      local.close(); local.$dispose()
 +      const unmarked = await askToSign({ id: 'id-primary', name: 'Primary' })
++      expect(unmarked.consentRequest).toMatchObject({ identityLabel: 'Primary' })
 +      expect(unmarked.consentRequest?.origin).toBeUndefined()
-+      unmarked.isOpen = false
++      unmarked.close(); unmarked.$dispose()
 +    })
 +  })
  })
-diff --git a/neode-ui/src/stores/appLauncher.ts b/neode-ui/src/stores/appLauncher.ts
-index aca7a02..643a807 100644
---- a/neode-ui/src/stores/appLauncher.ts
-+++ b/neode-ui/src/stores/appLauncher.ts
-@@ -194,6 +194,8 @@ export interface NostrConsentRequest {
-   eventKind?: number
-   content?: string
-   identityLabel?: string
-+  origin?: 'local' | 'linked'
-+  signerLabel?: string
-   resolve: (remember: boolean) => void
-   reject: () => void
- }
-@@ -561,11 +563,12 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
-     consentPhase.value = 'error'
-   }
- 
--  function requestConsent(appName: string, method: string, eventKind?: number, content?: string, identityLabel?: string): Promise<boolean> {
-+  function requestConsent(appName: string, method: string, eventKind?: number, content?: string, identityLabel?: string, linkedSignerName?: string): Promise<boolean> {
-     return new Promise((resolve, reject) => {
-       consentGeneration += 1
-       consentRequest.value = {
-         appName, method, eventKind, content, identityLabel,
-+        ...(linkedSignerName !== undefined ? { origin: 'linked' as const, signerLabel: linkedSignerName } : {}),
-         resolve, reject,
-       }
-       consentPhase.value = 'review'
-@@ -593,6 +596,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
-     const IDENTITY_KEY = 'archipelago_app_identity_'
-     const appKey = IDENTITY_KEY + (url.value || '').replace(/[^a-z0-9]/gi, '_')
-     let appIdentityId: string | null = null
-+    let linkedSignerName: string | undefined
-     try {
-       const stored = localStorage.getItem(appKey)
-       if (stored) {
-@@ -600,6 +604,8 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
-         if (typeof parsed === 'object' && parsed !== null && 'id' in parsed) {
-           const idVal = (parsed as Record<string, unknown>).id
-           appIdentityId = typeof idVal === 'string' ? idVal : null
-+          const rec = parsed as Record<string, unknown>
-+          if (rec.origin === 'linked') linkedSignerName = typeof rec.name === 'string' ? rec.name : ''
-         }
-       }
-     } catch { /* ignore */ }
-@@ -622,6 +628,7 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
-         const remember = await requestConsent(
-           title.value || 'App', method, eventKind, content,
-           appIdentityId || 'Node default identity',
-+          linkedSignerName,
-         )
-         if (remember) rememberConsent(scopedKey)
-       } catch {
 diff --git a/neode-ui/src/stores/auth.ts b/neode-ui/src/stores/auth.ts
-index 77606ef..98d3476 100644
+index 1049f52..6482353 100644
 --- a/neode-ui/src/stores/auth.ts
 +++ b/neode-ui/src/stores/auth.ts
-@@ -14,14 +14,14 @@ export const useAuthStore = defineStore('auth', () => {
+@@ -16,14 +16,14 @@ export const useAuthStore = defineStore('auth', () => {
    let sessionValidated = false
  
    // Actions
@@ -2243,10 +2194,10 @@ index 77606ef..98d3476 100644
  
        isAuthenticated.value = true
 diff --git a/neode-ui/src/views/AppSession.vue b/neode-ui/src/views/AppSession.vue
-index 4e9fc1d..318c483 100644
+index 163f178..3319b78 100644
 --- a/neode-ui/src/views/AppSession.vue
 +++ b/neode-ui/src/views/AppSession.vue
-@@ -94,6 +94,8 @@
+@@ -100,6 +100,8 @@
          :app-name="nostrBridge.consentRequest.value?.appName ?? appTitle"
          :method="nostrBridge.consentRequest.value?.method ?? ''"
          :identity-label="nostrBridge.consentRequest.value?.identityLabel"
@@ -2256,24 +2207,24 @@ index 4e9fc1d..318c483 100644
          :content="nostrBridge.consentRequest.value?.content"
          :phase="nostrBridge.consentPhase.value"
 diff --git a/neode-ui/src/views/Dashboard.vue b/neode-ui/src/views/Dashboard.vue
-index 437078a..8b14413 100644
+index cd5fde3..49ce404 100644
 --- a/neode-ui/src/views/Dashboard.vue
 +++ b/neode-ui/src/views/Dashboard.vue
-@@ -108,6 +108,7 @@
+@@ -115,6 +115,7 @@
  
      <!-- Health Notifications Toast -->
      <HealthNotifications />
 +    <SignerLoginNotice />
  
      <!-- First-use companion intro overlay -->
-     <CompanionIntroOverlay />
-@@ -129,6 +130,7 @@ import DashboardMobileNav from '@/views/dashboard/DashboardMobileNav.vue'
+     <CompanionIntroOverlay :defer-automatic="!!appLauncher.panelAppId || appLauncher.isOpen || route.name === 'app-session'" />
+@@ -136,6 +137,7 @@ import DashboardMobileNav from '@/views/dashboard/DashboardMobileNav.vue'
  import DashboardRouterView from '@/views/dashboard/DashboardRouterView.vue'
  import ConnectionBanner from '@/views/dashboard/ConnectionBanner.vue'
  import HealthNotifications from '@/views/dashboard/HealthNotifications.vue'
 +import SignerLoginNotice from '@/views/dashboard/SignerLoginNotice.vue'
  import CompanionIntroOverlay from '@/components/CompanionIntroOverlay.vue'
- import { isDetailRoute, ROUTE_BACKGROUNDS } from '@/views/dashboard/useRouteTransitions'
+ import { isDetailRoute, backgroundForRoute } from '@/views/dashboard/useRouteTransitions'
  import { useIbdFinishWatcher } from '@/composables/useIbdFinishWatcher'
 diff --git a/neode-ui/src/views/Login.vue b/neode-ui/src/views/Login.vue
 index 1af96dc..deb09bc 100644
@@ -2552,10 +2503,10 @@ index 1af96dc..deb09bc 100644
        error.value = msg
      } else {
 diff --git a/neode-ui/src/views/NostrTabSigner.vue b/neode-ui/src/views/NostrTabSigner.vue
-index 8fa4830..0690840 100644
+index 5d6daa3..b972723 100644
 --- a/neode-ui/src/views/NostrTabSigner.vue
 +++ b/neode-ui/src/views/NostrTabSigner.vue
-@@ -11,6 +11,8 @@
+@@ -15,6 +15,8 @@
        :app-name="bridge.consentRequest.value?.appName ?? appName"
        :method="bridge.consentRequest.value?.method ?? ''"
        :identity-label="bridge.consentRequest.value?.identityLabel"
@@ -3052,7 +3003,7 @@ index 0000000..e32fc95
 +  })
 +})
 diff --git a/neode-ui/src/views/appSession/useAppIdentity.ts b/neode-ui/src/views/appSession/useAppIdentity.ts
-index a906488..827a6f0 100644
+index 4c2a50d..91495c1 100644
 --- a/neode-ui/src/views/appSession/useAppIdentity.ts
 +++ b/neode-ui/src/views/appSession/useAppIdentity.ts
 @@ -13,6 +13,8 @@ export interface SelectedIdentity {
@@ -3065,7 +3016,7 @@ index a906488..827a6f0 100644
  
  function isIdentityAwareApp(id: string): boolean {
 diff --git a/neode-ui/src/views/appSession/useNostrBridge.ts b/neode-ui/src/views/appSession/useNostrBridge.ts
-index a218713..04c9233 100644
+index 9363629..b6d9eb5 100644
 --- a/neode-ui/src/views/appSession/useNostrBridge.ts
 +++ b/neode-ui/src/views/appSession/useNostrBridge.ts
 @@ -20,6 +20,10 @@ export interface BridgeConsentRequest {
@@ -3079,7 +3030,7 @@ index a218713..04c9233 100644
    eventKind?: number
    content?: string
    resolve: (remember: boolean) => void
-@@ -59,11 +63,13 @@ export function useNostrBridge(
+@@ -66,11 +70,13 @@ export function useNostrBridge(
      identityLabel: string,
      eventKind?: number,
      content?: string,
@@ -3090,17 +3041,30 @@ index a218713..04c9233 100644
        consentRequest.value = {
          appName: options.appName(), method, identityLabel, eventKind, content,
 +        ...(linkedSignerName !== undefined ? { origin: 'linked' as const, signerLabel: linkedSignerName } : {}),
-         resolve, reject,
+         resolve, reject: () => reject(new Error('Signing request denied.')),
        }
        consentPhase.value = 'review'
-@@ -133,6 +139,7 @@ export function useNostrBridge(
+@@ -160,6 +166,7 @@ export function useNostrBridge(
              identityLabel,
              method === 'signEvent' ? params?.event?.kind : undefined,
              method === 'signEvent' ? params?.event?.content : undefined,
 +            storedIdentity?.origin === 'linked' ? storedIdentity.name : undefined,
            )
-           if (remember) rememberConsent(key)
-         }
+           promptGeneration = consentGeneration
+           const remember = await consent
+diff --git a/neode-ui/src/views/apps/__tests__/AppsUninstallModal.test.ts b/neode-ui/src/views/apps/__tests__/AppsUninstallModal.test.ts
+index 60463e9..dfe6c71 100644
+--- a/neode-ui/src/views/apps/__tests__/AppsUninstallModal.test.ts
++++ b/neode-ui/src/views/apps/__tests__/AppsUninstallModal.test.ts
+@@ -7,7 +7,7 @@ vi.mock('vue-i18n', () => ({
+   useI18n: () => ({
+     t: (key: string, params?: Record<string, string>) => {
+       const [group, name] = key.split('.')
+-      const messages = en as Record<string, Record<string, string>>
++      const messages = en as unknown as Record<string, Record<string, string>>
+       const text = messages[group!]?.[name!] ?? key
+       return params?.name ? text.replace('{name}', params.name) : text
+     },
 diff --git a/neode-ui/src/views/dashboard/SignerLoginNotice.vue b/neode-ui/src/views/dashboard/SignerLoginNotice.vue
 new file mode 100644
 index 0000000..288705b
@@ -3918,7 +3882,7 @@ index 0000000..c987350
 +  })
 +})
 diff --git a/neode-ui/src/views/web5/Web5Identities.vue b/neode-ui/src/views/web5/Web5Identities.vue
-index d953caa..c4714f2 100644
+index c7a6360..720a7fc 100644
 --- a/neode-ui/src/views/web5/Web5Identities.vue
 +++ b/neode-ui/src/views/web5/Web5Identities.vue
 @@ -125,6 +125,7 @@
@@ -3937,37 +3901,35 @@ index d953caa..c4714f2 100644
            </div>
            <div class="flex items-center gap-1 mt-0.5">
              <p class="text-white/50 text-xs font-mono truncate" :title="identity.did">{{ identity.did }}</p>
-@@ -220,11 +222,26 @@
+@@ -220,12 +222,25 @@
        </div>
      </div>
  
--    <button @click="showCreateIdentityModal = true" class="web5-card-actions-bottom mt-4 mobile-card-action glass-button rounded-lg text-sm font-medium">
--      Create
--    </button>
-+    <div class="web5-card-actions-bottom-grid grid-cols-2 gap-3 mt-4">
+-    <div class="mt-auto pt-4">
+-      <button @click="showCreateIdentityModal = true" class="web5-card-actions-bottom mobile-card-action glass-button rounded-lg text-sm font-medium">
++    <div class="web5-card-actions-bottom-grid mt-auto pt-4 grid-cols-2 gap-3">
 +      <button @click="showCreateIdentityModal = true" class="mobile-card-action glass-button rounded-lg text-sm font-medium">
-+        Create
-+      </button>
+         Create
+       </button>
 +      <button @click="showLinkSignerModal = true" class="mobile-card-action glass-button rounded-lg text-sm font-medium" data-testid="link-signer-button">
 +        {{ t('signer.link.button') }}
 +      </button>
 +    </div>
-   </div>
- 
++  </div>
++
 +  <!-- Link a signer Modal -->
 +  <Teleport to="body">
 +  <div v-if="showLinkSignerModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md" @click.self="showLinkSignerModal = false" @keydown.escape="showLinkSignerModal = false">
 +    <div class="glass-card p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto" role="dialog" aria-modal="true" aria-labelledby="link-signer-title">
 +      <h2 id="link-signer-title" class="text-lg font-bold text-white mb-4">{{ t('signer.link.button') }}</h2>
 +      <LinkSignerForm :cancel-label="t('common.cancel')" @linked="onSignerLinked" @cancel="showLinkSignerModal = false" />
-+    </div>
-+  </div>
+     </div>
+   </div>
 +  </Teleport>
-+
+ 
    <!-- Create Identity Modal -->
    <Teleport to="body">
-   <div v-if="showCreateIdentityModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md" @click.self="showCreateIdentityModal = false" @keydown.escape="showCreateIdentityModal = false">
-@@ -483,6 +500,7 @@ import { rpcClient } from '@/api/rpc-client'
+@@ -485,6 +500,7 @@ import { rpcClient } from '@/api/rpc-client'
  import { safeClipboardWrite } from './utils'
  import type { ManagedIdentity, IdentityProfile } from './types'
  import IdentitySuccessPane from '@/components/IdentitySuccessPane.vue'
@@ -3975,7 +3937,7 @@ index d953caa..c4714f2 100644
  
  const { t } = useI18n()
  
-@@ -520,6 +538,7 @@ const emit = defineEmits<{
+@@ -522,6 +538,7 @@ const emit = defineEmits<{
  const managedIdentities = ref<ManagedIdentity[]>(readIdentitiesCache())
  const identitiesLoading = ref(false)
  const showCreateIdentityModal = ref(false)
@@ -3983,7 +3945,7 @@ index d953caa..c4714f2 100644
  const newIdentityName = ref('Personal')
  const newIdentityPurpose = ref('personal')
  const creatingIdentity = ref(false)
-@@ -674,6 +693,12 @@ async function createIdentity() {
+@@ -676,6 +693,12 @@ async function createIdentity() {
    }
  }
  
@@ -4052,7 +4014,7 @@ index f6f77f9..42f63f1 100644
 +  })
  })
 diff --git a/neode-ui/src/views/web5/types.ts b/neode-ui/src/views/web5/types.ts
-index a6af7a4..3a0c259 100644
+index 071df80..f4914f8 100644
 --- a/neode-ui/src/views/web5/types.ts
 +++ b/neode-ui/src/views/web5/types.ts
 @@ -120,6 +120,9 @@ export interface ManagedIdentity {
@@ -4066,5 +4028,5 @@ index a6af7a4..3a0c259 100644
  
  export interface DwnStatusData {
 -- 
-2.53.0
+2.39.5 (Apple Git-154)
 

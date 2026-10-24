@@ -1,4 +1,4 @@
-From 276db8087c74c9c92457ccd37b45aeb2685947fd Mon Sep 17 00:00:00 2001
+From f6e7cb4a25b8099babe5375ae48ecb37e0c87fb0 Mon Sep 17 00:00:00 2001
 From: archipelago-apps <ci@invalid>
 Date: Mon, 12 Oct 2026 11:39:40 +0100
 Subject: [PATCH] fix: accept exact Wildbloom discovery package in sales
@@ -33,10 +33,10 @@ index 6ab2f50..1258741 100644
          );
          ensure!(!external_configuration(&record, &current, root.join("operator/checkout").exists()),
 diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
-index 56f4de0..8a4af2d 100644
+index 18eed9b..0285f2e 100644
 --- a/core/archipelago/src/container/prod_orchestrator.rs
 +++ b/core/archipelago/src/container/prod_orchestrator.rs
-@@ -5053,8 +5053,12 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
+@@ -5437,8 +5437,12 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
              "Wildbloom dashboard settings require the packaged Quadlet node"
          );
          anyhow::ensure!(
@@ -58,7 +58,7 @@ index 2150ff8..69fc7d6 100644
 @@ -12,6 +12,15 @@ pub const REFERENCE_KEY: &str =
      "027f06257d0e9af2dbef2c1c64d03962a9240a65a987eb90b36000c64de34baa6d";
  pub static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
+ 
 +/// Exact packaged images whose checkout profile, ceiling and recovery contract we validate.
 +pub fn compatible_node_image(image: &str) -> bool {
 +    matches!(
@@ -93,5 +93,5 @@ index 2150ff8..69fc7d6 100644
 +    }
  }
 -- 
-2.54.0 (Apple Git-157)
+2.39.5 (Apple Git-154)
 

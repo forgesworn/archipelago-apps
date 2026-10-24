@@ -13,11 +13,13 @@ if selftest=$(cargo run -q --manifest-path "$root/tools/manifest-check/Cargo.tom
 fi
 grep -q 'unknown placeholder' <<<"$selftest" || { echo "manifest-check self-test failed for the wrong reason:"; echo "$selftest"; exit 1; }
 echo "manifest-check self-test passed"
-# Wildbloom bakes Archipelago's NIP-07 provider; keep it identical to the pinned copy.
+# Packaged apps bake Archipelago's NIP-07 provider; keep the host adapter current.
 if [ -d "$archy" ]; then
-  cmp -s "$root/apps/wildbloom/nostr-provider.js" "$archy/neode-ui/public/nostr-provider.js" \
-    || { echo "vendored nostr-provider.js differs from the pinned Archipelago copy; re-vendor it"; exit 1; }
-  echo "vendored nostr-provider.js matches the pinned Archipelago copy"
+  for provider in apps/wildbloom/nostr-provider.js apps/spry/public/nostr-provider.js; do
+    cmp -s "$root/$provider" "$archy/neode-ui/public/nostr-provider.js" \
+      || { echo "$provider differs from the pinned Archipelago copy; re-vendor it"; exit 1; }
+    echo "$provider matches the pinned Archipelago copy"
+  done
 fi
 [ ${#manifests[@]} -gt 0 ] || { echo "no manifests"; exit 0; }
 # Each manifest names the image tag CI builds from PINS (scripts/lib/app-image.bash).

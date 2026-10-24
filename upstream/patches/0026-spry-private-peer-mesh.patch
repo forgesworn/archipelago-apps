@@ -1,4 +1,4 @@
-From 7662336b0f9b2750648766eea9581fead99c6cd5 Mon Sep 17 00:00:00 2001
+From 81c2277bc2a4cf17f7d03bc6413b229838ae6157 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <147930957+TheCryptoDonkey@users.noreply.github.com>
 Date: Sat, 24 Oct 2026 17:21:51 +0100
 Subject: [PATCH] feat: authorise the bounded Spry link on the existing mesh

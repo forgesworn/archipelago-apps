@@ -1,7 +1,7 @@
-From bff58a4ad49d6d74a1229ee4346e7b055a676aed Mon Sep 17 00:00:00 2001
+From e3f5a76fe5515d40c4cdee1e91eaf9cabebee1fc Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 09:25:30 +0200
-Subject: [PATCH 06/14] feat: log in to the dashboard with a linked signer
+Subject: [PATCH] feat: log in to the dashboard with a linked signer
 
 A linked identity can now be enrolled to log in to the dashboard through
 its NIP-46 signer. The password stays and always works; enrolment never
@@ -116,10 +116,10 @@ show for the node and showed a bare client key instead.
  create mode 100644 core/archipelago/src/signer_login.rs
 
 diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
-index 89af364..0eb4114 100644
+index f5c1d5d..689359e 100644
 --- a/core/archipelago/src/api/rpc/dispatcher.rs
 +++ b/core/archipelago/src/api/rpc/dispatcher.rs
-@@ -29,6 +29,10 @@ impl RpcHandler {
+@@ -49,6 +49,10 @@ impl RpcHandler {
              "auth.createDeviceToken" => self.handle_auth_create_device_token(params).await,
              "auth.listDeviceTokens" => self.handle_auth_list_device_tokens().await,
              "auth.revokeDeviceToken" => self.handle_auth_revoke_device_token(params).await,
@@ -131,10 +131,10 @@ index 89af364..0eb4114 100644
              // Seed management (BIP-39 mnemonic)
              "seed.generate" => self.handle_seed_generate().await,
 diff --git a/core/archipelago/src/api/rpc/identity/handlers.rs b/core/archipelago/src/api/rpc/identity/handlers.rs
-index 430cabe..9287ebf 100644
+index 839b7f4..e5448d2 100644
 --- a/core/archipelago/src/api/rpc/identity/handlers.rs
 +++ b/core/archipelago/src/api/rpc/identity/handlers.rs
-@@ -258,6 +258,11 @@ impl RpcHandler {
+@@ -294,6 +294,11 @@ impl RpcHandler {
          validate_identity_id(id)?;
  
          let manager = IdentityManager::new(&self.config.data_dir).await?;
@@ -146,7 +146,7 @@ index 430cabe..9287ebf 100644
          manager.delete(id).await?;
  
          Ok(serde_json::json!({ "ok": true }))
-@@ -1101,6 +1106,34 @@ fn pairing_relays(params: &serde_json::Value) -> Result<Vec<nostr_sdk::RelayUrl>
+@@ -1137,6 +1142,34 @@ fn pairing_relays(params: &serde_json::Value) -> Result<Vec<nostr_sdk::RelayUrl>
  mod tests {
      use super::*;
  
@@ -182,7 +182,7 @@ index 430cabe..9287ebf 100644
      fn pairing_relays_are_one_to_eight_websocket_urls() {
          let relays = |n: usize| {
 diff --git a/core/archipelago/src/api/rpc/middleware.rs b/core/archipelago/src/api/rpc/middleware.rs
-index 000c34f..ebd1054 100644
+index cfa99bf..9154ff3 100644
 --- a/core/archipelago/src/api/rpc/middleware.rs
 +++ b/core/archipelago/src/api/rpc/middleware.rs
 @@ -12,6 +12,11 @@ pub(crate) const UNAUTHENTICATED_METHODS: &[&str] = &[
@@ -234,10 +234,10 @@ index 000c34f..ebd1054 100644
      fn tor_unavailable_precondition_passes_through() {
          let msg = "Tor address not available. Tor may not be running.";
 diff --git a/core/archipelago/src/api/rpc/mod.rs b/core/archipelago/src/api/rpc/mod.rs
-index 6f507f7..21806b4 100644
+index 868269e..b387dcd 100644
 --- a/core/archipelago/src/api/rpc/mod.rs
 +++ b/core/archipelago/src/api/rpc/mod.rs
-@@ -42,6 +42,7 @@ mod response;
+@@ -48,6 +48,7 @@ mod response;
  mod router;
  mod security;
  mod seed_rpc;
@@ -245,24 +245,24 @@ index 6f507f7..21806b4 100644
  mod streaming;
  mod system;
  pub(crate) mod tor;
-@@ -158,6 +159,8 @@ pub struct RpcHandler {
+@@ -197,6 +198,8 @@ pub struct RpcHandler {
      /// by moving from the dashboard to an app port.
      pub(crate) app_gate: Arc<crate::appgate::AppGate>,
      endpoint_rate_limiter: EndpointRateLimiter,
 +    /// Signer login and enrolment attempts, with the node-wide login budget.
 +    signer_logins: Arc<crate::signer_login::LoginAttempts>,
      response_cache: ResponseCache,
+     playback_handles: crate::playback_handles::PlaybackHandles,
      mesh_service: Arc<tokio::sync::RwLock<Option<crate::mesh::MeshService>>>,
-     /// LoRa radio firmware-flash job state, sibling to `mesh_service` — one
-@@ -241,6 +244,7 @@ impl RpcHandler {
+@@ -285,6 +288,7 @@ impl RpcHandler {
              login_rate_limiter,
              app_gate,
              endpoint_rate_limiter,
 +            signer_logins: Arc::new(crate::signer_login::LoginAttempts::default()),
              response_cache: ResponseCache::new(5),
+             playback_handles: Default::default(),
              mesh_service: Arc::new(tokio::sync::RwLock::new(None)),
-             flash_job: crate::mesh::flash::new_job_handle(),
-@@ -368,6 +372,32 @@ impl RpcHandler {
+@@ -409,6 +413,32 @@ impl RpcHandler {
              ));
          }
  
@@ -294,8 +294,8 @@ index 6f507f7..21806b4 100644
 +
          // Enforce authentication for non-allowlisted methods
          let is_unauthenticated = UNAUTHENTICATED_METHODS.contains(&rpc_req.method.as_str());
-         let mut new_session_cookies: Option<(String, String)> = None;
-@@ -473,8 +503,12 @@ impl RpcHandler {
+         if !is_unauthenticated || rpc_req.method.starts_with("auth.") {
+@@ -523,8 +553,12 @@ impl RpcHandler {
              }
          }
  
@@ -310,7 +310,7 @@ index 6f507f7..21806b4 100644
              let client_ip = extract_client_ip(&parts);
              if !self.login_rate_limiter.check(client_ip).await {
                  return Ok(self.rate_limit_response());
-@@ -498,7 +532,10 @@ impl RpcHandler {
+@@ -548,7 +582,10 @@ impl RpcHandler {
  
          // Extract params; clone for post-routing use (login 2FA check needs password)
          let params = rpc_req.params;
@@ -322,7 +322,7 @@ index 6f507f7..21806b4 100644
              params.clone()
          } else {
              None
-@@ -519,7 +556,18 @@ impl RpcHandler {
+@@ -569,7 +606,18 @@ impl RpcHandler {
  
          // Route to handler (track latency for metrics)
          let rpc_start = std::time::Instant::now();
@@ -342,7 +342,7 @@ index 6f507f7..21806b4 100644
  
          // Record RPC latency for monitoring
          let elapsed_ms = rpc_start.elapsed().as_secs_f64() * 1000.0;
-@@ -637,6 +685,8 @@ impl RpcHandler {
+@@ -687,6 +735,8 @@ impl RpcHandler {
          // the token was minted from an already-authenticated session, and there
          // is no password with which to decrypt the TOTP secret anyway.
          if method == "auth.login" && rpc_resp.error.is_none() {
@@ -351,8 +351,8 @@ index 6f507f7..21806b4 100644
              let password = login_params
                  .as_ref()
                  .and_then(|p| p.get("password"))
-@@ -669,8 +719,16 @@ impl RpcHandler {
-                         let csrf_token = derive_csrf_token(&token).await;
+@@ -719,8 +769,16 @@ impl RpcHandler {
+                         let csrf_token = derive_csrf_token(&token).await?;
                          self.set_session_cookie(response, &token, secure_suffix);
                          self.set_csrf_cookie(response, &csrf_token, secure_suffix);
 +                        // The password is right, so the page may now learn
@@ -369,7 +369,7 @@ index 6f507f7..21806b4 100644
                              "error": null
                          });
                          *response.body_mut() =
-@@ -687,6 +745,73 @@ impl RpcHandler {
+@@ -737,6 +795,73 @@ impl RpcHandler {
              }
          }
  
@@ -430,8 +430,8 @@ index 6f507f7..21806b4 100644
 +                    Some(token) => token,
 +                    None => self.session_store.create().await,
 +                };
-+                let csrf_token = derive_csrf_token(&token).await;
-+                let remember_token = self.session_store.create_remember_token().await;
++                let csrf_token = derive_csrf_token(&token).await?;
++                let remember_token = self.session_store.create_remember_token().await?;
 +                self.set_session_cookie(response, &token, secure_suffix);
 +                self.set_csrf_cookie(response, &csrf_token, secure_suffix);
 +                self.set_remember_cookie(response, &remember_token, secure_suffix);
@@ -443,7 +443,7 @@ index 6f507f7..21806b4 100644
          // On successful TOTP verification, set the rotated session cookie
          if (method == "auth.login.totp" || method == "auth.login.backup")
              && rpc_resp.error.is_none()
-@@ -783,6 +908,30 @@ impl RpcHandler {
+@@ -834,6 +959,30 @@ impl RpcHandler {
          );
      }
  
@@ -474,8 +474,8 @@ index 6f507f7..21806b4 100644
      fn set_remember_cookie(
          &self,
          response: &mut Response<hyper::Body>,
-@@ -880,3 +1029,615 @@ mod session_probe_contract_tests {
-         assert!(!DISPATCHER.contains("\"system.get-version\" =>"));
+@@ -1057,3 +1206,615 @@ mod csrf_recovery_tests {
+         assert!(settings.exists());
      }
  }
 +
@@ -1784,22 +1784,22 @@ index 7170f35..72bf566 100644
      async fn test_verify_password_no_user() {
          let dir = tempfile::tempdir().unwrap();
 diff --git a/core/archipelago/src/main.rs b/core/archipelago/src/main.rs
-index 9f263f1..5a66fd2 100644
+index 8eccdd4..c4b35f0 100644
 --- a/core/archipelago/src/main.rs
 +++ b/core/archipelago/src/main.rs
-@@ -80,6 +80,7 @@ pub mod seed;
+@@ -96,6 +96,7 @@ pub mod seed;
  mod server;
  mod session;
  mod settings;
 +mod signer_login;
+ mod snapshot_budget;
  mod state;
  mod storage_crypto;
- mod streaming;
 diff --git a/core/archipelago/src/rate_limit.rs b/core/archipelago/src/rate_limit.rs
-index 38740f3..3c6dde0 100644
+index f1a5c2c..dfdb8e4 100644
 --- a/core/archipelago/src/rate_limit.rs
 +++ b/core/archipelago/src/rate_limit.rs
-@@ -114,6 +114,15 @@ impl EndpointRateLimiter {
+@@ -124,6 +124,15 @@ impl EndpointRateLimiter {
          limits.insert("update.apply".to_string(), (10, 60));
          limits.insert("system.reboot".to_string(), (2, 300));
          limits.insert("system.shutdown".to_string(), (2, 300));
@@ -1815,7 +1815,7 @@ index 38740f3..3c6dde0 100644
          // Password and TOTP changes
          limits.insert("auth.changePassword".to_string(), (3, 300));
          limits.insert("auth.totp.setup".to_string(), (3, 300));
-@@ -377,6 +386,33 @@ mod tests {
+@@ -387,6 +396,33 @@ mod tests {
          }
      }
  
@@ -1934,10 +1934,10 @@ index fecc241..c1675c3 100644
      fn nostrconnect_uri_carries_the_pairing_fields() {
          let client = Keys::generate().public_key();
 diff --git a/core/archipelago/src/session.rs b/core/archipelago/src/session.rs
-index 13b44e4..62fe3e5 100644
+index b94cec3..5e9a28b 100644
 --- a/core/archipelago/src/session.rs
 +++ b/core/archipelago/src/session.rs
-@@ -277,6 +277,18 @@ impl SessionStore {
+@@ -278,6 +278,18 @@ impl SessionStore {
      /// Upgrade a pending session to a full session with token rotation.
      /// Deletes the old pending session and creates a new full session with a fresh token.
      /// Returns the new plaintext token so the caller can set it as the new cookie.
@@ -1956,7 +1956,7 @@ index 13b44e4..62fe3e5 100644
      pub async fn upgrade_to_full(&self, token: &str) -> Option<String> {
          let old_hash = hash_token(token);
          let mut sessions = self.sessions.write().await;
-@@ -569,6 +581,24 @@ mod tests {
+@@ -564,6 +576,24 @@ mod tests {
          assert!(!store.validate(&token).await);
      }
  
@@ -3727,5 +3727,5 @@ index 0000000..725e2b3
 +    }
 +}
 -- 
-2.53.0
+2.39.5 (Apple Git-154)
 

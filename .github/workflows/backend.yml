@@ -58,17 +58,27 @@ jobs:
       # read the real apps/*/manifest.yml through CARGO_MANIFEST_DIR, which the
       # harness does not set. --exact makes each --skip match one full test path.
       # Host-operation tests, run in the next step under upstream's harness:
-      #   install_* (3) and manifest_generated_files_* (2).
+      #   install_* (3), manifest_generated_files_* (2), bootstrap's executable
+      #   sync (sudo mv) and the ecash two-process fixture (ARCHY_TEST_ISOLATED).
       # Skipped, both unrelated to the patch (see docs/upstream-notes.md):
       # - quadlet: the runner's Podman 4.9 generator predates StopTimeout;
       #   Archipelago targets Debian 13's Podman 5.
       # - wallet ordering: reads the node's real Bitcoin RPC secret, which no
       #   CI host has.
+      # From v1.9.1-alpha every authenticated request first loads
+      # /var/lib/archipelago/remember_secret, so login-path tests (upstream's
+      # csrf_recovery_tests and ours) need that directory. An empty, runner-owned
+      # one is what the isolated harness provides too.
+      - name: Writable node data directory
+        if: steps.plan.outputs.skip != 'true'
+        run: sudo install -d -o "$(id -u)" -g "$(id -g)" /var/lib/archipelago
       - name: Archipelago tests
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy
         run: >-
           cargo test --manifest-path core/Cargo.toml -p archipelago --locked -- --exact
+          --skip bootstrap::tests::executable_sync_replaces_stale_payload_and_repairs_mode_idempotently
+          --skip wallet::ecash::payment_tests::process_fixture::committed_settlement_reply_loss_recovers_after_both_processes_restart
           --skip container::prod_orchestrator::tests::install_applies_data_uid_chown_before_create
           --skip container::prod_orchestrator::tests::install_resolves_derived_and_secret_env_before_create
           --skip container::prod_orchestrator::tests::install_writes_manifest_generated_files_before_create
@@ -88,8 +98,10 @@ jobs:
             container::prod_orchestrator::tests::install_writes_manifest_generated_files_before_create \
             container::prod_orchestrator::tests::manifest_generated_files_can_overwrite_when_declared \
             container::prod_orchestrator::tests::manifest_generated_files_do_not_overwrite_by_default \
+            bootstrap::tests::executable_sync_replaces_stale_payload_and_repairs_mode_idempotently \
+            wallet::ecash::payment_tests::process_fixture::committed_settlement_reply_loss_recovers_after_both_processes_restart \
             | tee "$RUNNER_TEMP/host-ops.log"
-          grep -q 'test result: ok. 5 passed;' "$RUNNER_TEMP/host-ops.log"
+          grep -q 'test result: ok. 7 passed;' "$RUNNER_TEMP/host-ops.log"
       # Our patch's tests, by exact name: a rename gives "0 passed" and fails.
       - name: Patch tests (NODE_IDENTITY_PUBKEYS)
         if: steps.plan.outputs.skip != 'true'
@@ -125,21 +137,20 @@ jobs:
               || { echo "::error::$1: expected $2 passed"; exit 1; }
           }
           check remote_signer::tests:: 39
-          check identity_manager::tests:: 33
-          check api::rpc::nostr_signing_origin_tests:: 3
+          check identity_manager::tests:: 35
+          check api::rpc::nostr_signing_origin_tests:: 4
           check api::rpc::middleware::sanitize_tests:: 10
           check rate_limit::tests:: 10
           check api::rpc::identity::handlers::tests:: 2
           check signer_login::tests:: 49
           check api::rpc::signer_login::tests:: 3
           check api::rpc::signer_login_tests:: 17
-          check appgate::identity::tests:: 12
+          check appgate::identity::tests:: 13
           check container::spry_network::tests:: 1
-          check auth::tests:: 15
+          check auth::tests:: 21
           check public_host 7
           check wildbloom 25
-          check manifest_metadata_str_tests:: 2
-          check storage_crypto::tests:: 8
+          check storage_crypto::tests:: 6
       - uses: docker/setup-buildx-action@v3
         if: steps.plan.outputs.skip != 'true'
         with:

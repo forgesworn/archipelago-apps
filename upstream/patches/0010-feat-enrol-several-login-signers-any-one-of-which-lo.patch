@@ -1,8 +1,7 @@
-From 216c29b816c875a4a8dd8307a4f2e6ec6242da3e Mon Sep 17 00:00:00 2001
+From 1982b1dff1d311143e2905cfa7c14aed1a733034 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 13:40:51 +0200
-Subject: [PATCH 10/14] feat: enrol several login signers, any one of which
- logs in
+Subject: [PATCH] feat: enrol several login signers, any one of which logs in
 
 Up to five linked signers can now be enrolled for dashboard login, say a
 signer at home and one on the phone; there is still one owner. A login
@@ -31,7 +30,7 @@ enrolment racing a removal, cannot lose or resurrect a signer.
  5 files changed, 923 insertions(+), 95 deletions(-)
 
 diff --git a/core/archipelago/src/api/rpc/middleware.rs b/core/archipelago/src/api/rpc/middleware.rs
-index ebd1054..641f548 100644
+index 9154ff3..f0481b5 100644
 --- a/core/archipelago/src/api/rpc/middleware.rs
 +++ b/core/archipelago/src/api/rpc/middleware.rs
 @@ -315,7 +315,8 @@ mod sanitize_tests {
@@ -1401,5 +1400,5 @@ index 725e2b3..abd19ea 100644
 +    }
  }
 -- 
-2.53.0
+2.39.5 (Apple Git-154)
 

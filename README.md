@@ -42,7 +42,8 @@ Validate locally: `scripts/fetch-archy.sh && scripts/apply-patches.sh && scripts
 
 MIT licence.
 
-`apps/wildbloom/nostr-provider.js` is Archipelago's NIP-07 provider
+`apps/wildbloom/nostr-provider.js` and `apps/spry/public/nostr-provider.js`
+contain Archipelago's NIP-07 provider
 (`neode-ui/public/nostr-provider.js`), vendored unchanged at the pinned
 `ARCHY_REF`. Copyright (c) 2026 Dorian and the Archipelago Project
 contributors, MIT licence.

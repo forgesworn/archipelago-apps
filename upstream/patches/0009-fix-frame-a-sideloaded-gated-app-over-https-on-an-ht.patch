@@ -1,8 +1,8 @@
-From 7293ce0c1bb5bf7d624fe70f63a806d5038b836b Mon Sep 17 00:00:00 2001
+From d4858038577ad4edf466aac18cfc6613da0f3e5a Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 13:22:44 +0200
-Subject: [PATCH 09/14] fix: frame a sideloaded gated app over https on an
- https dashboard
+Subject: [PATCH] fix: frame a sideloaded gated app over https on an https
+ dashboard
 
 portAuth read the port's auth from the signed catalogue only, so an app
 the catalogue does not list was never treated as gate-fronted and kept
@@ -24,10 +24,10 @@ that are not gated or open are unchanged.
  8 files changed, 141 insertions(+), 17 deletions(-)
 
 diff --git a/neode-ui/src/stores/appLauncher.ts b/neode-ui/src/stores/appLauncher.ts
-index 643a807..2f0748f 100644
+index d94630a..52903b3 100644
 --- a/neode-ui/src/stores/appLauncher.ts
 +++ b/neode-ui/src/stores/appLauncher.ts
-@@ -6,6 +6,7 @@ import { requestExternalOpen } from '@/api/remote-relay'
+@@ -7,6 +7,7 @@ import { requestExternalOpen } from '@/api/remote-relay'
  import { openInAppOrNewTab, isCompanionApp, type InAppLaunchMeta } from '@/utils/openExternal'
  import { directAppUrl, HOST_FRAME_APPS, HTTPS_APP_IDS, resolveAppUrl } from '@/views/appSession/appSessionConfig'
  import { appPortIsGateFronted } from '@/views/appSession/appSessionConfig'
@@ -35,10 +35,10 @@ index 643a807..2f0748f 100644
  import { useAppStore } from '@/stores/app'
  import { resolveAppIcon, isAppReadyForLaunch } from '@/views/apps/appsConfig'
  import { useToast } from '@/composables/useToast'
-@@ -254,8 +255,9 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
-     // integrations stay in the dashboard frame so their parent bridge remains
+@@ -256,8 +257,9 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
      // connected (for example GitWorkshop's consent-gated NIP-07 provider).
-     if (!IS_DEMO && isCompanionApp() && !HOST_FRAME_APPS.has(appId)) {
+     const retainedMedia = mediaAppId.value === appId && mediaVersion === pkg?.manifest.version
+     if (!IS_DEMO && isCompanionApp() && !opts.basicFrameOnly && !retainedMedia && !HOST_FRAME_APPS.has(appId) && !appRequiresHostFrame(appId, pkg?.manifest.version) && !appHasMediaBridge(appId, pkg?.manifest.version)) {
 -      const runtimeUrl = useAppStore().data?.['package-data']?.[appId]?.installed?.['interface-addresses']?.main?.['lan-address'] || undefined
 -      const launchUrl = directAppUrl(appId) || resolveAppUrl(appId, opts.path, runtimeUrl)
 +      const main = useAppStore().data?.['package-data']?.[appId]?.installed?.['interface-addresses']?.main
@@ -47,7 +47,7 @@ index 643a807..2f0748f 100644
        if (launchUrl) {
          openInAppOrNewTab(launchUrl, launchMeta(appId))
          return
-@@ -419,7 +421,11 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
+@@ -468,7 +470,11 @@ export const useAppLauncherStore = defineStore('appLauncher', () => {
        const sameHost = u.hostname === window.location.hostname
        const alwaysHttps = !!resolvedId && HTTPS_APP_IDS.has(resolvedId)
        const httpsPage = window.location.protocol === 'https:'
@@ -75,10 +75,10 @@ index ca1f7f3..c49ce62 100644
  
  export interface AppCredential {
 diff --git a/neode-ui/src/views/AppSession.vue b/neode-ui/src/views/AppSession.vue
-index 318c483..632f000 100644
+index 3319b78..a16a6f8 100644
 --- a/neode-ui/src/views/AppSession.vue
 +++ b/neode-ui/src/views/AppSession.vue
-@@ -265,9 +265,10 @@ const screensaverSuppressedApps = new Set([
+@@ -279,9 +279,10 @@ const screensaverSuppressedApps = new Set([
  ])
  
  const appUrl = computed(() => {
@@ -86,11 +86,11 @@ index 318c483..632f000 100644
 +  const main = store.data?.['package-data']?.[appId.value]?.installed?.['interface-addresses']?.main
 +  const runtimeUrl = main?.['lan-address'] || undefined
    const deepPath = props.pathProp ?? (route.query.path as string | undefined)
--  return resolveAppUrl(appId.value, deepPath, runtimeUrl)
-+  return resolveAppUrl(appId.value, deepPath, runtimeUrl, main?.['lan-port-auth'])
+-  return canonicalAppUrl(resolveAppUrl(appId.value, deepPath, runtimeUrl))
++  return canonicalAppUrl(resolveAppUrl(appId.value, deepPath, runtimeUrl, main?.['lan-port-auth']))
  })
  
- function closeRouteSession() {
+ // Readiness protects a first load. A transient background probe must not tear
 diff --git a/neode-ui/src/views/appSession/__tests__/appOrigin.test.ts b/neode-ui/src/views/appSession/__tests__/appOrigin.test.ts
 index 7086aae..c748f2c 100644
 --- a/neode-ui/src/views/appSession/__tests__/appOrigin.test.ts
@@ -168,11 +168,11 @@ index 7086aae..c748f2c 100644
 +  })
 +})
 diff --git a/neode-ui/src/views/appSession/appSessionConfig.ts b/neode-ui/src/views/appSession/appSessionConfig.ts
-index 675996c..c351ce0 100644
+index a279690..e2ef020 100644
 --- a/neode-ui/src/views/appSession/appSessionConfig.ts
 +++ b/neode-ui/src/views/appSession/appSessionConfig.ts
-@@ -83,8 +83,8 @@ const PRE_CATALOG_GATED_PORTS: Record<string, number> = {
-   'archipelago-source': 8337,
+@@ -84,8 +84,8 @@ const PRE_CATALOG_GATED_PORTS: Partial<Record<string, number>> = {
+   'blossom': GENERATED_APP_PORTS.blossom,
  }
  
 -export function appPortIsGateFronted(appId: string, port: number | string): boolean {
@@ -182,8 +182,8 @@ index 675996c..c351ce0 100644
  }
  
  /** External HTTPS apps -- always loaded directly */
-@@ -120,7 +120,13 @@ export const HOST_FRAME_APPS = new Set([
- export const IFRAME_BLOCKED_APPS = new Set<string>([])
+@@ -127,7 +127,13 @@ export function canonicalAppUrl(url: string): string {
+ }
  
  /** Resolve app URL using direct port mapping (source of truth) */
 -export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?: string): string {
@@ -197,7 +197,7 @@ index 675996c..c351ce0 100644
    // Demo: route to the app's mock UI or real external site (mempool.space,
    // indee.tx1138.com). Carry through a deep-link path (e.g. /tx/<hash> for
    // mempool). Non-demoable apps fall through to a generic notice page.
-@@ -174,7 +180,7 @@ export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?:
+@@ -186,7 +192,7 @@ export function resolveAppUrl(id: string, routeQueryPath?: string, runtimeUrl?:
      // would fail to connect over https at all.
      try {
        const port = new URL(base).port
@@ -276,10 +276,10 @@ index be2abea..196c978 100644
 +  })
 +})
 diff --git a/neode-ui/src/views/discover/curatedApps.ts b/neode-ui/src/views/discover/curatedApps.ts
-index 005c21e..4bbbd25 100644
+index 29fc585..c9631cf 100644
 --- a/neode-ui/src/views/discover/curatedApps.ts
 +++ b/neode-ui/src/views/discover/curatedApps.ts
-@@ -134,13 +134,22 @@ const CATALOG_APP_ID_ALIASES: Record<string, string> = {
+@@ -221,13 +221,22 @@ const CATALOG_APP_ID_ALIASES: Record<string, string> = {
   *  TLS on it; `none`/`local` = container-published plain HTTP; null = app
   *  unknown to the signed catalog (legacy curated installs).
   *
@@ -300,10 +300,10 @@ index 005c21e..4bbbd25 100644
 +}
 +
 +function catalogPortAuth(appId: string, hostPort: number | string): string | null {
-   const apps = signedCatalogCache?.apps
+   const apps = { ...signedCatalogCache?.apps, ...nodeCatalogCache?.apps }
    if (!apps) return null
    const alias: string | undefined = CATALOG_APP_ID_ALIASES[appId]
-@@ -166,11 +175,26 @@ export function portAuth(appId: string, hostPort: number | string): string | nul
+@@ -253,11 +262,26 @@ export function portAuth(appId: string, hostPort: number | string): string | nul
  /** Whether an app's host port is fronted by the node's app gate (and so
   *  serves TLS alongside HTTP on the same port). Unknown apps are NOT —
   *  assuming TLS for a container-published port breaks it outright. */
@@ -333,5 +333,5 @@ index 005c21e..4bbbd25 100644
    signedCatalogCache = catalog
  }
 -- 
-2.53.0
+2.39.5 (Apple Git-154)
 

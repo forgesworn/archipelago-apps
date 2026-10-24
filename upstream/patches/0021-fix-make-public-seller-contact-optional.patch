@@ -1,4 +1,4 @@
-From c8042e41c4d583a0be3b9ec4eaa4bbec8327fa9e Mon Sep 17 00:00:00 2001
+From bb7bac6f5232e99d393e04d4465f12ca247401b2 Mon Sep 17 00:00:00 2001
 From: archipelago-apps <ci@invalid>
 Date: Fri, 9 Oct 2026 16:02:45 +0100
 Subject: [PATCH] fix: make public seller contact optional
@@ -54,5 +54,5 @@ index 0841b77..e92571a 100644
      expect(rpc.mock.calls.map(([o]) => o.method)).toEqual(['wildbloom.storage.get'])
    })
 -- 
-2.54.0 (Apple Git-157)
+2.39.5 (Apple Git-154)
 

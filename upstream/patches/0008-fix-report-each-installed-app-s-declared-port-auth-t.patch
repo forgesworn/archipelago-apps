@@ -1,8 +1,8 @@
-From 16f5a9b48878a2f9d32bc1ad9dd4e5579f438d4f Mon Sep 17 00:00:00 2001
+From 553f367465508e0de983ff8fb8c1874937761041 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 13:20:10 +0200
-Subject: [PATCH 08/14] fix: report each installed app's declared port auth to
- the dashboard
+Subject: [PATCH] fix: report each installed app's declared port auth to the
+ dashboard
 
 The dashboard picks https or http for an app frame from the signed
 catalogue alone. A sideloaded app with an auth: gated port is fronted by
@@ -15,16 +15,16 @@ manifest declares for the launch port, taken from the same classification
 build_port_map uses. It is omitted when the manifest says nothing.
 ---
  core/archipelago/src/appgate/identity.rs      | 39 +++++++++++++++++++
- .../src/container/docker_packages.rs          | 18 +++++++++
+ .../src/container/docker_packages.rs          | 19 +++++++++
  core/archipelago/src/data_model.rs            | 10 +++++
  core/archipelago/src/server.rs                |  1 +
- 4 files changed, 68 insertions(+)
+ 4 files changed, 69 insertions(+)
 
 diff --git a/core/archipelago/src/appgate/identity.rs b/core/archipelago/src/appgate/identity.rs
-index 269ef7a..36a0d6e 100644
+index 0abb052..8e70e27 100644
 --- a/core/archipelago/src/appgate/identity.rs
 +++ b/core/archipelago/src/appgate/identity.rs
-@@ -72,6 +72,8 @@ pub struct PortMap {
+@@ -74,6 +74,8 @@ pub struct PortMap {
      gated: HashMap<u16, GatedPort>,
      exempt: Vec<ExemptPort>,
      local: std::collections::HashSet<u16>,
@@ -33,7 +33,7 @@ index 269ef7a..36a0d6e 100644
  }
  
  impl PortMap {
-@@ -80,6 +82,19 @@ impl PortMap {
+@@ -82,6 +84,19 @@ impl PortMap {
          self.gated.get(&port)
      }
  
@@ -53,7 +53,7 @@ index 269ef7a..36a0d6e 100644
      pub fn gated_ports(&self) -> impl Iterator<Item = &GatedPort> {
          self.gated.values()
      }
-@@ -227,6 +242,10 @@ fn classify_manifest(manifest: &AppManifest, map: &mut PortMap) {
+@@ -243,6 +258,10 @@ fn classify_manifest(manifest: &AppManifest, map: &mut PortMap) {
      };
  
      for port in &manifest.app.ports {
@@ -64,7 +64,7 @@ index 269ef7a..36a0d6e 100644
          let protocol = if port.protocol.is_empty() {
              "tcp"
          } else {
-@@ -359,6 +378,26 @@ mod tests {
+@@ -379,6 +398,26 @@ mod tests {
          }
      }
  
@@ -92,7 +92,7 @@ index 269ef7a..36a0d6e 100644
          AppManifest::parse(yaml).expect("test manifest must parse")
      }
 diff --git a/core/archipelago/src/container/docker_packages.rs b/core/archipelago/src/container/docker_packages.rs
-index 8d9a982..13c8642 100644
+index aa7ab1a..1f90386 100644
 --- a/core/archipelago/src/container/docker_packages.rs
 +++ b/core/archipelago/src/container/docker_packages.rs
 @@ -286,6 +286,7 @@ impl DockerPackageScanner {
@@ -103,7 +103,7 @@ index 8d9a982..13c8642 100644
                              },
                          );
                          addresses
-@@ -335,6 +336,23 @@ impl DockerPackageScanner {
+@@ -351,6 +352,23 @@ impl DockerPackageScanner {
          }
          // HTTP on loopback can precede the LAN/Tor listener after install.
          let port_map = crate::appgate::identity::build_port_map();
@@ -127,6 +127,14 @@ index 8d9a982..13c8642 100644
          let gated: Vec<_> = packages
              .iter()
              .filter_map(|(id, pkg)| {
+@@ -584,6 +602,7 @@ mod lifecycle_regression_tests {
+                 InterfaceAddress {
+                     lan_address: Some("https://localhost:7443/old?gate=retained#position".into()),
+                     tor_address: "existing.onion".into(),
++                    lan_port_auth: None,
+                 },
+             )]),
+             status: ServiceStatus::Stopped,
 diff --git a/core/archipelago/src/data_model.rs b/core/archipelago/src/data_model.rs
 index 77540dd..418ecb9 100644
 --- a/core/archipelago/src/data_model.rs
@@ -149,10 +157,10 @@ index 77540dd..418ecb9 100644
  
  #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 diff --git a/core/archipelago/src/server.rs b/core/archipelago/src/server.rs
-index 15632e4..1c79f50 100644
+index 7e88c58..a82605f 100644
 --- a/core/archipelago/src/server.rs
 +++ b/core/archipelago/src/server.rs
-@@ -2217,6 +2217,7 @@ fn ensure_main_lan_address(pkg: &mut crate::data_model::PackageDataEntry, port:
+@@ -2236,6 +2236,7 @@ fn ensure_main_lan_address(pkg: &mut crate::data_model::PackageDataEntry, port:
          .or_insert_with(|| crate::data_model::InterfaceAddress {
              tor_address: String::new(),
              lan_address: None,
@@ -161,5 +169,5 @@ index 15632e4..1c79f50 100644
      if main.lan_address.is_none() {
          main.lan_address = Some(format!("http://localhost:{port}"));
 -- 
-2.53.0
+2.39.5 (Apple Git-154)
 

@@ -40,6 +40,8 @@ if ! { [ -f "$cache" ] && echo "$FRONTEND_SHA256  $cache" | sha256sum -c - >/dev
     mv "$cache.part" "$cache"
   else
     rm -f "$cache.part"
+    [ -n "$FRONTEND_FALLBACK_URL" ] && [ -n "$FRONTEND_FALLBACK_SHA256" ] \
+      || { echo "upstream asset unavailable and no fallback pinned for $ARCHY_RELEASE" >&2; exit 1; }
     # A previous ForgeSworn frontend release retains aiui/ and
     # archipelago-runtime/ from this exact, hash-pinned upstream release. Only
     # those directories survive the overlay below; the dashboard is rebuilt.

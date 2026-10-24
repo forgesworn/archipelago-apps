@@ -1,4 +1,4 @@
-From 69999137df65b37b112b0b56095d3f2f1a7b527d Mon Sep 17 00:00:00 2001
+From a811e3e684c107cef410b4b09ecdaee5dd0d2575 Mon Sep 17 00:00:00 2001
 From: archipelago-apps <ci@invalid>
 Date: Fri, 9 Oct 2026 23:33:07 +0100
 Subject: [PATCH] feat: show and resume automatic Wildbloom refunds
@@ -35,10 +35,10 @@ index 385f19a..a5cfa6c 100644
          );
          ensure!(!external_configuration(&record, &current, root.join("operator/checkout").exists()),
 diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
-index b1cdf4a..71340d6 100644
+index a7b9100..975dc9d 100644
 --- a/core/archipelago/src/container/prod_orchestrator.rs
 +++ b/core/archipelago/src/container/prod_orchestrator.rs
-@@ -5054,7 +5054,7 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
+@@ -5438,7 +5438,7 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
          );
          anyhow::ensure!(
              lm.manifest.app.container.image.as_deref()
@@ -372,5 +372,5 @@ index b6bd01d..bcd5602 100644
      const w = await page(); const signal = rpc.mock.calls[0]![0].signal!
      w.unmount(); expect(signal.aborted).toBe(true)
 -- 
-2.54.0 (Apple Git-157)
+2.39.5 (Apple Git-154)
 

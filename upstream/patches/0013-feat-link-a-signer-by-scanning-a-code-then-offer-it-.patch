@@ -1,8 +1,8 @@
-From 56e60259dfffe46e88b8b6eaeade282f12da0ca2 Mon Sep 17 00:00:00 2001
+From f5552cc3425283eff35d33e590d0399e623f8bb4 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 16:46:15 +0200
-Subject: [PATCH 13/14] feat: link a signer by scanning a code, then offer it
- for login
+Subject: [PATCH] feat: link a signer by scanning a code, then offer it for
+ login
 
 ---
  neode-ui/mock-backend.js                      |  34 ++
@@ -21,10 +21,10 @@ Subject: [PATCH 13/14] feat: link a signer by scanning a code, then offer it
  create mode 100644 neode-ui/src/components/signer/LinkedSignerLoginOffer.vue
 
 diff --git a/neode-ui/mock-backend.js b/neode-ui/mock-backend.js
-index ab558ab..7c8b20c 100755
+index 457045c..a907f76 100755
 --- a/neode-ui/mock-backend.js
 +++ b/neode-ui/mock-backend.js
-@@ -2235,6 +2235,7 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2242,6 +2242,7 @@ app.post('/rpc/v1', async (req, res) => {
        //                            are refused as busy), paused (start refused)
        //   MOCK_SIGNER_QUICK=1      "approved too fast" enrolment warning
        //   MOCK_SIGNER_STATUS=      paused | foreign | pending | denied
@@ -32,7 +32,7 @@ index ab558ab..7c8b20c 100755
        // Texts are the node's own fixed constants.
        case 'auth.login.signer.available': {
          return res.json({ result: mockSigner.enrolled.length > 0 && process.env.MOCK_SIGNER_2FA !== '1' })
-@@ -2338,6 +2339,37 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2345,6 +2346,37 @@ app.post('/rpc/v1', async (req, res) => {
          return res.json({ result: mockSigner.link(String(name || 'My signer')) })
        }
  
@@ -70,7 +70,7 @@ index ab558ab..7c8b20c 100755
        case 'auth.totp.status': {
          return res.json({ result: { enabled: false } })
        }
-@@ -6316,6 +6348,8 @@ const mockSigner = {
+@@ -6329,6 +6361,8 @@ const mockSigner = {
    /** Login signers, first enrolled first; any one of them logs in. */
    enrolled: [],
    attempts: new Map(),
@@ -1070,10 +1070,10 @@ index 3a1b5bf..9a9a8bf 100644
    beforeEach(() => vi.clearAllMocks())
  
 diff --git a/neode-ui/src/locales/en.json b/neode-ui/src/locales/en.json
-index 9e37325..cb2db29 100644
+index 17f313f..d798a3b 100644
 --- a/neode-ui/src/locales/en.json
 +++ b/neode-ui/src/locales/en.json
-@@ -854,7 +854,25 @@
+@@ -859,7 +859,25 @@
        "button": "Link a signer",
        "linked": "Signer linked",
        "badge": "Linked",
@@ -1101,10 +1101,10 @@ index 9e37325..cb2db29 100644
      "enrol": {
        "asking": "Asking your signer…",
 diff --git a/neode-ui/src/locales/es.json b/neode-ui/src/locales/es.json
-index 235f755..5dcc8a0 100644
+index b5cfa93..f366ab3 100644
 --- a/neode-ui/src/locales/es.json
 +++ b/neode-ui/src/locales/es.json
-@@ -835,7 +835,25 @@
+@@ -840,7 +840,25 @@
        "button": "Vincular un firmante",
        "linked": "Firmante vinculado",
        "badge": "Vinculado",
@@ -1147,7 +1147,7 @@ index ab6425e..9467e43 100644
      expect(api.enrolStart).toHaveBeenCalledWith('linked-1', 'a long password')
      expect(w.find('[data-testid="signer-code"]').text()).toBe('0042')
 diff --git a/neode-ui/src/views/web5/Web5Identities.vue b/neode-ui/src/views/web5/Web5Identities.vue
-index c4714f2..faa937b 100644
+index 720a7fc..059a36b 100644
 --- a/neode-ui/src/views/web5/Web5Identities.vue
 +++ b/neode-ui/src/views/web5/Web5Identities.vue
 @@ -234,10 +234,12 @@
@@ -1352,5 +1352,5 @@ index 42f63f1..376ca0e 100644
 +  })
  })
 -- 
-2.53.0
+2.39.5 (Apple Git-154)
 

@@ -1,8 +1,8 @@
-From 516d7234575888b7e5400a2afd807cbb103e33a4 Mon Sep 17 00:00:00 2001
+From 85787bcab4f88e803513df2c0056e500ee68b395 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 17:27:32 +0200
-Subject: [PATCH 14/14] fix: catch a signer's pairing reply sent before the
- node subscribed
+Subject: [PATCH] fix: catch a signer's pairing reply sent before the node
+ subscribed
 
 A nostrconnect pairing subscribed with limit 0, so it only saw events
 published after the subscription was live. The link is on screen as soon
@@ -110,5 +110,5 @@ index 10569f5..919bb55 100644
      fn nostrconnect_uri_carries_the_pairing_fields() {
          let client = Keys::generate().public_key();
 -- 
-2.53.0
+2.39.5 (Apple Git-154)
 

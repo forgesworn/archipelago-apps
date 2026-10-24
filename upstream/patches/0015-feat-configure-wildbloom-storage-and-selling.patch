@@ -1,4 +1,4 @@
-From 99afbfec9a7a90427e84b88a0b37b67f687c6c2a Mon Sep 17 00:00:00 2001
+From 544112ce65606f8cae5f0a74dee3a07dea1c3f3e Mon Sep 17 00:00:00 2001
 From: ForgeSworn <dev@forgesworn.dev>
 Date: Fri, 9 Oct 2026 07:58:51 +0100
 Subject: [PATCH] feat: configure Wildbloom storage and selling from Settings
@@ -23,10 +23,10 @@ Subject: [PATCH] feat: configure Wildbloom storage and selling from Settings
  create mode 100644 neode-ui/src/views/settings/__tests__/StorageSelling.test.ts
 
 diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
-index 0eb4114..05b1903 100644
+index 689359e..344cc94 100644
 --- a/core/archipelago/src/api/rpc/dispatcher.rs
 +++ b/core/archipelago/src/api/rpc/dispatcher.rs
-@@ -66,6 +66,10 @@ impl RpcHandler {
+@@ -86,6 +86,10 @@ impl RpcHandler {
              "package.check-updates" => self.handle_package_check_updates(params).await,
              "package.versions" => self.handle_package_versions(params).await,
              "package.set-config" => self.clone().handle_package_set_config(params).await,
@@ -38,7 +38,7 @@ index 0eb4114..05b1903 100644
              "app.filebrowser-token" => self.handle_filebrowser_token().await,
  
 diff --git a/core/archipelago/src/api/rpc/middleware.rs b/core/archipelago/src/api/rpc/middleware.rs
-index 641f548..96eb252 100644
+index f0481b5..6b44c58 100644
 --- a/core/archipelago/src/api/rpc/middleware.rs
 +++ b/core/archipelago/src/api/rpc/middleware.rs
 @@ -56,6 +56,7 @@ pub(super) const CACHEABLE_METHODS: &[&str] = &["system.stats", "federation.list
@@ -50,18 +50,18 @@ index 641f548..96eb252 100644
          "Missing",
          "Not found",
 diff --git a/core/archipelago/src/api/rpc/mod.rs b/core/archipelago/src/api/rpc/mod.rs
-index 48e6a63..3203761 100644
+index 67a9397..a4f2925 100644
 --- a/core/archipelago/src/api/rpc/mod.rs
 +++ b/core/archipelago/src/api/rpc/mod.rs
-@@ -19,6 +19,7 @@ mod identity;
- mod interfaces;
- pub(crate) mod lnd;
- mod marketplace;
+@@ -24,6 +24,7 @@ mod media_registration;
+ mod onchain_purchase;
+ mod playback;
+ mod purchase;
 +mod wildbloom;
  // pub(crate): 13-10's `assistant::backends::select_backend` reuses
  // `mesh::assistant::detect_ollama()` (D-04) rather than re-probing —
  // matches the existing `pub(crate) mod bitcoin_relay;`/`pub(crate) mod
-@@ -351,6 +352,18 @@ impl RpcHandler {
+@@ -396,6 +397,18 @@ impl RpcHandler {
  
          debug!("RPC method: {}", rpc_req.method);
  
@@ -77,9 +77,9 @@ index 48e6a63..3203761 100644
 +            ));
 +        }
 +
-         if matches!(
-             rpc_req.method.as_str(),
-             "node.nostr-sign" | "identity.nostr-sign"
+         if !native_consent_origin_allowed(&rpc_req.method, &parts.headers, self.config.dev_mode) {
+             return Ok(self.error_response(
+                 403,
 diff --git a/core/archipelago/src/api/rpc/wildbloom.rs b/core/archipelago/src/api/rpc/wildbloom.rs
 new file mode 100644
 index 0000000..51d5d4f
@@ -502,10 +502,10 @@ index 0000000..51d5d4f
 +    }
 +}
 diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
-index 1337440..b1cdf4a 100644
+index 16dba22..a7b9100 100644
 --- a/core/archipelago/src/container/prod_orchestrator.rs
 +++ b/core/archipelago/src/container/prod_orchestrator.rs
-@@ -4022,6 +4022,12 @@ impl ProdContainerOrchestrator {
+@@ -4338,6 +4338,12 @@ impl ProdContainerOrchestrator {
          }
          let mut env = manifest.app.environment.clone();
          env.extend(manifest.app.container.resolve_derived_env(&facts));
@@ -518,7 +518,7 @@ index 1337440..b1cdf4a 100644
          if matches!(manifest.app.id.as_str(), "bitcoin-core" | "bitcoin-knots") {
              let storage = crate::settings::bitcoin_storage::load(&self.data_dir).await?;
              env.retain(|entry| !entry.starts_with("BITCOIN_PRUNE="));
-@@ -5039,6 +5045,37 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
+@@ -5423,6 +5429,37 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
          }
      }
  
@@ -554,9 +554,9 @@ index 1337440..b1cdf4a 100644
 +    }
 +
      async fn restart(&self, app_id: &str) -> Result<()> {
-         if let Some(members) = self.mempool_umbrella_members(app_id).await {
-             tracing::info!(
-@@ -6155,6 +6192,53 @@ app:
+         if let Ok(lm) = self.loaded(app_id).await {
+             if super::supervised_update::installed_unit(
+@@ -6651,6 +6688,53 @@ app:
          assert_eq!(resolve_stop_grace_secs(&m, "some-unknown-app"), 30);
      }
  
@@ -611,11 +611,11 @@ index 1337440..b1cdf4a 100644
          let mut orch = ProdContainerOrchestrator::with_runtime(
              runtime,
 diff --git a/core/archipelago/src/container/traits.rs b/core/archipelago/src/container/traits.rs
-index 1a71a0a..355b6a5 100644
+index 86867a6..7b85fda 100644
 --- a/core/archipelago/src/container/traits.rs
 +++ b/core/archipelago/src/container/traits.rs
-@@ -45,6 +45,12 @@ pub trait ContainerOrchestrator: Send + Sync {
-         Ok(0)
+@@ -51,6 +51,12 @@ pub trait ContainerOrchestrator: Send + Sync {
+         Ok(())
      }
  
 +    /// Private data root for the explicitly supported Wildbloom package.
@@ -628,13 +628,13 @@ index 1a71a0a..355b6a5 100644
      async fn start(&self, app_id: &str) -> Result<()>;
  
 diff --git a/core/archipelago/src/settings/mod.rs b/core/archipelago/src/settings/mod.rs
-index 8ffaf64..839995c 100644
+index 9c1237e..9bda111 100644
 --- a/core/archipelago/src/settings/mod.rs
 +++ b/core/archipelago/src/settings/mod.rs
-@@ -9,3 +9,5 @@ pub mod session_policy;
- pub mod transport;
- 
+@@ -11,3 +11,5 @@ pub mod transport;
  pub mod bitcoin_storage;
+ 
+ pub mod model_provider;
 +
 +pub mod wildbloom_storage;
 diff --git a/core/archipelago/src/settings/wildbloom_storage.rs b/core/archipelago/src/settings/wildbloom_storage.rs
@@ -1137,10 +1137,10 @@ index 0000000..a8cf9ce
 +    }
 +}
 diff --git a/neode-ui/src/router/index.ts b/neode-ui/src/router/index.ts
-index adca8ea..b3623d0 100644
+index aa3edf5..6c9d48e 100644
 --- a/neode-ui/src/router/index.ts
 +++ b/neode-ui/src/router/index.ts
-@@ -235,6 +235,11 @@ const router = createRouter({
+@@ -240,6 +240,11 @@ const router = createRouter({
            name: 'system-update',
            component: () => import('../views/SystemUpdate.vue'),
          },
@@ -1498,5 +1498,5 @@ index 0000000..0841b77
 +  })
 +})
 -- 
-2.54.0 (Apple Git-157)
+2.39.5 (Apple Git-154)
 
