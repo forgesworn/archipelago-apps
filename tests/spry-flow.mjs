@@ -33,8 +33,10 @@ async function wait(read, test, label, ms = 60000) {
 function child(command, args, env = {}) { const process = spawn(command, args, { cwd: root, env: { ...globalThis.process.env, ...env }, stdio: 'ignore' }); children.push(process); return process; }
 async function stop(process) { if (process.exitCode !== null || process.signalCode !== null) return; process.kill('SIGTERM'); await Promise.race([once(process, 'exit'), new Promise(resolve => setTimeout(resolve, 2500))]); if (process.exitCode === null && process.signalCode === null) { process.kill('SIGKILL'); await once(process, 'exit'); } }
 async function media(page) {
-  await page.locator('#callToggle').waitFor({ state: 'visible' });
-  if (await page.locator('#deviceControls').isHidden()) await page.locator('#callToggle').click();
+  if (await page.locator('#deviceControls').isHidden()) {
+    await page.locator('#callToggle').waitFor({ state: 'visible' });
+    await page.locator('#callToggle').click();
+  }
   await page.locator('#deviceControls').waitFor({ state: 'visible' });
   for (const id of ['#toggleCamera', '#toggleMic']) { if (await page.locator(id).getAttribute('data-on') !== 'true') await page.locator(id).click(); }
 }
@@ -42,6 +44,7 @@ async function evidence(page) {
   return page.evaluate(async () => {
     const pairs = [], media = { frames: 0, audioBytes: 0, audioEnergy: 0 };
     for (const pc of window.__spryPcs ?? []) {
+      if (pc.connectionState === 'closed' || pc.connectionState === 'failed') continue;
       const stats = await pc.getStats();
       stats.forEach(stat => {
         if (stat.type === 'candidate-pair' && stat.state === 'succeeded' && stat.nominated) pairs.push({ local: stats.get(stat.localCandidateId)?.candidateType, remote: stats.get(stat.remoteCandidateId)?.candidateType });
@@ -93,6 +96,8 @@ try {
       if (location.hostname === 'localhost') {
         localStorage.setItem('kithmoot.relays.v1', JSON.stringify({ default: [{ url: relay, read: true, write: true }] }));
         localStorage.setItem('kithmoot.hide-ip.v1', '1');
+        // Generated-camera transport proof keeps vision qualification separate.
+        localStorage.setItem('kithmoot.call.effectMode', 'off');
       }
       const Native = window.RTCPeerConnection; window.__spryPcs = [];
       window.RTCPeerConnection = class extends Native { constructor(config) { super(config); window.__spryPcs.push(this); } };
@@ -173,21 +178,33 @@ try {
   const invitation = Buffer.from(new URL(link).hash.slice(1), 'base64url').toString();
   for (const value of [...credentials, secret]) assert.ok(!invitation.includes(value));
   mark('automatic group access passed');
+  await contexts[0].close();
+  const d = await device(); await joined(d, link, 'Generated D'); await media(d);
+  mark('new guest joined with paired participant closed');
+  await b.reload(); await joined(b, link, 'Generated B'); await media(b);
+  mark('guest reloaded with paired participant closed');
+  const active = [b,c,d];
+  const withoutOwner = await Promise.all(active.map(page => wait(() => evidence(page), value => valid(value) && value.pairs.length >= 2 && value.videos >= 3, 'Owner-offline media missing', 90000)));
+  assert.equal(counts['/v1/pairings/claim'], 1);
+  assert.ok(usernames.size >= 4);
+  mark('guest reload and new guest passed with paired participant closed');
   const rss = [];
   for (let elapsed = 0; elapsed < standingSeconds; elapsed += 15) {
     rss.push(Number(execFileSync('ps', ['-o','rss=','-p',String(control.pid)], { encoding:'utf8' }).trim()));
     await new Promise(resolve => setTimeout(resolve, Math.min(15, standingSeconds - elapsed) * 1000));
   }
-  const standing = await Promise.all([a,b,c].map((page, index) => wait(() => evidence(page), value => valid(value) && value.frames > group[index].frames && value.audioBytes > group[index].audioBytes, 'Standing media stopped', 60000)));
-  if (standingSeconds >= 300) assert.ok(usernames.size >= 6, 'Credentials did not renew');
+  const standing = await Promise.all(active.map((page, index) => wait(() => evidence(page), value => valid(value) && value.frames > withoutOwner[index].frames && value.audioBytes > withoutOwner[index].audioBytes, 'Standing media stopped', 60000)));
+  if (standingSeconds >= 300) assert.ok(usernames.size >= 7, 'Credentials did not renew');
   mark('standing call passed');
   const receipt = { schema: 1, passed: true, scope: 'local-generated-media-pair-once-and-automatic-call-access',
     runtime: 'Rust relay and Rust control service', nodeBinarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
     nodeBinaryBytes: (await readFile(binary)).length, relayBinarySha256: createHash('sha256').update(await readFile(relayBinary)).digest('hex'),
     pairingClaims: counts['/v1/pairings/claim'], distinctCredentialUsernames: usernames.size, standingSeconds,
     controlProcessRssKiB: rss.length ? { maximum: Math.max(...rss), samples: rss.length } : undefined,
+    cameraEffects: 'off for generated-media transport qualification',
     configuredThroughPairingUi: true, guestRelaySettingsRequired: false, injectedIceServers: false, invitationOmitsCredentials: true,
-    twoPerson: two, group, standing,
+    pairedParticipantClosed: true, guestReloadedAfterPairedParticipantClosed: true, newGuestJoinedWithoutPairedParticipant: true,
+    twoPerson: two, group, withoutOwner, standing,
     limits: ['Same-host Chromium with generated media and loopback TURN; local-network checks disabled for this fixture', 'HTTPS control requests routed to the local Rust HTTP service; no public TLS or NAT proof', 'No physical Android or independent-node installation proof'] };
   await writeFile(output, JSON.stringify(receipt, null, 2) + '\n');
   mark('receipt saved');
@@ -195,6 +212,7 @@ try {
   await writeFile(output + '.failure.txt', error instanceof Error ? error.stack : String(error), { mode: 0o600 });
   await writeFile(output + '.console.json', JSON.stringify(diagnostics, null, 2), { mode: 0o600 });
   await writeFile(output + '.api.json', JSON.stringify({counts, distinctCredentialUsernames:usernames.size}, null,2), {mode:0o600});
+  await Promise.allSettled(contexts.flatMap(context => context.pages()).map((page, index) => page.screenshot({ path: output + '.' + index + '.png' })));
   await writeFile(output + '.media.json', JSON.stringify(await Promise.all(contexts.flatMap(context => context.pages()).map(page => evidence(page).catch(() => ({})))), null, 2), { mode: 0o600 });
   if (contexts.length) await writeFile(output + '.state.json', JSON.stringify(await Promise.all(contexts.flatMap(context => context.pages()).map(page => page.evaluate(() => ({
     status: document.getElementById('status')?.textContent, text: document.body.innerText.slice(0, 4000),

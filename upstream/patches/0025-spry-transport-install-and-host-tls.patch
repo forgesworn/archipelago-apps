@@ -1,4 +1,4 @@
-From d38553704d91a0ef4afeec8a2a7e3f7b275aefb9 Mon Sep 17 00:00:00 2001
+From f613b84faba47c4bc1f7ff923d44086d88d3b075 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sat, 24 Oct 2026 12:18:07 +0100
 Subject: [PATCH] feat: provision bounded Spry transport and host-managed TURN
@@ -8,11 +8,11 @@ Subject: [PATCH] feat: provision bounded Spry transport and host-managed TURN
  .../src/api/rpc/package/install.rs            |   3 +
  .../src/api/rpc/package/runtime.rs            |   6 +
  core/archipelago/src/appgate/identity.rs      |  30 +++++
- core/archipelago/src/appgate/listener.rs      |  66 ++++++++++-
+ core/archipelago/src/appgate/listener.rs      | 103 +++++++++++++++++-
  core/archipelago/src/appgate/mod.rs           |   1 +
  core/archipelago/src/container/mod.rs         |   1 +
  .../archipelago/src/container/spry_network.rs | 103 ++++++++++++++++++
- 7 files changed, 204 insertions(+), 6 deletions(-)
+ 7 files changed, 241 insertions(+), 6 deletions(-)
  create mode 100644 core/archipelago/src/container/spry_network.rs
 
 diff --git a/core/archipelago/src/api/rpc/package/install.rs b/core/archipelago/src/api/rpc/package/install.rs
@@ -109,7 +109,7 @@ index 36a0d6e..5131bd3 100644
      /// auth it declares, so the dashboard can frame a gated port over https.
      #[test]
 diff --git a/core/archipelago/src/appgate/listener.rs b/core/archipelago/src/appgate/listener.rs
-index a375cb9..0c23a72 100644
+index a375cb9..32e9427 100644
 --- a/core/archipelago/src/appgate/listener.rs
 +++ b/core/archipelago/src/appgate/listener.rs
 @@ -245,7 +245,13 @@ async fn sweep(
@@ -220,6 +220,50 @@ index a375cb9..0c23a72 100644
  async fn serve_http<S>(stream: S, peer: SocketAddr, gate: Arc<AppGate>, app: GatedPort)
  where
      S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+@@ -483,6 +537,43 @@ where
+ mod tests {
+     use super::*;
+ 
++    #[cfg(target_os = "linux")]
++    #[tokio::test]
++    async fn spry_native_target_relays_bytes_and_refuses_other_ports() {
++        use tokio::io::{AsyncReadExt, AsyncWriteExt};
++        let address = host_addresses()
++            .await
++            .into_iter()
++            .find(|ip| ip.is_ipv4())
++            .expect("Linux node needs an IPv4 interface");
++        let upstream = TcpListener::bind(SocketAddr::new(address, 3478))
++            .await
++            .unwrap();
++        let echo = tokio::spawn(async move {
++            let (mut stream, _) = upstream.accept().await.unwrap();
++            let mut generated = vec![0; 32768];
++            stream.read_exact(&mut generated).await.unwrap();
++            stream.write_all(&generated).await.unwrap();
++        });
++        let (mut client, server) = tokio::io::duplex(1024);
++        let relay = tokio::spawn(relay_turn(server, 3478));
++        tokio::time::timeout(std::time::Duration::from_secs(5), async {
++            let expected = vec![42; 32768];
++            client.write_all(&expected).await.unwrap();
++            client.shutdown().await.unwrap();
++            let mut received = Vec::new();
++            client.read_to_end(&mut received).await.unwrap();
++            assert_eq!(received, expected);
++            echo.await.unwrap();
++            relay.await.unwrap();
++        })
++        .await
++        .expect("native forwarding stalled");
++        let (mut client, server) = tokio::io::duplex(32);
++        relay_turn(server, 22).await;
++        assert_eq!(client.read(&mut [0; 1]).await.unwrap(), 0);
++    }
++
+     #[tokio::test]
+     async fn host_addresses_excludes_loopback() {
+         for addr in host_addresses().await {
 diff --git a/core/archipelago/src/appgate/mod.rs b/core/archipelago/src/appgate/mod.rs
 index e529517..d6f7807 100644
 --- a/core/archipelago/src/appgate/mod.rs

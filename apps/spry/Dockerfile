@@ -18,5 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=relay /src/target/release/spry-turn /usr/local/bin/spry-turn
 COPY --from=control /src/target/release/spry-node /usr/local/bin/spry-node
 COPY --from=relay /src/LICENSE /src/NOTICE /src/THIRD_PARTY_LICENSES.txt /usr/share/doc/spry-turn/
+COPY LICENSE /usr/share/doc/spry-node/LICENSE
 LABEL org.opencontainers.image.licenses=MIT
+LABEL org.opencontainers.image.source=https://github.com/forgesworn/archipelago-apps
 ENTRYPOINT ["/usr/local/bin/spry-node"]

@@ -43,6 +43,7 @@ case "$app" in
 esac
 smoke+=("${common_smoke[@]}")
 context=("apps/$app" ":(exclude)apps/$app/manifest.yml")
+if [ "$app" = spry ]; then context+=(Cargo.toml Cargo.lock LICENSE .dockerignore); fi
 
 out=${GITHUB_OUTPUT:-/dev/stdout}
 decide() { # build push message-kind message
