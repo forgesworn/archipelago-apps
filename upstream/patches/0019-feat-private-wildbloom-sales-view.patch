@@ -1,4 +1,4 @@
-From 6c6d73250b7972a7939768dda5e9a9c997f5ab74 Mon Sep 17 00:00:00 2001
+From 2d51add3bfa2718cabdbca1f9973ae025c8e8602 Mon Sep 17 00:00:00 2001
 From: archipelago-apps <ci@invalid>
 Date: Fri, 9 Oct 2026 13:50:07 +0100
 Subject: [PATCH] feat: show private Wildbloom sales and current customer
@@ -21,10 +21,10 @@ Subject: [PATCH] feat: show private Wildbloom sales and current customer
  create mode 100644 neode-ui/src/views/settings/__tests__/StorageSales.test.ts
 
 diff --git a/core/Cargo.lock b/core/Cargo.lock
-index 7ecdf76..e5638b9 100644
+index 4570cfa..c2d95e1 100644
 --- a/core/Cargo.lock
 +++ b/core/Cargo.lock
-@@ -150,6 +150,7 @@ dependencies = [
+@@ -152,6 +152,7 @@ dependencies = [
   "reed-solomon-erasure",
   "regex",
   "reqwest 0.11.27",
@@ -32,7 +32,7 @@ index 7ecdf76..e5638b9 100644
   "rustls-pemfile",
   "rustls-webpki 0.101.7",
   "sd-notify",
-@@ -1550,6 +1551,18 @@ dependencies = [
+@@ -1568,6 +1569,18 @@ dependencies = [
   "windows-sys 0.61.2",
  ]
  
@@ -51,7 +51,7 @@ index 7ecdf76..e5638b9 100644
  [[package]]
  name = "fastbloom"
  version = "0.17.0"
-@@ -1966,6 +1979,9 @@ name = "hashbrown"
+@@ -1993,6 +2006,9 @@ name = "hashbrown"
  version = "0.16.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
@@ -61,7 +61,7 @@ index 7ecdf76..e5638b9 100644
  
  [[package]]
  name = "hashbrown"
-@@ -1978,6 +1994,15 @@ dependencies = [
+@@ -2005,6 +2021,15 @@ dependencies = [
   "foldhash 0.2.0",
  ]
  
@@ -77,7 +77,7 @@ index 7ecdf76..e5638b9 100644
  [[package]]
  name = "heapless"
  version = "0.7.17"
-@@ -3066,6 +3091,17 @@ dependencies = [
+@@ -3107,6 +3132,17 @@ dependencies = [
   "redox_syscall 0.7.3",
  ]
  
@@ -95,7 +95,7 @@ index 7ecdf76..e5638b9 100644
  [[package]]
  name = "libssh2-sys"
  version = "0.3.1"
-@@ -4720,6 +4756,31 @@ dependencies = [
+@@ -4780,6 +4816,31 @@ dependencies = [
   "windows-sys 0.52.0",
  ]
  
@@ -127,7 +127,7 @@ index 7ecdf76..e5638b9 100644
  [[package]]
  name = "rustc-hash"
  version = "2.1.2"
-@@ -5435,6 +5496,18 @@ dependencies = [
+@@ -5495,6 +5556,18 @@ dependencies = [
   "der 0.8.0",
  ]
  
@@ -147,7 +147,7 @@ index 7ecdf76..e5638b9 100644
  name = "ssh2"
  version = "0.9.5"
 diff --git a/core/archipelago/Cargo.toml b/core/archipelago/Cargo.toml
-index ab26701..3bb09b2 100644
+index 80e27fe..ca25925 100644
 --- a/core/archipelago/Cargo.toml
 +++ b/core/archipelago/Cargo.toml
 @@ -52,8 +52,8 @@ archipelago-security = { path = "../security" }
@@ -162,10 +162,10 @@ index ab26701..3bb09b2 100644
  # Authentication
  bcrypt = "0.15"
 diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
-index 05b1903..c3f3780 100644
+index 344cc94..b89a7fb 100644
 --- a/core/archipelago/src/api/rpc/dispatcher.rs
 +++ b/core/archipelago/src/api/rpc/dispatcher.rs
-@@ -66,6 +66,7 @@ impl RpcHandler {
+@@ -86,6 +86,7 @@ impl RpcHandler {
              "package.check-updates" => self.handle_package_check_updates(params).await,
              "package.versions" => self.handle_package_versions(params).await,
              "package.set-config" => self.clone().handle_package_set_config(params).await,
@@ -218,11 +218,11 @@ index 51d5d4f..116e788 100644
              "wildbloom.storage.apply",
              "wildbloom.storage.resolve-moneyer",
 diff --git a/core/archipelago/src/settings/mod.rs b/core/archipelago/src/settings/mod.rs
-index 839995c..9630a64 100644
+index 9bda111..483ab3c 100644
 --- a/core/archipelago/src/settings/mod.rs
 +++ b/core/archipelago/src/settings/mod.rs
-@@ -11,3 +11,4 @@ pub mod transport;
- pub mod bitcoin_storage;
+@@ -13,3 +13,4 @@ pub mod bitcoin_storage;
+ pub mod model_provider;
  
  pub mod wildbloom_storage;
 +pub mod wildbloom_sales;
@@ -726,10 +726,10 @@ index 0000000..0f42fbe
 +    }
 +}
 diff --git a/neode-ui/src/router/index.ts b/neode-ui/src/router/index.ts
-index b3623d0..e037218 100644
+index 6c9d48e..8a077cc 100644
 --- a/neode-ui/src/router/index.ts
 +++ b/neode-ui/src/router/index.ts
-@@ -235,6 +235,11 @@ const router = createRouter({
+@@ -240,6 +240,11 @@ const router = createRouter({
            name: 'system-update',
            component: () => import('../views/SystemUpdate.vue'),
          },
@@ -909,5 +909,5 @@ index 0000000..b6bd01d
 +  })
 +})
 -- 
-2.54.0 (Apple Git-157)
+2.39.5 (Apple Git-154)
 

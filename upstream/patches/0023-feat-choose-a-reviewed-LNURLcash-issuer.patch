@@ -1,4 +1,4 @@
-From 02b666780ea683743f93a1d7be4da9a49daff31f Mon Sep 17 00:00:00 2001
+From 8e8a030f80c2f2015f427026d4e701d40397a625 Mon Sep 17 00:00:00 2001
 From: archipelago-apps <ci@invalid>
 Date: Sat, 10 Oct 2026 09:54:40 +0100
 Subject: [PATCH] feat: choose a reviewed LNURLcash issuer
@@ -13,10 +13,10 @@ Subject: [PATCH] feat: choose a reviewed LNURLcash issuer
  6 files changed, 203 insertions(+), 33 deletions(-)
 
 diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
-index fdb7431..5d2307b 100644
+index 8293725..29820d3 100644
 --- a/core/archipelago/src/api/rpc/dispatcher.rs
 +++ b/core/archipelago/src/api/rpc/dispatcher.rs
-@@ -71,7 +71,15 @@ impl RpcHandler {
+@@ -91,7 +91,15 @@ impl RpcHandler {
              "wildbloom.storage.get" => self.handle_wildbloom_get().await,
              "wildbloom.storage.save" => self.handle_wildbloom_save(params).await,
              "wildbloom.storage.apply" => self.clone().handle_wildbloom_apply(params).await,
@@ -108,10 +108,10 @@ index a5cfa6c..6ab2f50 100644
          ] {
              assert!(!super::super::middleware::UNAUTHENTICATED_METHODS.contains(&method));
 diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
-index 71340d6..56f4de0 100644
+index 975dc9d..18eed9b 100644
 --- a/core/archipelago/src/container/prod_orchestrator.rs
 +++ b/core/archipelago/src/container/prod_orchestrator.rs
-@@ -5054,7 +5054,7 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
+@@ -5438,7 +5438,7 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
          );
          anyhow::ensure!(
              lm.manifest.app.container.image.as_deref()
@@ -512,5 +512,5 @@ index e92571a..d210103 100644
 +  })
  })
 -- 
-2.54.0 (Apple Git-157)
+2.39.5 (Apple Git-154)
 

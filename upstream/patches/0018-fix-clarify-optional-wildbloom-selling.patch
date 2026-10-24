@@ -1,4 +1,4 @@
-From e2770478f00c4b9831866155d381ac4cb1135829 Mon Sep 17 00:00:00 2001
+From 4eb3d2eac1f21795ff826cdb5bee858368e76c24 Mon Sep 17 00:00:00 2001
 From: archipelago-apps <ci@invalid>
 Date: Fri, 9 Oct 2026 12:25:33 +0100
 Subject: [PATCH] fix: clarify that Wildbloom selling setup is optional
@@ -27,5 +27,5 @@ index d0d1762..901c8f5 100644
              <details class="rounded-lg border border-white/15 p-4">
                <summary class="cursor-pointer text-sm font-medium">Moneyer connection</summary>
 -- 
-2.54.0 (Apple Git-157)
+2.39.5 (Apple Git-154)
 

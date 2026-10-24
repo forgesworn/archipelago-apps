@@ -14,7 +14,7 @@
   var providerScript = document.currentScript;
   var autoNip98 = !(providerScript && providerScript.hasAttribute('data-no-nip98'));
   var embedded = window !== window.top;
-  var pending = {}, nextId = 1, queuedMessages = [];
+  var pending = {}, rentalPending = {}, mediaPending = {}, nextId = 1, queuedMessages = [];
   var identitySelection = null;
   var selectedIdentity = null, identitySubscribers = [];
   var selectedPublicKey = null, selectedPublicKeyTimer = null;
@@ -144,6 +144,7 @@
   // call. Keeping this as an optional companion API preserves NIP-07 compatibility
   // while allowing users to change their node identity when they log in again.
   function selectIdentity() {
+    autoAuthSuspended = false;
     if (identitySelection) {
       identitySelection.reject(new Error('A node identity choice is already open'));
       clearTimeout(identitySelection.timer);
@@ -164,21 +165,95 @@
     });
   }
 
+  // JWT claims are a reuse hint only; the API still verifies the signature.
+  // Never let an unrelated or expired app session override the chosen node key.
+  function tokenMatchesIdentity(token, pubkey) {
+    try {
+      if (typeof token !== 'string' || !pubkey) return false;
+      var parts = token.split('.');
+      if (parts.length !== 3 || !parts.every(function (part) { return /^[A-Za-z0-9_-]+$/.test(part); })) return false;
+      var encoded = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      while (encoded.length % 4) encoded += '=';
+      var claims = JSON.parse(atob(encoded));
+      return claims.sub === pubkey && typeof claims.exp === 'number' &&
+        Number.isFinite(claims.exp) && claims.exp > Date.now() / 1000;
+    } catch (_) { return false; }
+  }
+
+  var authGeneration = 0, authAttempt = null, autoAuthTimer = null, autoAuthSuspended = false;
+  function clearSession() {
+    authGeneration++;
+    authAttempt = null;
+    clearTimeout(autoAuthTimer);
+    autoAuthSuspended = true;
+    var previous = selectedIdentity && selectedIdentity.nostr_pubkey;
+    selectedIdentity = null; selectedPublicKey = null;
+    clearTimeout(selectedPublicKeyTimer);
+    window.dispatchEvent(new CustomEvent('archipelago:identity-changing', { detail: { nostr_pubkey: null, previous_nostr_pubkey: previous } }));
+    // These are app session credentials, not stored accounts, profiles or keys.
+    try {
+      ['nostr_token', 'nostr_pubkey', 'refresh_token'].forEach(function (key) { sessionStorage.removeItem(key); });
+    } catch (_) {}
+    // Signing out is also an explicit request to stop the dashboard from
+    // restoring this app's remembered identity on its next load. The broker
+    // forgets only the app-to-identity selection; node identities and keys are
+    // preserved and remain available for a later explicit sign-in.
+    postToSigner({
+      type: embedded
+        ? 'archipelago:identity:clear'
+        : 'archipelago:signer-clear-session',
+    });
+  }
+
+  function scheduleIdentityAuth(pubkey) {
+    if (!autoNip98 || autoAuthSuspended) return;
+    try { if (tokenMatchesIdentity(sessionStorage.getItem('nostr_token'), pubkey)) return; } catch (_) {}
+    clearTimeout(autoAuthTimer);
+    var generation = authGeneration;
+    autoAuthTimer = setTimeout(function () {
+      if (generation === authGeneration && selectedIdentity && selectedIdentity.nostr_pubkey === pubkey) doNip98Auth(pubkey, generation);
+    }, 1500);
+  }
+
   function finishIdentitySelection(identity) {
     // The identity picker is itself an explicit choice to disclose this key.
     // Keep it briefly so the login library's immediately-following
     // getPublicKey() does not depend on another cross-origin WebView round trip.
     // This is deliberately one-shot and short-lived.
-    if (identity && typeof identity.nostr_pubkey === 'string' && identity.nostr_pubkey) {
+    if (identity && typeof identity.nostr_pubkey === 'string' && /^[0-9a-f]{64}$/.test(identity.nostr_pubkey)) {
+      var previous = selectedIdentity && selectedIdentity.nostr_pubkey;
+      var changed = previous !== identity.nostr_pubkey;
+      var storedToken = null;
+      try { storedToken = sessionStorage.getItem('nostr_token'); } catch (_) {}
+      var invalidSession = !!storedToken && !tokenMatchesIdentity(storedToken, identity.nostr_pubkey);
       selectedIdentity = { nostr_pubkey: identity.nostr_pubkey };
+      var displayName = identity.display_name || identity.name;
+      if (typeof displayName === 'string' && displayName.trim()) selectedIdentity.display_name = displayName.trim().slice(0, 160);
+      if (changed || (invalidSession && !authAttempt)) {
+        authGeneration++;
+        authAttempt = null;
+        clearTimeout(autoAuthTimer);
+        window.dispatchEvent(new CustomEvent('archipelago:identity-changing', { detail: {
+          nostr_pubkey: identity.nostr_pubkey, previous_nostr_pubkey: previous,
+        } }));
+      }
+      try {
+        if (!tokenMatchesIdentity(sessionStorage.getItem('nostr_token'), identity.nostr_pubkey)) {
+          ['nostr_token', 'nostr_pubkey', 'refresh_token'].forEach(function (key) { sessionStorage.removeItem(key); });
+        } else {
+          if (sessionStorage.getItem('nostr_pubkey') !== identity.nostr_pubkey) sessionStorage.removeItem('refresh_token');
+          sessionStorage.setItem('nostr_pubkey', identity.nostr_pubkey);
+        }
+      } catch (_) {}
       selectedPublicKey = identity.nostr_pubkey;
       clearTimeout(selectedPublicKeyTimer);
       selectedPublicKeyTimer = setTimeout(function () {
         selectedPublicKey = null;
         selectedPublicKeyTimer = null;
       }, 15000);
+      scheduleIdentityAuth(identity.nostr_pubkey);
       identitySubscribers.slice().forEach(function (subscriber) {
-        try { subscriber(selectedIdentity); } catch (error) {
+        try { subscriber(getSelectedIdentity()); } catch (error) {
           console.error('[nostr-provider] identity listener failed:', error);
         }
       });
@@ -187,7 +262,8 @@
     var selection = identitySelection;
     identitySelection = null;
     clearTimeout(selection.timer);
-    selection.resolve(identity);
+    if (!identity || !/^[0-9a-f]{64}$/.test(identity.nostr_pubkey)) selection.reject(new Error('Invalid native public key'));
+    else selection.resolve(getSelectedIdentity());
   }
 
   function cancelIdentitySelection() {
@@ -211,7 +287,16 @@
       selectedPublicKeyTimer = null;
       return Promise.resolve(publicKey);
     }
-    if (navigator.userActivation && navigator.userActivation.isActive) {
+    // The picker click itself leaves transient user activation active. A second
+    // public-key lookup in the same login must not open another picker.
+    var restoringSession = false;
+    try {
+      var sessionHint = sessionStorage.getItem('nostr_token');
+      restoringSession = !!selectedIdentity && tokenMatchesIdentity(sessionHint, selectedIdentity.nostr_pubkey);
+    } catch (_) {}
+    // This is only a UI hint: the broker still verifies the node session and
+    // signing permissions. A restored app token never authorizes a signature.
+    if (!restoringSession && !selectedIdentity && navigator.userActivation && navigator.userActivation.isActive) {
       return selectIdentity().then(function () {
         return getPublicKey();
       });
@@ -228,7 +313,7 @@
     }
     identitySubscribers.push(subscriber);
     if (selectedIdentity) {
-      try { subscriber(selectedIdentity); } catch (error) {
+      try { subscriber(getSelectedIdentity()); } catch (error) {
         console.error('[nostr-provider] identity listener failed:', error);
       }
     }
@@ -240,12 +325,12 @@
   }
 
   function getSelectedIdentity() {
-    return selectedIdentity && { nostr_pubkey: selectedIdentity.nostr_pubkey };
+    return selectedIdentity && Object.assign({}, selectedIdentity);
   }
 
   window.addEventListener('message', function (e) {
     var validSource = embedded
-      ? e.source === window.parent
+      ? e.source === window.parent && e.origin === dashboardOrigin()
       : signerFrame && e.source === signerFrame.contentWindow && e.origin === dashboardOrigin();
     if (!validSource || !e.data) return;
 
@@ -266,7 +351,8 @@
       finishIdentitySelection(e.data.identity);
       window.postMessage({
         type: 'archipelago:identity',
-        nostr_pubkey: e.data.identity && e.data.identity.nostr_pubkey,
+        nostr_pubkey: selectedIdentity && selectedIdentity.nostr_pubkey,
+        display_name: selectedIdentity && selectedIdentity.display_name,
       }, window.location.origin);
       return;
     }
@@ -277,6 +363,21 @@
     if (e.data.type === 'archipelago:identity-cancelled' ||
         e.data.type === 'archipelago:signer-identity-cancelled') {
       cancelIdentitySelection();
+      return;
+    }
+    if (e.data.type === 'archipelago-rental-response') {
+      var rental = rentalPending[e.data.id];
+      if (!rental) return;
+      delete rentalPending[e.data.id]; clearTimeout(rental.timer); rental.cleanup();
+      e.data.error ? rental.reject(new Error(e.data.error)) : rental.resolve(e.data.result);
+      return;
+    }
+    if (e.data.type === 'archipelago-media-registration-response') {
+      var media = mediaPending[e.data.id];
+      if (!media) return;
+      delete mediaPending[e.data.id];
+      clearTimeout(media.timer);
+      e.data.error ? media.reject(new Error(e.data.error)) : media.resolve(e.data.result);
       return;
     }
     if (e.data.type !== 'nostr-response') return;
@@ -301,20 +402,88 @@
     },
   };
 
+  // Exact owner-approved Cloud registration. The dashboard checks the installed
+  // app origin/audience and displays the native picker before any preparation.
+  function nativeRequestId() {
+    if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    // Secure randomness remains available on ordinary HTTP node/LAN origins.
+    var bytes = new Uint8Array(16); crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+    var hex = Array.from(bytes, function (value) { return value.toString(16).padStart(2, '0'); }).join('');
+    return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+  }
+
+  function rentalRequest(action, payload, timeout, signal) {
+    return new Promise(function (resolve, reject) {
+      if (signal && (typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function' || typeof signal.aborted !== 'boolean')) { reject(new Error('Invalid rental cancellation signal.')); return; }
+      if (signal && signal.aborted) { reject(new Error('Rental request closed.')); return; }
+      var id = nativeRequestId();
+      function cleanup() { if (signal) signal.removeEventListener('abort', abort); }
+      function fail(message) {
+        var pending = rentalPending[id]; if (!pending) return;
+        delete rentalPending[id]; clearTimeout(pending.timer); cleanup();
+        if (action === 'request') postToSigner({type:'archipelago-rental-request',id:id,action:'cancel',playbackProtocol:2});
+        reject(new Error(message));
+      }
+      function abort() { fail('Rental request closed. Recover any dispatched payment using the original purchase.'); }
+      rentalPending[id] = { resolve: resolve, reject: reject, cleanup: cleanup, timer: setTimeout(function () {
+        fail('Rental response unavailable. Recover the same purchase without paying again.');
+      }, timeout) };
+      if (signal) signal.addEventListener('abort', abort, {once:true});
+      postToSigner(Object.assign({ type: 'archipelago-rental-request', id: id, action: action, playbackProtocol: 2 }, payload));
+    });
+  }
+  window.archipelagoRental = {
+    status: function (handle) { return rentalRequest('status', { handle: handle }, 35000); },
+    prepare: function (handle, retry) { return rentalRequest('prepare', { handle: handle, retry: retry === true }, 35000); },
+    start: function (handle, readyId) { return rentalRequest('start', { handle: handle, ready_id: readyId }, 35000); },
+    request: function (offer, options) {
+      if (!options || options.playbackProtocol !== 2) return Promise.reject(new Error('Playback protocol 2 is required before requesting a rental.'));
+      if (options.renewExpired !== undefined && typeof options.renewExpired !== 'boolean') return Promise.reject(new Error('Invalid rental renewal request.'));
+      return rentalRequest('request', { offer: offer, renewExpired: options.renewExpired === true }, 600000, options.signal);
+    }
+  };
+  Object.defineProperty(window.archipelagoRental, 'playbackProtocol', { value: 2, writable: false, configurable: false, enumerable: true });
+
+  window.archipelagoMediaRegistration = {
+    request: function (action, payload) {
+      if (['select', 'resume', 'submit', 'complete', 'resolve', 'resolve-submit'].indexOf(action) === -1 || !payload || typeof payload !== 'object') {
+        return Promise.reject(new Error('Invalid native media registration request'));
+      }
+      return new Promise(function (resolve, reject) {
+        var id = nativeRequestId();
+        mediaPending[id] = { resolve: resolve, reject: reject, timer: setTimeout(function () {
+          var item = mediaPending[id];
+          if (!item) return;
+          delete mediaPending[id];
+          item.reject(new Error('Registration was not confirmed. Resume the same saved operation.'));
+        }, 600000) };
+        postToSigner({ type: 'archipelago-media-registration-request', id: id, action: action,
+          intent: payload.intent, selection: payload.selection, approvalId: payload.approvalId,
+          producerEvent: payload.producerEvent });
+      });
+    },
+  };
+
   window.archipelagoNostr = {
     selectIdentity: selectIdentity,
     onIdentitySelected: onIdentitySelected,
     getSelectedIdentity: getSelectedIdentity,
+    clearSession: clearSession,
   };
 
   // Optional direct NIP-98 session bootstrap for apps that use it. Signing
   // itself is shown by the shared broker, so this deliberately adds no second
   // full-screen loader inside the app.
-  var authDone = false;
-
-  function doNip98Auth(pubkey) {
-    if (authDone) return;
-    authDone = true;
+  function doNip98Auth(pubkey, generation) {
+    if (authAttempt || autoAuthSuspended) return;
+    var attempt = {};
+    authAttempt = attempt;
+    function current() {
+      return authAttempt === attempt && generation === authGeneration && !autoAuthSuspended &&
+        selectedIdentity && selectedIdentity.nostr_pubkey === pubkey;
+    }
+    function requireCurrent() { if (!current()) throw new Error('Identity choice changed'); }
     var healthUrl = window.location.origin + '/api/nostr-auth/health';
     var sessionUrl = window.location.origin + '/api/auth/nostr/session';
     var healthController = new AbortController();
@@ -322,6 +491,7 @@
 
     fetch(healthUrl, { signal: healthController.signal }).then(function (response) {
       clearTimeout(healthTimeout);
+      requireCurrent();
       if (!response.ok) throw new Error('Health ' + response.status);
       return window.nostr.signEvent({
         kind: 27235,
@@ -331,6 +501,8 @@
         tags: [['u', sessionUrl], ['method', 'POST']],
       });
     }).then(function (signed) {
+      requireCurrent();
+      if (!signed || signed.pubkey !== pubkey) throw new Error('Signer identity differs from selected identity');
       var controller = new AbortController();
       setTimeout(function () { controller.abort(); }, 10000);
       return fetch(sessionUrl, {
@@ -342,10 +514,12 @@
       if (!response.ok) throw new Error('Auth failed: ' + response.status);
       return response.json();
     }).then(function (data) {
-      if (!data.accessToken) throw new Error('Authentication returned no access token');
+      requireCurrent();
+      if (!tokenMatchesIdentity(data.accessToken, pubkey)) throw new Error('Authentication returned an expired or differently bound session');
       sessionStorage.setItem('nostr_token', data.accessToken);
       sessionStorage.setItem('nostr_pubkey', pubkey);
       if (data.refreshToken) sessionStorage.setItem('refresh_token', data.refreshToken);
+      else sessionStorage.removeItem('refresh_token');
       return waitForSignerToHide().then(function () {
         // Give WebView one paint after the iframe is hidden before replacing
         // the document. The stored session is already durable at this point.
@@ -355,6 +529,7 @@
           });
         });
       }).then(function () {
+        requireCurrent();
         if (window.ArchipelagoSurface &&
             typeof window.ArchipelagoSurface.expectPageTransition === 'function') {
           window.ArchipelagoSurface.expectPageTransition();
@@ -362,24 +537,12 @@
         window.location.reload();
       });
     }).catch(function (error) {
-      authDone = false;
+      if (authAttempt === attempt) authAttempt = null;
       var message = error && error.message ? error.message : String(error);
       if (message.toLowerCase().indexOf('abort') > -1) message = 'API timeout';
       console.warn('[nostr-provider] NIP-98 skipped:', message);
     });
   }
-
-  window.addEventListener('message', function (e) {
-    if (!e.data || e.data.type !== 'archipelago:identity' || !autoNip98) return;
-    if (e.source !== window && e.source !== window.parent) return;
-    var pubkey = e.data.nostr_pubkey;
-    if (!pubkey) return;
-    try {
-      var token = sessionStorage.getItem('nostr_token');
-      if (token && token.indexOf('mock-') === -1) return;
-    } catch (_) {}
-    setTimeout(function () { doNip98Auth(pubkey); }, 1500);
-  });
 
   // Only identity-aware apps open the chooser eagerly. The provider is also
   // injected into several ordinary app proxies; those stay untouched unless

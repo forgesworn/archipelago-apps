@@ -12,6 +12,7 @@ This needs backend `-p4` or later (`upstream/patches/0003` to `0005`).
 Patch levels in this guide are for `v1.8.22-alpha`. On `v1.9.0-alpha`, backend
 and frontend `-p1` carry the whole series. `0001` and `0002` are upstream now,
 so the series starts at `0003`.
+On `v1.9.1-alpha`, backend and frontend `-p1` again carry the whole series.
 
 ## Why you'd want one
 
