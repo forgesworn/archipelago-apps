@@ -12,6 +12,7 @@ on:
       - scripts/frontend-inputs.sh
       - scripts/lib/patches.bash
       - scripts/frontend-release-plan.sh
+      - apps/spry/manifest.yml
       - .github/workflows/frontend.yml
       - tests/dashboard/**
       - scripts/test-storage-settings-browser.sh

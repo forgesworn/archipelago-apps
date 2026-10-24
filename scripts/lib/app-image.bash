@@ -12,6 +12,9 @@ app_image() {
     wildbloom)
       APP_REF=${WILDBLOOM_REF:?}
       APP_TAG="ghcr.io/forgesworn/wildbloom:0.0.1-${APP_REF:0:7}-${WILDBLOOM_PKG_REV:?}" ;;
+    spry)
+      APP_REF=${SPRY_REF:?}
+      APP_TAG="ghcr.io/forgesworn/spry:0.1.0-${APP_REF:0:7}-${SPRY_PKG_REV:?}" ;;
     *) echo "unknown app: $1" >&2; return 2 ;;
   esac
 }

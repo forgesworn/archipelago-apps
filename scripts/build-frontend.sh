@@ -85,6 +85,10 @@ for entry in "$dist"/* "$dist"/.[!.]*; do
   cp -R "$entry" "$work/tree/"
 done
 
+# Include installable Spry in the runtime catalogue promoted by Archipelago.
+mkdir -p "$work/tree/archipelago-runtime/apps/spry"
+cp "$root/apps/spry/manifest.yml" "$work/tree/archipelago-runtime/apps/spry/manifest.yml"
+
 # 4. Deterministic repack: sorted names, root:root, fixed mtime, 755/644, no
 # gzip timestamp, "./" prefixes and a "./" root entry as upstream's tar writes.
 epoch=$(git -C "$archy" show -s --format=%ct "$ARCHY_REF")
