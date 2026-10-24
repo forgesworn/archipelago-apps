@@ -89,6 +89,8 @@ assert inspection['HostConfig']['NetworkMode'] == 'host'
 assert inspection['HostConfig']['Privileged'] is False
 assert inspection['HostConfig']['ReadonlyRootfs'] is True
 assert not inspection['HostConfig']['CapAdd']
+assert 'ALL' in inspection['HostConfig']['CapDrop']
+assert 'no-new-privileges' in inspection['HostConfig']['SecurityOpt']
 assert inspection['HostConfig']['Memory'] == 128 * 1024 * 1024
 
 

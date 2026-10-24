@@ -18,6 +18,10 @@ are retained. This is an app-manager integration fix, without a Spry dependency
 or a second container runtime implementation. The disposable Debian host fixture
 exercises the real install, Stop, Start, Restart and uninstall RPCs.
 
+`0029-docker-no-new-privileges.patch` also makes Docker honour the manifest's
+existing `no_new_privileges` setting. The host fixture checks the actual
+container's capabilities, root filesystem, memory limit and security option.
+
 The fixture waits for startup recovery's existing lifecycle lock before making
 an install request and supplies the catalogue's image field. HTTP readiness
 alone precedes completion of startup recovery; an asynchronous install response
