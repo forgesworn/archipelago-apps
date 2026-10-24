@@ -92,10 +92,12 @@ assert not inspection['HostConfig']['CapAdd']
 assert 'ALL' in inspection['HostConfig']['CapDrop']
 assert 'no-new-privileges' in inspection['HostConfig']['SecurityOpt']
 assert inspection['HostConfig']['Memory'] == 128 * 1024 * 1024
+environment = dict(item.split('=', 1) for item in inspection['Config']['Env'])
+node_url = f'https://{environment["SPRY_RELAY_IP"]}:3744'
 
 
 def ready():
-    with client.open('https://127.0.0.1:3744/v1/status', timeout=5) as response:
+    with client.open(node_url + '/v1/status', timeout=5) as response:
         state = json.load(response)
     return state.get('ready') is True and state.get('privateRelay') is True
 
@@ -118,14 +120,13 @@ wait(lambda: running() and json.loads(subprocess.check_output(
 wait(ready, 'Spry did not recover readiness after restart')
 # The dashboard can launch by LAN address while the owner proof uses mDNS.
 # Both are this node's UI; an unrelated website still receives no access.
-environment = dict(item.split('=', 1) for item in inspection['Config']['Env'])
 for origin in [f'https://{environment["SPRY_RELAY_IP"]}:3744', environment['SPRY_OWNER_URL']]:
-    request = urllib.request.Request('https://127.0.0.1:3744/v1/pairings',
+    request = urllib.request.Request(node_url + '/v1/pairings',
         headers={'Origin': origin}, method='OPTIONS')
     with client.open(request, timeout=5) as response:
         assert response.status == 204
         assert response.headers['Access-Control-Allow-Origin'] == origin
-    with client.open('https://127.0.0.1:3744/v1/status', timeout=5) as response:
+    with client.open(node_url + '/v1/status', timeout=5) as response:
         state = json.load(response)
     body = b'{}'
     event = {'kind': 27235, 'created_at': int(time.time()), 'content': '', 'tags': [
@@ -134,7 +135,7 @@ for origin in [f'https://{environment["SPRY_RELAY_IP"]}:3744', environment['SPRY
         ['aud', state['audience']]]}
     proof = rpc('identity.nostr-sign', {'id': identity['id'], 'event': event})
     header = 'Nostr ' + base64.b64encode(json.dumps(proof).encode()).decode()
-    request = urllib.request.Request('https://127.0.0.1:3744/v1/pairings/list', body,
+    request = urllib.request.Request(node_url + '/v1/pairings/list', body,
         {'Origin': origin, 'Content-Type': 'application/json', 'Authorization': header})
     with client.open(request, timeout=5) as response:
         assert json.load(response)['pairings'] == []
@@ -143,14 +144,14 @@ for origin in [f'https://{environment["SPRY_RELAY_IP"]}:3744', environment['SPRY
         raise AssertionError('Owner proof replay was accepted')
     except urllib.error.HTTPError as error:
         assert error.code == 401
-request = urllib.request.Request('https://127.0.0.1:3744/v1/pairings',
+request = urllib.request.Request(node_url + '/v1/pairings',
     headers={'Origin': 'https://unrelated.invalid'}, method='OPTIONS')
 try:
     client.open(request, timeout=5)
     raise AssertionError('Foreign owner-control origin was accepted')
 except urllib.error.HTTPError as error:
     assert error.code == 403
-with client.open('https://127.0.0.1:3744/', timeout=5) as response:
+with client.open(node_url + '/', timeout=5) as response:
     assert 'Pair with KithMoot' in response.read().decode()
 dropin = Path('/etc/fips/fips.d/86-spry.nft')
 assert dropin.is_file()
