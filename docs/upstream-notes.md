@@ -4,6 +4,25 @@ Observations about Archipelago (archy) made while packaging apps, kept here so
 they can be offered to the maintainers. Each entry names the archy commit it was
 checked against.
 
+## Manifest lifecycle controls on Docker (archy `7f0318c`)
+
+The production orchestrator already selects Docker from the node configuration,
+but the package RPC layer still probes Podman during failed-install cleanup and
+uninstall. Start, Stop and Restart also use a fixed list of single-container
+apps, so a newly packaged manifest can fall back to legacy Podman operations.
+
+`0028-manifest-app-runtime-controls.patch` routes known single-app manifests
+through the existing orchestrator and uses the explicitly configured Docker
+runtime for those two probes. Stack ordering and the legacy Auto/Podman fallback
+are retained. This is an app-manager integration fix, without a Spry dependency
+or a second container runtime implementation. The disposable Debian host fixture
+exercises the real install, Stop, Start, Restart and uninstall RPCs.
+
+The fixture waits for startup recovery's existing lifecycle lock before making
+an install request and supplies the catalogue's image field. HTTP readiness
+alone precedes completion of startup recovery; an asynchronous install response
+alone does not prove an installation succeeded.
+
 ## Node Nostr public key file name (archy `6d5f3ff`)
 
 `read_nostr_pubkey_hex` in `core/archipelago/src/api/rpc/package/config.rs`

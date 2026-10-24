@@ -1,5 +1,6 @@
 """Actual installed controller -> Docker runtime -> Spry, disposable host only."""
 import base64
+import fcntl
 import hashlib
 import http.cookiejar
 import json
@@ -10,6 +11,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import yaml
 
 context = ssl.create_default_context(cafile='/etc/archipelago/ssl/ca.crt')
 cookies = http.cookiejar.CookieJar()
@@ -44,6 +46,24 @@ def wait(check, description):
 
 
 assert rpc('health')['status']
+
+
+def lifecycle_idle():
+    # systemd/HTTP readiness precedes the controller's startup recovery.
+    # Observe its existing advisory lock; never remove or bypass it.
+    lock = Path('/var/lib/archipelago/update-transactions/lock')
+    if not lock.exists():
+        return False
+    with lock.open('r') as file:
+        try:
+            fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        fcntl.flock(file, fcntl.LOCK_UN)
+    return True
+
+
+wait(lifecycle_idle, 'Controller startup recovery did not finish')
 rpc('seed.generate')  # Never print generated recovery material.
 password = secrets.token_urlsafe(32)
 rpc('auth.setup', {'password': password})
@@ -52,7 +72,10 @@ identity = rpc('identity.create', {'name': 'Generated Docker owner', 'purpose': 
 assert identity['nostr_pubkey']
 wait(lambda: subprocess.run(['systemctl', 'is-active', '--quiet', 'archipelago-fips'],
                            check=False).returncode == 0, 'Seeded FIPS did not start')
-rpc('package.install', {'id': 'spry'})
+manifest = yaml.safe_load(Path(
+    '/opt/archipelago/web-ui/archipelago-runtime/apps/spry/manifest.yml').read_text())
+wait(lifecycle_idle, 'Controller lifecycle remained busy before install')
+rpc('package.install', {'id': 'spry', 'dockerImage': manifest['app']['container']['image']})
 
 
 def running():
@@ -76,6 +99,21 @@ def ready():
 
 
 wait(ready, 'Installed Spry did not become ready on the seeded mesh')
+# Manifest-driven apps use the selected runtime for normal dashboard controls.
+wait(lifecycle_idle, 'Controller lifecycle remained busy before stop')
+rpc('package.stop', {'id': 'spry'})
+wait(lambda: not running(), 'Spry did not stop through the dashboard RPC')
+wait(lifecycle_idle, 'Controller lifecycle remained busy before start')
+rpc('package.start', {'id': 'spry'})
+wait(running, 'Spry did not start through the dashboard RPC')
+wait(ready, 'Spry did not recover readiness after start')
+started_at = json.loads(subprocess.check_output(['docker', 'inspect', 'spry']))[0]['State']['StartedAt']
+wait(lifecycle_idle, 'Controller lifecycle remained busy before restart')
+rpc('package.restart', {'id': 'spry'})
+wait(lambda: running() and json.loads(subprocess.check_output(
+    ['docker', 'inspect', 'spry']))[0]['State']['StartedAt'] != started_at,
+    'Spry did not restart through the dashboard RPC')
+wait(ready, 'Spry did not recover readiness after restart')
 # The dashboard can launch by LAN address while the owner proof uses mDNS.
 # Both are this node's UI; an unrelated website still receives no access.
 environment = dict(item.split('=', 1) for item in inspection['Config']['Env'])
@@ -114,6 +152,7 @@ with client.open('https://127.0.0.1:3744/', timeout=5) as response:
     assert 'Pair with KithMoot' in response.read().decode()
 dropin = Path('/etc/fips/fips.d/86-spry.nft')
 assert dropin.is_file()
+wait(lifecycle_idle, 'Controller lifecycle remained busy before uninstall')
 rpc('package.uninstall', {'id': 'spry'})
 wait(lambda: not dropin.exists() and subprocess.run(
     ['docker', 'inspect', 'spry'], stdout=subprocess.DEVNULL,
@@ -123,4 +162,5 @@ print(json.dumps({'passed': True, 'scope': 'fresh-debian-docker-host-install',
     'spryReady': True, 'ownerPairingScreen': True, 'spryUninstall': True,
     'ownerLanAndMdnsOrigins': True, 'foreignOriginRefused': True,
     'realNodeOwnerApprovals': True, 'ownerProofReplayRefused': True,
+    'dashboardStopStartRestart': True,
     'physicalHomeNetwork': False, 'dockerDesktopQualified': False}))

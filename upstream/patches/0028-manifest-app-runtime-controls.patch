@@ -1,0 +1,144 @@
+From 26e051ac1aec0efbe4a6189607931810d2193f40 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <147930957+TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 20:39:16 +0100
+Subject: [PATCH] Route manifest app controls and probes through the selected
+ runtime
+
+---
+ .../src/api/rpc/package/async_lifecycle.rs    |  7 ++++-
+ .../archipelago/src/api/rpc/package/config.rs | 18 ++++++++++---
+ .../src/api/rpc/package/runtime.rs            | 26 +++++++++++++------
+ 3 files changed, 39 insertions(+), 12 deletions(-)
+
+diff --git a/core/archipelago/src/api/rpc/package/async_lifecycle.rs b/core/archipelago/src/api/rpc/package/async_lifecycle.rs
+index 4090d9b..0154b24 100644
+--- a/core/archipelago/src/api/rpc/package/async_lifecycle.rs
++++ b/core/archipelago/src/api/rpc/package/async_lifecycle.rs
+@@ -450,7 +450,12 @@ async fn failed_install_left_container(handler: &RpcHandler, package_id: &str) -
+     {
+         return true;
+     }
+-    match super::config::get_containers_for_app(package_id).await {
++    match super::config::get_containers_for_app_with_runtime(
++        package_id,
++        &handler.config.container_runtime,
++    )
++    .await
++    {
+         Ok(containers) => !containers.is_empty(),
+         Err(e) => {
+             warn!(
+diff --git a/core/archipelago/src/api/rpc/package/config.rs b/core/archipelago/src/api/rpc/package/config.rs
+index 28586bf..e498614 100644
+--- a/core/archipelago/src/api/rpc/package/config.rs
++++ b/core/archipelago/src/api/rpc/package/config.rs
+@@ -518,13 +518,25 @@ pub(super) fn all_container_names(package_id: &str) -> Vec<String> {
+ /// Find all running/stopped containers that belong to a given app.
+ /// Uses the canonical name list from all_container_names().
+ pub(in crate::api::rpc) async fn get_containers_for_app(package_id: &str) -> Result<Vec<String>> {
++    get_containers_for_app_with_runtime(package_id, &crate::config::ContainerRuntime::Podman).await
++}
++
++pub(in crate::api::rpc) async fn get_containers_for_app_with_runtime(
++    package_id: &str,
++    runtime: &crate::config::ContainerRuntime,
++) -> Result<Vec<String>> {
+     validate_app_id(package_id)?;
+-    let mut cmd = tokio::process::Command::new("podman");
++    let cli = match runtime {
++        crate::config::ContainerRuntime::Docker => "docker",
++        // Preserve the existing legacy fallback for auto/Podman nodes.
++        _ => "podman",
++    };
++    let mut cmd = tokio::process::Command::new(cli);
+     cmd.args(["ps", "-a", "--format", "{{.Names}}"]);
+     cmd.kill_on_drop(true);
+     let output = tokio::time::timeout(PODMAN_LIST_TIMEOUT, cmd.output())
+         .await
+-        .context("podman ps timed out while listing containers")?
++        .context("container runtime ps timed out while listing containers")?
+         .context("Failed to list containers")?;
+     containers_from_list_output(package_id, &output)
+ }
+@@ -535,7 +547,7 @@ fn containers_from_list_output(
+ ) -> Result<Vec<String>> {
+     anyhow::ensure!(
+         output.status.success(),
+-        "podman ps failed while listing containers"
++        "container runtime ps failed while listing containers"
+     );
+     let stdout = std::str::from_utf8(&output.stdout).context("Invalid container list response")?;
+     let all: Vec<&str> = stdout.lines().filter(|s| !s.is_empty()).collect();
+diff --git a/core/archipelago/src/api/rpc/package/runtime.rs b/core/archipelago/src/api/rpc/package/runtime.rs
+index bc47edf..458445b 100644
+--- a/core/archipelago/src/api/rpc/package/runtime.rs
++++ b/core/archipelago/src/api/rpc/package/runtime.rs
+@@ -1,6 +1,6 @@
+ use super::config::{
+-    get_app_capabilities, get_containers_for_app, get_data_dirs_for_app, get_health_check_args,
+-    get_memory_limit, is_valid_docker_image,
++    get_app_capabilities, get_containers_for_app, get_containers_for_app_with_runtime,
++    get_data_dirs_for_app, get_health_check_args, get_memory_limit, is_valid_docker_image,
+ };
+ use super::dependencies::{ordered_containers_for_start, startup_order};
+ use super::install::install_log;
+@@ -43,6 +43,17 @@ pub fn stop_timeout_secs(container_name: &str) -> &'static str {
+ }
+ 
+ impl RpcHandler {
++    async fn uses_single_manifest_app(&self, package_id: &str) -> bool {
++        let Some(orchestrator) = self.orchestrator.as_ref() else {
++            return false;
++        };
++        startup_order(package_id).is_empty()
++            && (uses_single_orchestrator_app(package_id)
++                || orchestrator
++                    .knows_app(orchestrator_app_id(package_id))
++                    .await)
++    }
++
+     /// Start a package: start all containers in dependency order.
+     ///
+     /// Returns immediately with `{ "status": "starting" }` after flipping
+@@ -71,7 +82,7 @@ impl RpcHandler {
+         // cleanly stopped and the error carries the actionable message.
+         super::dependencies::check_cuprate_disk_compatibility(package_id).await?;
+ 
+-        let to_start = if self.orchestrator.is_some() && uses_single_orchestrator_app(package_id) {
++        let to_start = if self.uses_single_manifest_app(package_id).await {
+             vec![orchestrator_app_id(package_id).to_string()]
+         } else if let Some(members) =
+             orchestrator_stack_members(self.orchestrator.is_some(), package_id)
+@@ -177,8 +188,7 @@ impl RpcHandler {
+         lifecycle_guard.require_clear()?;
+         lifecycle_guard.require_unheld(&super::config::all_container_names(package_id))?;
+ 
+-        let single_orchestrator_app =
+-            self.orchestrator.is_some() && uses_single_orchestrator_app(package_id);
++        let single_orchestrator_app = self.uses_single_manifest_app(package_id).await;
+         let mut containers = if single_orchestrator_app {
+             vec![orchestrator_app_id(package_id).to_string()]
+         } else {
+@@ -290,8 +300,7 @@ impl RpcHandler {
+         // flipping state" contract (see handle_package_start).
+         super::dependencies::check_cuprate_disk_compatibility(package_id).await?;
+ 
+-        let single_orchestrator_app =
+-            self.orchestrator.is_some() && uses_single_orchestrator_app(package_id);
++        let single_orchestrator_app = self.uses_single_manifest_app(package_id).await;
+         let mut containers = if single_orchestrator_app {
+             vec![orchestrator_app_id(package_id).to_string()]
+         } else {
+@@ -423,7 +432,8 @@ impl RpcHandler {
+             }
+         }
+ 
+-        let containers_to_remove = get_containers_for_app(package_id).await?;
++        let containers_to_remove =
++            get_containers_for_app_with_runtime(package_id, &self.config.container_runtime).await?;
+         if containers_to_remove.is_empty() {
+             tracing::warn!("Uninstall {}: no containers found", package_id);
+         }
+-- 
+2.39.5 (Apple Git-154)
+
