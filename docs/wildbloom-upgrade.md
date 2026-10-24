@@ -163,6 +163,12 @@ lookup, node inspection and checkout still require separate explicit actions.
 The packaged acceptance uses a controlled signed fixture and intercepted HTTP;
 it contacts no public relay and makes no payment.
 
+Browser image `0.0.1-4a71a0b-3` is the same Wildbloom source as `bb08278` with
+dependency fixes only (Wildbloom branch `fix/deps-on-bb08278`: vite, vitest and
+ip-address from Wildbloom PR 105, and undici 7.30.1 under wrangler's miniflare),
+plus the NIP-07 provider from Archipelago `v1.9.1-alpha`. It adds no Wildbloom
+features; keep that branch, because the image build fetches the commit by hash.
+
 Dashboard-managed sales on the new Node require backend
 `backend-v1.9.0-alpha-p9`; frontend p8 remains compatible. The backend and
 private payment-recovery helper accept the exact old and new package tags,
