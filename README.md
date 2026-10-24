@@ -11,13 +11,18 @@ Archipelago itself.
 |---|---|
 | `wildbloom-node` | Blossom storage owned by your node identities |
 | `wildbloom` | Encrypt, replicate or shard files, recover from receipts, and use your node identities to sign |
+| `spry` | Pair with KithMoot once and share your node’s call relay automatically |
 
 For existing installations, see the [Wildbloom upgrade guide](docs/wildbloom-upgrade.md).
 
-For the new operator-owned call transport experiment, see
-[Archy call services](docs/archy-call-services.md). Spry is a private local
-package experiment, outside the installable catalogue; public service
-discovery and Internet deployment are not yet qualified.
+With the matching ForgeSworn node update, install **Spry**, open it and choose
+**Pair with KithMoot**. Then use the normal Call button in a conversation or
+group; guests need no relay settings. See the [Spry guide](apps/spry/README.md)
+for node requirements and qualification limits. Its install catalogue is
+released only after the public image is available for both architectures.
+
+The earlier `spry-turn-lab` experiment and independent transport qualification
+remain documented in [Archy call services](docs/archy-call-services.md).
 
 The browser defaults to your own node. Optional LNURLcash sales default to the
 reference mint at `mint.lnurlcash.com`; Moneyer remains an explicit test/development
