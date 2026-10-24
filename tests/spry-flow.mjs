@@ -38,13 +38,16 @@ async function media(page) {
     await page.locator('#callToggle').click();
   }
   await page.locator('#deviceControls').waitFor({ state: 'visible' });
-  for (const id of ['#toggleCamera', '#toggleMic']) { if (await page.locator(id).getAttribute('data-on') !== 'true') await page.locator(id).click(); }
+  for (const id of ['#toggleCamera', '#toggleMic']) {
+    if (await page.locator(id).getAttribute('data-on') !== 'true') await page.locator(id).click();
+    await wait(() => page.locator(id).getAttribute('data-on'), value => value === 'true', 'Generated capture did not start');
+  }
 }
 async function evidence(page) {
   return page.evaluate(async () => {
     const pairs = [], media = { frames: 0, audioBytes: 0, audioEnergy: 0 };
     for (const pc of window.__spryPcs ?? []) {
-      if (pc.connectionState === 'closed' || pc.connectionState === 'failed') continue;
+      if (pc.connectionState !== 'connected') continue;
       const stats = await pc.getStats();
       stats.forEach(stat => {
         if (stat.type === 'candidate-pair' && stat.state === 'succeeded' && stat.nominated) pairs.push({ local: stats.get(stat.localCandidateId)?.candidateType, remote: stats.get(stat.remoteCandidateId)?.candidateType });
@@ -213,6 +216,10 @@ try {
   await writeFile(output + '.console.json', JSON.stringify(diagnostics, null, 2), { mode: 0o600 });
   await writeFile(output + '.api.json', JSON.stringify({counts, distinctCredentialUsernames:usernames.size}, null,2), {mode:0o600});
   await Promise.allSettled(contexts.flatMap(context => context.pages()).map((page, index) => page.screenshot({ path: output + '.' + index + '.png' })));
+  await writeFile(output + '.video-details.json', JSON.stringify(await Promise.all(contexts.flatMap(context => context.pages()).map(page => page.evaluate(() => [...document.querySelectorAll('.participant video')].map(video => ({
+    width:video.videoWidth,height:video.videoHeight,paused:video.paused,display:getComputedStyle(video).display,visibility:getComputedStyle(video).visibility,
+    tracks:video.srcObject instanceof MediaStream ? video.srcObject.getVideoTracks().map(track=>({enabled:track.enabled,muted:track.muted,state:track.readyState})) : [],
+  }))).catch(() => []))),null,2),{mode:0o600});
   await writeFile(output + '.media.json', JSON.stringify(await Promise.all(contexts.flatMap(context => context.pages()).map(page => evidence(page).catch(() => ({})))), null, 2), { mode: 0o600 });
   if (contexts.length) await writeFile(output + '.state.json', JSON.stringify(await Promise.all(contexts.flatMap(context => context.pages()).map(page => page.evaluate(() => ({
     status: document.getElementById('status')?.textContent, text: document.body.innerText.slice(0, 4000),
