@@ -21,6 +21,8 @@ group. On private home nodes, each person pairs their own node once; a public
 Spry can also serve guests without a node. See the [Spry guide](apps/spry/README.md)
 for node requirements and qualification limits. Its install catalogue is
 released only after the public image is available for both architectures.
+The [24 October delivery record](docs/spry-delivery-20261024.md) records released
+versions, fresh-host checks and remaining physical acceptance.
 
 The earlier `spry-turn-lab` experiment and independent transport qualification
 remain documented in [Archy call services](docs/archy-call-services.md).

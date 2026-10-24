@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "source": "44ce9eea788f18960ea965864716a34006cd2a05",
+  "mergeCommit": "0f5f91eb67cd1df9fbf5aa3d01f0277ab5245e23",
+  "pullRequest": 35,
+  "upstreamArchipelago": "7f0318c68aeecf7e49c923bf70579f3bc4f9e6c0",
+  "sprySource": "2efb05102838a45945b11a0f9c82a924bfcb8349",
+  "backendInputsSha256": "f51818a0c6b8d1825314962153793c989daf2bccac394b53485f0d32cfeb0e4c",
+  "ci": {
+    "url": "https://github.com/forgesworn/archipelago-apps/actions/runs/40132682187",
+    "passed": true,
+    "containerTestsPassed": 85,
+    "archipelagoMainTestsPassed": 2256,
+    "upstreamIgnored": 5,
+    "filteredHostAndPlatformCases": 9,
+    "isolatedHostTestsPassed": 7,
+    "explicitIdentityAndHostPortTestsPassed": 8,
+    "packagedDashboardProfilePassed": true
+  },
+  "host": {
+    "passed": true,
+    "scope": "fresh-debian-docker-host-install",
+    "realRustController": true,
+    "existingDockerRuntime": true,
+    "seededFips": true,
+    "spryReady": true,
+    "ownerPairingScreen": true,
+    "spryUninstall": true,
+    "ownerLanAndMdnsOrigins": true,
+    "foreignOriginRefused": true,
+    "realNodeOwnerApprovals": true,
+    "ownerProofReplayRefused": true,
+    "dashboardStopStartRestart": true,
+    "physicalHomeNetwork": false,
+    "dockerDesktopQualified": false
+  },
+  "networkIsolation": {
+    "disposableDebian13Amd64Host": true,
+    "ownNestedDockerDaemon": true,
+    "hostDockerSocketMounted": false,
+    "internetRoutesRemovedBeforeIdentityCreation": true,
+    "productionHostChanged": false
+  },
+  "limits": [
+    "Generated disposable identities and local mesh readiness; no physical broadband call acceptance.",
+    "Windows and macOS Docker Desktop remain unqualified; use the dedicated Debian host or VM recipe.",
+    "Public signed downloads and Zapstore are separate from device installation and physical no-Play GrapheneOS media acceptance."
+  ]
+}
