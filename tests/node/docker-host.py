@@ -26,7 +26,7 @@ def rpc(method, params=None):
         json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}).encode(), headers)
     with client.open(request, timeout=30) as response:
         value = json.load(response)
-    if 'error' in value:
+    if value.get('error') is not None:
         raise RuntimeError(f'{method} failed: {value["error"].get("message", "RPC error")}')
     return value.get('result')
 
