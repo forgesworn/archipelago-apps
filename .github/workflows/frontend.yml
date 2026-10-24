@@ -12,6 +12,8 @@ on:
       - scripts/frontend-inputs.sh
       - scripts/lib/patches.bash
       - scripts/frontend-release-plan.sh
+      - apps/spry/manifest.yml
+      - scripts/wait-spry-public-image.py
       - .github/workflows/frontend.yml
       - tests/dashboard/**
       - scripts/test-storage-settings-browser.sh
@@ -56,6 +58,9 @@ jobs:
         run: |
           cd .cache/archy-frontend/neode-ui && npx playwright install --with-deps chromium
           cd ../../.. && scripts/test-storage-settings-browser.sh .cache/archy-frontend
+      - name: Require installable public Spry image
+        if: steps.plan.outputs.skip != 'true' && github.ref == 'refs/heads/main'
+        run: python3 scripts/wait-spry-public-image.py
       - name: Publish release asset
         if: steps.plan.outputs.skip != 'true' && github.ref == 'refs/heads/main'
         env: { GH_TOKEN: "${{ github.token }}" }

@@ -1,0 +1,54 @@
+{
+  "date": "2026-10-23",
+  "source_ref": "a76496bbcb60e637c0606c8da5919b5a3b2b3cf3",
+  "package_revision": 2,
+  "recipe_sha256": "a7809771077321af4f3514d69078cfe3802b80ca404e808b0e2ccbc6a942b956",
+  "preparer_sha256": "8cb741ef4db604ad89a65dd2031a97f5125834393666638f93d79ddfafe208ea",
+  "tests_sha256": "e2733c8708759dcd077e4e3841518e4ec41ca6e36f5469f4c24af6ce5dc3e21d",
+  "prepared_manifest_sha256": "02f28c27e033a193c2aa268d0a73ff4498ae74828c7ab698ed22a012679f82c1",
+  "archy_ref": "7abd04a7f680e72105ae783cecbe2268e3c8e71b",
+  "package_tests_passed": 11,
+  "shell_validator": {
+    "passed": 18,
+    "failed": 0,
+    "warnings": 0
+  },
+  "rust_manifest_parser_passed": true,
+  "local_image": {
+    "id": "sha256:833be91f8ecef77ee218f13771320efd7df5c1738928e0ff8ba491db0181fd9f",
+    "architecture": "arm64",
+    "os": "linux",
+    "size": 102473778,
+    "network_media_tested": false,
+    "process_running_with_manifest_args": true,
+    "bounded_option_in_help": true,
+    "credential_hmac_verified": true,
+    "smoke_network": "none",
+    "log_driver": "none",
+    "installed_on_archy": false
+  },
+  "native_spry_evidence": "https://github.com/forgesworn/spry-turn/blob/a76496bbcb60e637c0606c8da5919b5a3b2b3cf3/docs/evidence/bounded-relay-ports-20261023.json",
+  "not_established": [
+    "rootless Archy lifecycle",
+    "runtime node secret isolation",
+    "host/provider logging readback",
+    "applied public firewall or NAT",
+    "trusted public certificate or renewal",
+    "signed service discovery",
+    "physical GrapheneOS acceptance",
+    "native media stall cause or repair",
+    "OSA exemption"
+  ],
+  "cleanup": {
+    "smoke_container_removed": true,
+    "private_context_removed": true,
+    "local_image_removed": true,
+    "task_created_validator_target_removed": true,
+    "shared_caches_retained": true,
+    "retained_shared_caches": [
+      "pinned upstream Archy source",
+      "shared Docker build cache",
+      "existing Spry dependency cache"
+    ]
+  }
+}

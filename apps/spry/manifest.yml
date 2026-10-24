@@ -1,0 +1,79 @@
+app:
+  id: spry
+  name: Spry
+  version: 0.1.0
+  description: Pair once with KithMoot to share your node’s call relay automatically with the people in your calls.
+  category: networking
+  container:
+    image: ghcr.io/forgesworn/spry:0.1.0-367efc7-1
+    pull_policy: if-not-present
+    network: host
+    generated_secrets:
+      - { name: spry-turn-rest-secret, kind: hex32 }
+    secret_env:
+      - { key: SPRY_TURN_SECRET, secret_file: spry-turn-rest-secret }
+    derived_env:
+      - { key: SPRY_PUBLIC_URL, template: 'https://{{PUBLIC_HOST}}:3744' }
+      - { key: SPRY_OWNER_KEYS, template: '{{NODE_IDENTITY_PUBKEYS}}' }
+      - { key: SPRY_DASHBOARD_ORIGINS, template: 'https://{{HOST_IP}},https://{{HOST_MDNS}}' }
+  environment: ["SPRY_TLS_GATE=true"]
+  resources:
+    memory_limit: 128m
+    cpu_limit: 1
+  security:
+    capabilities: []
+    readonly_root: true
+    no_new_privileges: true
+    network_policy: host
+  volumes:
+    - { type: bind, source: /var/lib/archipelago/spry, target: /data, options: [rw] }
+  ports:
+    - { host: 3744, container: 3744, protocol: tcp, bind: 127.0.0.1, auth: open, auth_rationale: 'Public pairing UI and body-bound signed API. Pairing requires a node identity; call credentials require an unexpired room capability. No anonymous credential issuer.' }
+    - { host: 3478, container: 3478, protocol: udp, auth: none, auth_rationale: 'Native TURN authenticates short-lived per-device credentials. HTTP gates cannot proxy TURN.' }
+    - { host: 3478, container: 3478, protocol: tcp, auth: none, auth_rationale: 'Native TURN authenticates short-lived per-device credentials. HTTP gates cannot proxy TURN.' }
+    - { host: 5349, container: 3478, protocol: tcp, bind: 127.0.0.1, auth: open, auth_rationale: "Native TURN-over-TLS uses the host certificate and forwards only to this node’s authenticated Spry listener." }
+    - { host: 49160, container: 49160, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49161, container: 49161, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49162, container: 49162, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49163, container: 49163, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49164, container: 49164, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49165, container: 49165, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49166, container: 49166, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49167, container: 49167, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49168, container: 49168, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49169, container: 49169, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49170, container: 49170, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49171, container: 49171, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49172, container: 49172, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49173, container: 49173, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49174, container: 49174, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49175, container: 49175, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49176, container: 49176, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49177, container: 49177, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49178, container: 49178, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49179, container: 49179, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49180, container: 49180, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49181, container: 49181, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49182, container: 49182, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49183, container: 49183, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49184, container: 49184, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49185, container: 49185, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49186, container: 49186, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49187, container: 49187, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49188, container: 49188, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49189, container: 49189, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49190, container: 49190, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+    - { host: 49191, container: 49191, protocol: udp, auth: none, auth_rationale: "Bounded authenticated TURN peer socket." }
+  interfaces:
+    main:
+      name: Pair with KithMoot
+      description: Pair once, then call normally.
+      type: ui
+      port: 3744
+      protocol: http
+      path: /
+  metadata:
+    author: ForgeSworn
+    license: MIT
+    repo: https://github.com/forgesworn/archipelago-apps
+    tags: [calls, turn, kithmoot]

@@ -1,6 +1,7 @@
 .cache/
 target/
 node_modules/
+.local/
 __pycache__/
 
 # Published release downloads stay in the repository for disk audits.
