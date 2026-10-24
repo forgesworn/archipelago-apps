@@ -368,3 +368,35 @@ on-disk format is unchanged. Both stores now load through it.
 Upstream main fixed this independently (`053f03be`, 5 Oct): `is_plaintext_json`
 now accepts a file only if the whole of it parses as JSON. Not proposed;
 drop `0017` at the next `ARCHY_REF` bump past `053f03be`.
+
+## Install port probe with a published UDP and TCP port (archy `7abd04a`)
+
+After the orchestrator installs an app, `ensure_host_port_listener`
+(`core/archipelago/src/api/rpc/package/install.rs`, ~line 2109) is called with no
+runtime ports. It falls back to `published_host_port` (~line 2167), which takes the
+first parseable line of `podman port <container>` and TCP-connects to it on
+127.0.0.1. If that probe fails it restarts the container, waits, and then returns an
+error, so `package.install` fails although the container is running.
+
+For an app that publishes both a TCP and a UDP port, which line comes first is not
+stable. Podman's `ParsePortMapping` (`pkg/specgen/generate/ports.go`, v5.4.2) groups
+the mappings as host IP, then protocol, in Go maps and ranges over them to build the
+list it stores, so the order differs from one container create to the next. Half the
+installs would probe the UDP port with a TCP connect and fail. The other probe in the
+orchestrator, `wait_for_manifest_host_ports`, already skips non-TCP ports for this
+reason; `published_host_port` should skip lines ending in `/udp` or `/sctp` too (or
+the caller should pass the manifest's first TCP host port as `runtime_ports`).
+
+`apps/ingle` sidesteps it with `network: host`: a host-network container has
+no port mappings (podman drops them in `namespaces.go` for the host mode), so there is
+no `podman port` line to probe.
+
+## Re-staging a running app doesn't always apply the new image (seen 2026-10-22, stampede-keep)
+
+Re-staging `stampede-keep` from `k1e-2` to `k1e-3` logged "Applying pending Quadlet runtime change" and restarted
+the container on the new image. Re-staging `k1e-3` to `k1e-4` an hour later rewrote the Quadlet unit
+(`Image=...:k1e-4`) and logged `INSTALL ORCH OK`, but never applied it: the old container kept running, and
+stage-to-node.sh still reported `state=running`. `systemctl --user daemon-reload && systemctl --user restart
+stampede-keep.service` (as `archipelago`) applied it. Suggest: after rewriting a Quadlet unit for a running app,
+always apply it (or report the pending change), and have stage-to-node.sh check the running container's image
+against the manifest's.
