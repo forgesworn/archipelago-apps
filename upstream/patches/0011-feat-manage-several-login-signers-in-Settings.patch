@@ -1,7 +1,7 @@
-From 7ddab471b97d660b236f695f9d68950040f87858 Mon Sep 17 00:00:00 2001
+From 2918f1942084b6ca3f5a49e086300b0059176602 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 13:43:19 +0200
-Subject: [PATCH 11/14] feat: manage several login signers in Settings
+Subject: [PATCH] feat: manage several login signers in Settings
 
 Settings lists every enrolled login signer, each with its own Remove,
 and keeps the add control until five are enrolled, then says why it is
@@ -19,10 +19,10 @@ approving signer in its status.
  6 files changed, 167 insertions(+), 33 deletions(-)
 
 diff --git a/neode-ui/mock-backend.js b/neode-ui/mock-backend.js
-index 040da3a..ab558ab 100755
+index da27cd1..457045c 100755
 --- a/neode-ui/mock-backend.js
 +++ b/neode-ui/mock-backend.js
-@@ -1991,7 +1991,7 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -1998,7 +1998,7 @@ app.post('/rpc/v1', async (req, res) => {
  
          if (process.env.MOCK_SIGNER_2FA === '1') {
            res.cookie('pending', `pending-${Date.now()}`, { httpOnly: true, maxAge: 5 * 60 * 1000 })
@@ -31,7 +31,7 @@ index 040da3a..ab558ab 100755
          }
  
          const sessionId = `session-${Date.now()}`
-@@ -2227,7 +2227,7 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2234,7 +2234,7 @@ app.post('/rpc/v1', async (req, res) => {
        }
  
        // Linked-signer login (dev stand-in). Approval takes ~4 s. Toggles:
@@ -40,7 +40,7 @@ index 040da3a..ab558ab 100755
        //   MOCK_SIGNER_2FA=1        the account has TOTP (code 123456); the signer
        //                            is offered at the code step instead
        //   MOCK_SIGNER_OUTCOME=     denied | offline | expired | refused | failed
-@@ -2237,12 +2237,12 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2244,12 +2244,12 @@ app.post('/rpc/v1', async (req, res) => {
        //   MOCK_SIGNER_STATUS=      paused | foreign | pending | denied
        // Texts are the node's own fixed constants.
        case 'auth.login.signer.available': {
@@ -55,7 +55,7 @@ index 040da3a..ab558ab 100755
            return refuse(MOCK_SIGNER_TEXT.notEnabled)
          }
          if (process.env.MOCK_SIGNER_OUTCOME === 'busy') return refuse(MOCK_SIGNER_TEXT.busy)
-@@ -2271,8 +2271,11 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2278,8 +2278,11 @@ app.post('/rpc/v1', async (req, res) => {
          if (!mockSigner.linked.some(i => i.id === identity_id)) {
            return res.json({ error: { code: -32603, message: 'Invalid identity: only an identity linked to a signer can log in' } })
          }
@@ -69,7 +69,7 @@ index 040da3a..ab558ab 100755
          }
          if (process.env.MOCK_SIGNER_OUTCOME === 'busy') {
            return res.json({ error: { code: -32603, message: MOCK_SIGNER_TEXT.enrolBusy } })
-@@ -2284,34 +2287,36 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2291,34 +2294,36 @@ app.post('/rpc/v1', async (req, res) => {
          const out = await mockSigner.poll(params?.attempt_id, 'enrol')
          if (out.error) return res.json({ error: { code: -32603, message: out.error } })
          if (out.status === 'approved') {
@@ -115,7 +115,7 @@ index 040da3a..ab558ab 100755
          return res.json({ result: { paused_until: mode === 'paused' ? now + 600 : null, recent } })
        }
  
-@@ -2319,8 +2324,8 @@ app.post('/rpc/v1', async (req, res) => {
+@@ -2326,8 +2331,8 @@ app.post('/rpc/v1', async (req, res) => {
          if (params?.password !== userState.passwordHash && params?.password !== MOCK_PASSWORD) {
            return res.json({ error: { code: -32603, message: 'Password Incorrect' } })
          }
@@ -126,7 +126,7 @@ index 040da3a..ab558ab 100755
          return res.json({ result: { removed: had } })
        }
  
-@@ -6303,10 +6308,13 @@ const MOCK_SIGNER_TEXT = {
+@@ -6316,10 +6321,13 @@ const MOCK_SIGNER_TEXT = {
    refused: 'linked signer login was refused: the signed reply did not check out',
    failed: 'linked signer login failed',
    enrolBusy: 'linked signer is already waiting to approve an enrolment; approve or deny it on the signer first',
@@ -141,7 +141,7 @@ index 040da3a..ab558ab 100755
    attempts: new Map(),
    linkedIdentities() {
      return this.linked.map(i => ({
-@@ -6325,6 +6333,12 @@ const mockSigner = {
+@@ -6338,6 +6346,12 @@ const mockSigner = {
      this.linked.push(rec)
      return { ...rec, origin: 'linked' }
    },
@@ -154,7 +154,7 @@ index 040da3a..ab558ab 100755
    begin(purpose, identityId) {
      const attempt_id = Math.random().toString(16).slice(2).padEnd(32, '0').slice(0, 32)
      const code = String(Math.floor(Math.random() * 10000)).padStart(4, '0')
-@@ -6342,9 +6356,10 @@ const mockSigner = {
+@@ -6355,9 +6369,10 @@ const mockSigner = {
      return { status: 'approved', identityId: a.identityId }
    },
  }
@@ -187,10 +187,10 @@ index 092eae3..1e9c043 100644
    /** Unix seconds (UTC) until which signer login is paused, or null. */
    paused_until: number | null
 diff --git a/neode-ui/src/locales/en.json b/neode-ui/src/locales/en.json
-index 43877c6..9e37325 100644
+index 2b3b4c2..17f313f 100644
 --- a/neode-ui/src/locales/en.json
 +++ b/neode-ui/src/locales/en.json
-@@ -876,6 +876,7 @@
+@@ -881,6 +881,7 @@
        "desc": "Log in by approving on a hardware signer. Your password still works.",
        "none": "None",
        "add": "Add a login signer",
@@ -198,7 +198,7 @@ index 43877c6..9e37325 100644
        "addTitle": "Add a login signer",
        "addDesc": "Pick a linked signer and enter your password. Your signer will ask you to approve once.",
        "pick": "Signer",
-@@ -891,7 +892,10 @@
+@@ -896,7 +897,10 @@
        "loadFailed": "Could not load login signers.",
        "wrongPort": "Open the dashboard on its usual address, without a port number, to use a signer.",
        "recent": "Recent attempts",
@@ -211,10 +211,10 @@ index 43877c6..9e37325 100644
      "outcome": {
        "pending": "Waiting for approval",
 diff --git a/neode-ui/src/locales/es.json b/neode-ui/src/locales/es.json
-index 2064670..235f755 100644
+index 0f4ae42..b5cfa93 100644
 --- a/neode-ui/src/locales/es.json
 +++ b/neode-ui/src/locales/es.json
-@@ -857,6 +857,7 @@
+@@ -862,6 +862,7 @@
        "desc": "Inicia sesión aprobando en un firmante de hardware. Tu contraseña sigue funcionando.",
        "none": "Ninguno",
        "add": "Añadir un firmante de acceso",
@@ -222,7 +222,7 @@ index 2064670..235f755 100644
        "addTitle": "Añadir un firmante de acceso",
        "addDesc": "Elige un firmante vinculado e introduce tu contraseña. Tu firmante te pedirá aprobar una vez.",
        "pick": "Firmante",
-@@ -872,7 +873,10 @@
+@@ -877,7 +878,10 @@
        "loadFailed": "No se pudieron cargar los firmantes de acceso.",
        "wrongPort": "Abre el panel en su dirección habitual, sin número de puerto, para usar un firmante.",
        "recent": "Intentos recientes",
@@ -445,5 +445,5 @@ index c987350..8467663 100644
  
    it('offers only linked identities when adding', async () => {
 -- 
-2.53.0
+2.39.5 (Apple Git-154)
 

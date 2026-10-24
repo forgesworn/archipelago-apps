@@ -1,8 +1,8 @@
-From a96880dd1cff56ee2b2a140831d3e84efb626a5d Mon Sep 17 00:00:00 2001
+From bdcf5ca2d2ac924bf5499f398286c89d31e08203 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sat, 3 Oct 2026 08:05:26 +0200
-Subject: [PATCH 04/14] feat: route linked identities' Nostr operations to
- their signer
+Subject: [PATCH] feat: route linked identities' Nostr operations to their
+ signer
 
 identity.nostr-sign for a linked identity sends the full event to the
 remote signer as sign_event and returns it only after checking it
@@ -62,7 +62,7 @@ omits the Nostr part and never exports the signer client key.
  3 files changed, 2375 insertions(+), 79 deletions(-)
 
 diff --git a/core/archipelago/src/api/rpc/identity/handlers.rs b/core/archipelago/src/api/rpc/identity/handlers.rs
-index 117e659..65f96f8 100644
+index 93899d0..2069924 100644
 --- a/core/archipelago/src/api/rpc/identity/handlers.rs
 +++ b/core/archipelago/src/api/rpc/identity/handlers.rs
 @@ -1,7 +1,7 @@
@@ -74,7 +74,7 @@ index 117e659..65f96f8 100644
  };
  use crate::network::did_dht;
  use crate::remote_signer::{parse_bunker_uri, NostrConnectSigner};
-@@ -447,7 +447,8 @@ impl RpcHandler {
+@@ -483,7 +483,8 @@ impl RpcHandler {
      /// Accepts either:
      ///   - `event_hash` (hex) + `id` — sign a pre-computed hash
      ///   - `event` (full event object) — compute NIP-01 hash, fill pubkey, sign
@@ -84,7 +84,7 @@ index 117e659..65f96f8 100644
      pub(in crate::api::rpc) async fn handle_identity_nostr_sign(
          &self,
          params: Option<serde_json::Value>,
-@@ -477,6 +478,11 @@ impl RpcHandler {
+@@ -513,6 +514,11 @@ impl RpcHandler {
              .clone()
              .ok_or_else(|| anyhow::anyhow!("Identity has no Nostr key"))?;
  
@@ -96,7 +96,7 @@ index 117e659..65f96f8 100644
          if let Some(event_hash) = params.get("event_hash").and_then(|v| v.as_str()) {
              // Direct hash signing
              let signature = manager.nostr_sign(&id, event_hash).await?;
-@@ -490,20 +496,64 @@ impl RpcHandler {
+@@ -526,20 +532,64 @@ impl RpcHandler {
  
          let kind = event.get("kind").and_then(|v| v.as_u64()).unwrap_or(1);
          let content = event.get("content").and_then(|v| v.as_str()).unwrap_or("");
@@ -171,7 +171,7 @@ index 117e659..65f96f8 100644
          let serialized = serde_json::json!([0, pubkey_hex, created_at, kind, tags, content]);
          let serialized_str = serde_json::to_string(&serialized)?;
 diff --git a/core/archipelago/src/identity_manager.rs b/core/archipelago/src/identity_manager.rs
-index d20db6b..ba683d1 100644
+index 1fce0c5..9eb37f6 100644
 --- a/core/archipelago/src/identity_manager.rs
 +++ b/core/archipelago/src/identity_manager.rs
 @@ -11,14 +11,20 @@ use std::time::Duration;
@@ -234,7 +234,7 @@ index d20db6b..ba683d1 100644
      }
  
      /// List all identities (without secret keys).
-@@ -645,6 +673,8 @@ impl IdentityManager {
+@@ -723,6 +751,8 @@ impl IdentityManager {
          fs::remove_file(&file_path)
              .await
              .context("Failed to delete identity file")?;
@@ -243,7 +243,7 @@ index d20db6b..ba683d1 100644
  
          // If this was the default, clear the marker
          if let Some(default_id) = self.get_default_id().await {
-@@ -723,6 +753,9 @@ impl IdentityManager {
+@@ -801,6 +831,9 @@ impl IdentityManager {
          let mut file: IdentityFile =
              serde_json::from_slice(&data).context("Failed to parse identity file")?;
  
@@ -253,7 +253,7 @@ index d20db6b..ba683d1 100644
          if file.nostr_secret_hex.is_some() {
              return Err(anyhow::anyhow!(
                  "Nostr key already exists for this identity"
-@@ -763,6 +796,10 @@ impl IdentityManager {
+@@ -841,6 +874,10 @@ impl IdentityManager {
          let file: IdentityFile =
              serde_json::from_slice(&data).context("Failed to parse identity file")?;
  
@@ -264,7 +264,7 @@ index d20db6b..ba683d1 100644
          let secret_hex = file
              .nostr_secret_hex
              .ok_or_else(|| anyhow::anyhow!("No Nostr key for this identity"))?;
-@@ -793,19 +830,178 @@ impl IdentityManager {
+@@ -871,19 +908,178 @@ impl IdentityManager {
              .context("Failed to read identity file")?;
          let file: IdentityFile =
              serde_json::from_slice(&data).context("Failed to parse identity file")?;
@@ -444,7 +444,7 @@ index d20db6b..ba683d1 100644
          let keys = self.load_nostr_keys(id).await?;
          let peer_pk =
              nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
-@@ -820,6 +1016,17 @@ impl IdentityManager {
+@@ -898,6 +1094,17 @@ impl IdentityManager {
          peer_pubkey_hex: &str,
          ciphertext: &str,
      ) -> Result<String> {
@@ -462,7 +462,7 @@ index d20db6b..ba683d1 100644
          let keys = self.load_nostr_keys(id).await?;
          let peer_pk =
              nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
-@@ -834,6 +1041,17 @@ impl IdentityManager {
+@@ -912,6 +1119,17 @@ impl IdentityManager {
          peer_pubkey_hex: &str,
          plaintext: &str,
      ) -> Result<String> {
@@ -480,7 +480,7 @@ index d20db6b..ba683d1 100644
          let keys = self.load_nostr_keys(id).await?;
          let peer_pk =
              nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
-@@ -853,6 +1071,17 @@ impl IdentityManager {
+@@ -931,6 +1149,17 @@ impl IdentityManager {
          peer_pubkey_hex: &str,
          ciphertext: &str,
      ) -> Result<String> {
@@ -498,7 +498,7 @@ index d20db6b..ba683d1 100644
          let keys = self.load_nostr_keys(id).await?;
          let peer_pk =
              nostr_sdk::PublicKey::from_hex(peer_pubkey_hex).context("Invalid peer pubkey hex")?;
-@@ -892,7 +1121,11 @@ impl IdentityManager {
+@@ -970,7 +1199,11 @@ impl IdentityManager {
          relay_urls: &[String],
      ) -> Result<ProfilePublishOutcome> {
          let record = self.get(id).await?;
@@ -511,7 +511,7 @@ index d20db6b..ba683d1 100644
          let profile = record.profile.unwrap_or_default();
  
          if relay_urls.is_empty() {
-@@ -927,7 +1160,34 @@ impl IdentityManager {
+@@ -1005,7 +1238,34 @@ impl IdentityManager {
          let content_str =
              serde_json::to_string(&content).context("Failed to serialize profile content")?;
  
@@ -547,7 +547,7 @@ index d20db6b..ba683d1 100644
          for url in relay_urls {
              if let Err(e) = client.add_relay(url).await {
                  tracing::warn!(relay = %url, error = %e, "Failed to add relay; continuing");
-@@ -945,9 +1205,7 @@ impl IdentityManager {
+@@ -1023,9 +1283,7 @@ impl IdentityManager {
              tracing::warn!("Nostr relay connection timed out after 15s, continuing anyway");
          }
  
@@ -558,7 +558,7 @@ index d20db6b..ba683d1 100644
              Ok(o) => o,
              Err(e) => {
                  client.disconnect().await;
-@@ -1010,7 +1268,13 @@ impl IdentityManager {
+@@ -1088,7 +1346,13 @@ impl IdentityManager {
  
          let ed25519_secret_hex = hex::encode(&file.secret_key);
  
@@ -573,7 +573,7 @@ index d20db6b..ba683d1 100644
              nostr_sdk::SecretKey::from_hex(h)
                  .ok()
                  .and_then(|sk| sk.to_bech32().ok())
-@@ -1018,7 +1282,7 @@ impl IdentityManager {
+@@ -1096,7 +1360,7 @@ impl IdentityManager {
  
          Ok(serde_json::json!({
              "ed25519_secret_hex": ed25519_secret_hex,
@@ -582,7 +582,7 @@ index d20db6b..ba683d1 100644
              "nostr_nsec": nostr_nsec,
          }))
      }
-@@ -1127,7 +1391,7 @@ impl IdentityManager {
+@@ -1205,7 +1469,7 @@ impl IdentityManager {
  #[cfg(test)]
  mod tests {
      use super::*;
@@ -591,7 +591,7 @@ index d20db6b..ba683d1 100644
      use tempfile::tempdir;
  
      #[tokio::test]
-@@ -1517,9 +1781,14 @@ mod tests {
+@@ -1687,9 +1951,14 @@ mod tests {
                  .join(format!("{}.json", record.id)),
          )
          .unwrap();
@@ -608,7 +608,7 @@ index d20db6b..ba683d1 100644
      }
  
      #[tokio::test]
-@@ -1689,6 +1958,410 @@ mod tests {
+@@ -1859,6 +2128,410 @@ mod tests {
          assert!(!debug.contains("one-time"));
      }
  
@@ -2935,5 +2935,5 @@ index 306b9cb..42d6cba 100644
      }
  }
 -- 
-2.53.0
+2.39.5 (Apple Git-154)
 

@@ -1,7 +1,7 @@
-From e3db2870d47b4d470cd00d9ab5a95175d6223564 Mon Sep 17 00:00:00 2001
+From bd60553a8207faa8d60e3ecc58af9caee00c3854 Mon Sep 17 00:00:00 2001
 From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
 Date: Sat, 3 Oct 2026 07:39:05 +0200
-Subject: [PATCH 03/14] feat: link identities to remote NIP-46 signers
+Subject: [PATCH] feat: link identities to remote NIP-46 signers
 
 Add identity.link-nip46, which links an identity to a bunker:// signer.
 The node generates a client keypair, sends connect with the URI's
@@ -31,19 +31,19 @@ sanitiser, which now truncates on a character boundary.
  .../src/api/rpc/identity/handlers.rs          |  76 ++
  core/archipelago/src/api/rpc/middleware.rs    |  40 +-
  core/archipelago/src/api/rpc/mod.rs           |  27 +
- core/archipelago/src/identity_manager.rs      | 514 ++++++++++
+ core/archipelago/src/identity_manager.rs      | 515 ++++++++++
  core/archipelago/src/main.rs                  |   1 +
  core/archipelago/src/nostr_discovery.rs       |   7 +
  core/archipelago/src/rate_limit.rs            |   1 +
  core/archipelago/src/remote_signer.rs         | 879 ++++++++++++++++++
- 11 files changed, 1549 insertions(+), 1 deletion(-)
+ 11 files changed, 1550 insertions(+), 1 deletion(-)
  create mode 100644 core/archipelago/src/remote_signer.rs
 
 diff --git a/core/Cargo.lock b/core/Cargo.lock
-index 4752150..7ecdf76 100644
+index 8a7a7fc..4570cfa 100644
 --- a/core/Cargo.lock
 +++ b/core/Cargo.lock
-@@ -143,6 +143,7 @@ dependencies = [
+@@ -145,6 +145,7 @@ dependencies = [
   "lofty",
   "mainline",
   "mdns-sd",
@@ -52,10 +52,10 @@ index 4752150..7ecdf76 100644
   "qrcode",
   "rand 0.8.5",
 diff --git a/core/archipelago/Cargo.toml b/core/archipelago/Cargo.toml
-index 46edac9..6d5de58 100644
+index 20f8b3b..2234a42 100644
 --- a/core/archipelago/Cargo.toml
 +++ b/core/archipelago/Cargo.toml
-@@ -93,6 +93,9 @@ reqwest = { version = "0.11", default-features = false, features = ["json", "soc
+@@ -94,6 +94,9 @@ reqwest = { version = "0.11", default-features = false, features = ["json", "soc
  # Nostr (node discovery + NIP-44 encrypted peer handshake).
  # nip06: NIP-06 key derivation for the Minibits @minibits.cash profile flow.
  nostr-sdk = { version = "0.44", features = ["nip04", "nip06", "nip44"] }
@@ -66,10 +66,10 @@ index 46edac9..6d5de58 100644
  # Backup encryption (DID identity export) + TOTP 2FA encryption
  argon2 = "0.5.3"
 diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
-index f7426b0..7a1202f 100644
+index 82b4dcf..72963f2 100644
 --- a/core/archipelago/src/api/rpc/dispatcher.rs
 +++ b/core/archipelago/src/api/rpc/dispatcher.rs
-@@ -178,6 +178,7 @@ impl RpcHandler {
+@@ -200,6 +200,7 @@ impl RpcHandler {
              "identity.publish-profile" => self.handle_identity_publish_profile(params).await,
              "identity.export-keys" => self.handle_identity_export_keys(params).await,
              "identity.create-nostr-key" => self.handle_identity_create_nostr_key(params).await,
@@ -78,7 +78,7 @@ index f7426b0..7a1202f 100644
              "identity.nostr-encrypt-nip04" => {
                  self.handle_identity_nostr_encrypt_nip04(params).await
 diff --git a/core/archipelago/src/api/rpc/identity/handlers.rs b/core/archipelago/src/api/rpc/identity/handlers.rs
-index 1d289d5..117e659 100644
+index 320d4e2..93899d0 100644
 --- a/core/archipelago/src/api/rpc/identity/handlers.rs
 +++ b/core/archipelago/src/api/rpc/identity/handlers.rs
 @@ -4,6 +4,7 @@ use crate::identity_manager::{
@@ -98,7 +98,7 @@ index 1d289d5..117e659 100644
                  })
              })
              .collect();
-@@ -139,6 +142,79 @@ impl RpcHandler {
+@@ -175,6 +178,79 @@ impl RpcHandler {
              "is_default": is_default,
              "nostr_pubkey": record.nostr_pubkey,
              "nostr_npub": record.nostr_npub,
@@ -179,7 +179,7 @@ index 1d289d5..117e659 100644
      }
  
 diff --git a/core/archipelago/src/api/rpc/middleware.rs b/core/archipelago/src/api/rpc/middleware.rs
-index 643d351..000c34f 100644
+index 541c27d..cfa99bf 100644
 --- a/core/archipelago/src/api/rpc/middleware.rs
 +++ b/core/archipelago/src/api/rpc/middleware.rs
 @@ -191,6 +191,13 @@ pub(super) fn sanitize_error_message(msg: &str) -> String {
@@ -244,10 +244,10 @@ index 643d351..000c34f 100644
      fn tor_unavailable_precondition_passes_through() {
          let msg = "Tor address not available. Tor may not be running.";
 diff --git a/core/archipelago/src/api/rpc/mod.rs b/core/archipelago/src/api/rpc/mod.rs
-index 8950338..ea4f48be 100644
+index 341cc06..3099057 100644
 --- a/core/archipelago/src/api/rpc/mod.rs
 +++ b/core/archipelago/src/api/rpc/mod.rs
-@@ -345,6 +345,18 @@ impl RpcHandler {
+@@ -386,6 +386,18 @@ impl RpcHandler {
              ));
          }
  
@@ -265,8 +265,8 @@ index 8950338..ea4f48be 100644
 +
          // Enforce authentication for non-allowlisted methods
          let is_unauthenticated = UNAUTHENTICATED_METHODS.contains(&rpc_req.method.as_str());
-         let mut new_session_cookies: Option<(String, String)> = None;
-@@ -817,6 +829,21 @@ mod nostr_signing_origin_tests {
+         if !is_unauthenticated || rpc_req.method.starts_with("auth.") {
+@@ -905,6 +917,21 @@ mod nostr_signing_origin_tests {
              true
          ));
      }
@@ -289,7 +289,7 @@ index 8950338..ea4f48be 100644
  
  #[cfg(test)]
 diff --git a/core/archipelago/src/identity_manager.rs b/core/archipelago/src/identity_manager.rs
-index 26f81aa..d20db6b 100644
+index 469b40a..1fce0c5 100644
 --- a/core/archipelago/src/identity_manager.rs
 +++ b/core/archipelago/src/identity_manager.rs
 @@ -11,10 +11,17 @@ use std::time::Duration;
@@ -394,7 +394,15 @@ index 26f81aa..d20db6b 100644
  }
  
  pub struct IdentityManager {
-@@ -226,6 +296,7 @@ impl IdentityManager {
+@@ -251,6 +321,7 @@ impl IdentityManager {
+             nostr_secret_hex: Some(keys.secret_key().display_secret().to_string()),
+             nostr_pubkey_hex: Some(nostr_pubkey),
+             derivation_index: None,
++            linked_signer: None,
+         };
+         let encoded = serde_json::to_vec_pretty(&record)?;
+         // Hidden staging file is never visible as an incomplete identity to readers.
+@@ -303,6 +374,7 @@ impl IdentityManager {
              nostr_pubkey_hex: None,
              profile: Some(default_profile),
              derivation_index: None,
@@ -402,7 +410,7 @@ index 26f81aa..d20db6b 100644
          };
  
          let file_path = self.identities_dir.join(format!("{}.json", id));
-@@ -304,6 +375,7 @@ impl IdentityManager {
+@@ -381,6 +453,7 @@ impl IdentityManager {
              nostr_pubkey_hex: None,
              profile: Some(default_profile),
              derivation_index: Some(0),
@@ -410,7 +418,7 @@ index 26f81aa..d20db6b 100644
          };
  
          let json =
-@@ -376,6 +448,7 @@ impl IdentityManager {
+@@ -453,6 +526,7 @@ impl IdentityManager {
              nostr_pubkey_hex: Some(nostr_pubkey_hex),
              profile: Some(default_profile),
              derivation_index: Some(index),
@@ -418,7 +426,7 @@ index 26f81aa..d20db6b 100644
          };
  
          let file_path = self.identities_dir.join(format!("{}.json", id));
-@@ -413,6 +486,146 @@ impl IdentityManager {
+@@ -490,6 +564,146 @@ impl IdentityManager {
          Ok(record)
      }
  
@@ -565,7 +573,7 @@ index 26f81aa..d20db6b 100644
      /// Get a single identity by ID (without secret key).
      pub async fn get(&self, id: &str) -> Result<IdentityRecord> {
          let file_path = self.identities_dir.join(format!("{}.json", id));
-@@ -865,6 +1078,18 @@ impl IdentityManager {
+@@ -942,6 +1156,18 @@ impl IdentityManager {
              })
          });
  
@@ -584,7 +592,7 @@ index 26f81aa..d20db6b 100644
          Ok(IdentityRecord {
              id: file.id,
              name: file.name,
-@@ -876,6 +1101,8 @@ impl IdentityManager {
+@@ -953,6 +1179,8 @@ impl IdentityManager {
              nostr_pubkey: file.nostr_pubkey_hex,
              nostr_npub,
              profile,
@@ -593,7 +601,7 @@ index 26f81aa..d20db6b 100644
          })
      }
  
-@@ -900,6 +1127,7 @@ impl IdentityManager {
+@@ -977,6 +1205,7 @@ impl IdentityManager {
  #[cfg(test)]
  mod tests {
      use super::*;
@@ -601,7 +609,7 @@ index 26f81aa..d20db6b 100644
      use tempfile::tempdir;
  
      #[tokio::test]
-@@ -1026,6 +1254,8 @@ mod tests {
+@@ -1195,6 +1424,8 @@ mod tests {
              nostr_pubkey: None,
              nostr_npub: None,
              profile: None,
@@ -610,7 +618,7 @@ index 26f81aa..d20db6b 100644
          }
      }
  
-@@ -1175,6 +1405,290 @@ mod tests {
+@@ -1344,6 +1575,290 @@ mod tests {
          );
      }
  
@@ -902,17 +910,17 @@ index 26f81aa..d20db6b 100644
      async fn test_delete_default_shifts() {
          let dir = tempdir().unwrap();
 diff --git a/core/archipelago/src/main.rs b/core/archipelago/src/main.rs
-index 1e8b99d..9f263f1 100644
+index 6646fa0..8eccdd4 100644
 --- a/core/archipelago/src/main.rs
 +++ b/core/archipelago/src/main.rs
-@@ -75,6 +75,7 @@ mod nostr_security_tests;
- mod peers;
- mod port_allocator;
+@@ -89,6 +89,7 @@ mod prepared_media;
+ mod publishing;
  mod rate_limit;
+ mod registered_media;
 +mod remote_signer;
+ mod rental_chunk_index;
+ mod rental_readiness;
  pub mod seed;
- mod server;
- mod session;
 diff --git a/core/archipelago/src/nostr_discovery.rs b/core/archipelago/src/nostr_discovery.rs
 index f37b89f..83cd9f4 100644
 --- a/core/archipelago/src/nostr_discovery.rs
@@ -932,17 +940,17 @@ index f37b89f..83cd9f4 100644
  pub(crate) async fn load_or_create_nostr_keys(identity_dir: &Path) -> Result<Keys> {
      let secret_path = identity_dir.join(NOSTR_SECRET_FILE);
 diff --git a/core/archipelago/src/rate_limit.rs b/core/archipelago/src/rate_limit.rs
-index 74496ab..a76ee23 100644
+index f7533fd..e9800d4 100644
 --- a/core/archipelago/src/rate_limit.rs
 +++ b/core/archipelago/src/rate_limit.rs
-@@ -92,6 +92,7 @@ impl EndpointRateLimiter {
-         limits.insert("lnd.finalize-psbt".to_string(), (5, 300));
+@@ -93,6 +93,7 @@ impl EndpointRateLimiter {
          // Identity/credential operations
          limits.insert("identity.create".to_string(), (10, 300));
+         limits.insert("identity.import-nostr".to_string(), (5, 300));
 +        limits.insert("identity.link-nip46".to_string(), (10, 300));
          limits.insert("identity.issue-credential".to_string(), (20, 300));
-         // Backup operations (resource-intensive)
-         limits.insert("backup.create".to_string(), (10, 600));
+         // Explicit publishing actions can allocate credentials or perform
+         // bounded network I/O. Saving/previewing never invokes these actions.
 diff --git a/core/archipelago/src/remote_signer.rs b/core/archipelago/src/remote_signer.rs
 new file mode 100644
 index 0000000..306b9cb
@@ -1829,5 +1837,5 @@ index 0000000..306b9cb
 +    }
 +}
 -- 
-2.53.0
+2.39.5 (Apple Git-154)
 

@@ -1,15 +1,17 @@
 # Pinned inputs. Sourced by scripts and CI. Change deliberately, one pin per commit.
 ARCHY_REPO=https://source.archipelago-foundation.org/lfg2025/archy.git
-ARCHY_RELEASE=v1.9.0-alpha
-ARCHY_REF=7abd04a7f680e72105ae783cecbe2268e3c8e71b
+ARCHY_RELEASE=v1.9.1-alpha
+ARCHY_REF=7f0318c68aeecf7e49c923bf70579f3bc4f9e6c0
 # SHA-256 of the ARCHY_RELEASE frontend asset node/install-lite.sh installs:
 # releases/download/${ARCHY_RELEASE}/archipelago-frontend-${ARCHY_RELEASE#v}.tar.gz
-FRONTEND_SHA256=6d5135fa8e79b1bc84c8ed972770ebf99fe6611d819e5c1453f38f1593c26e66
+FRONTEND_SHA256=d7c7de43245a4a7721f141516bf422fb6c741077d5f134304947d327a7b9f3a4
 # Hash-pinned fallback for the two directories retained from the upstream
-# frontend asset. This p6 bundle was produced from the same ARCHY_RELEASE and
-# preserves aiui/ and archipelago-runtime/ byte-for-byte.
-FRONTEND_FALLBACK_URL=https://github.com/forgesworn/archipelago-apps/releases/download/frontend-v1.9.0-alpha-p6/frontend.tar.gz
-FRONTEND_FALLBACK_SHA256=3215f29a08f2f38a75526c33adaf7d2d6426be758203f31ecf02d7990ea71ab0
+# frontend asset: a ForgeSworn frontend bundle produced from the same
+# ARCHY_RELEASE, which preserves aiui/ and archipelago-runtime/ byte-for-byte.
+# Empty until this release's first frontend bundle is published; a build then
+# fails rather than mixing in another release's files.
+FRONTEND_FALLBACK_URL=
+FRONTEND_FALLBACK_SHA256=
 WILDBLOOM_REF=bb082787a7da0bd18dc6c640364f06c5253f5bf3
 WILDBLOOM_NODE_REF=b9a7cf48752037fe3588e62ec3a6a12aaebf7ee5
 # Packaging revisions: bump when the image changes without an upstream pin change.
@@ -19,10 +21,10 @@ WILDBLOOM_NODE_PKG_REV=2
 SPRY_REF=367efc77c84db7a20eddf70ab243dcd13d9065ef
 SPRY_PKG_REV=1
 # Bumped whenever upstream/patches changes; names the backend release asset.
-BACKEND_PATCH_LEVEL=10
+BACKEND_PATCH_LEVEL=1
 # Frontend build: bumped whenever upstream/patches or the build recipe changes;
 # names the frontend release asset. Node major matches archy's own CI (ci.yml NODE_VERSION).
-FRONTEND_PATCH_LEVEL=9
+FRONTEND_PATCH_LEVEL=1
 FRONTEND_NODE_MAJOR=20
 # Ingle (game hosting on a Keep: Stampede and Twang rooms on one port): hand-loaded into the node's podman, not built or pushed by CI.
 # Bump to the new build's tag whenever the image changes: the node never re-pulls a tag it has.

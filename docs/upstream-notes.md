@@ -400,3 +400,14 @@ stage-to-node.sh still reported `state=running`. `systemctl --user daemon-reload
 stampede-keep.service` (as `archipelago`) applied it. Suggest: after rewriting a Quadlet unit for a running app,
 always apply it (or report the pending change), and have stage-to-node.sh check the running container's image
 against the manifest's.
+
+## Patches retired at v1.9.1-alpha (archy `7f0318c`)
+
+`0016` and `0017` were dropped when `ARCHY_REF` moved to v1.9.1-alpha. The
+release contains `49703d7e` and `053f03be`, and its `docker_packages.rs` now
+reads both `metadata.license` and `metadata.author` from the manifest
+(`manifest_presentation_reports_the_declared_author`), so neither half of
+`0016` is still needed. The rest of the series was rebased onto the release;
+the conflicts were with upstream's shared NIP-07 bridge (`useNostrBridge`, now
+also used by the app launcher), the native consent origin check, the app gate's
+`secure` flag on `serve_http`, and neighbouring additions to module lists.

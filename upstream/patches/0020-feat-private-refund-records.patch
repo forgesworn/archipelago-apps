@@ -1,4 +1,4 @@
-From 0c13099b4fb9831cb85213f66ed2d144fc461e20 Mon Sep 17 00:00:00 2001
+From b54b80412aa81f826fca6979ab3ba1ed1eae20c1 Mon Sep 17 00:00:00 2001
 From: archipelago-apps <ci@invalid>
 Date: Fri, 9 Oct 2026 14:55:20 +0100
 Subject: [PATCH] feat: record private operator refunds and explain payment
@@ -19,10 +19,10 @@ Subject: [PATCH] feat: record private operator refunds and explain payment
  create mode 100644 neode-ui/src/views/settings/__tests__/StorageRefund.test.ts
 
 diff --git a/core/archipelago/src/api/rpc/dispatcher.rs b/core/archipelago/src/api/rpc/dispatcher.rs
-index c3f3780..fdb7431 100644
+index b89a7fb..8293725 100644
 --- a/core/archipelago/src/api/rpc/dispatcher.rs
 +++ b/core/archipelago/src/api/rpc/dispatcher.rs
-@@ -67,6 +67,7 @@ impl RpcHandler {
+@@ -87,6 +87,7 @@ impl RpcHandler {
              "package.versions" => self.handle_package_versions(params).await,
              "package.set-config" => self.clone().handle_package_set_config(params).await,
              "wildbloom.storage.orders" => self.handle_wildbloom_orders(params).await,
@@ -82,12 +82,12 @@ index 116e788..385f19a 100644
              "wildbloom.storage.apply",
              "wildbloom.storage.resolve-moneyer",
 diff --git a/core/archipelago/src/settings/mod.rs b/core/archipelago/src/settings/mod.rs
-index 9630a64..d293dc9 100644
+index 483ab3c..8e45b03 100644
 --- a/core/archipelago/src/settings/mod.rs
 +++ b/core/archipelago/src/settings/mod.rs
-@@ -10,5 +10,7 @@ pub mod transport;
+@@ -12,5 +12,7 @@ pub mod bitcoin_storage;
  
- pub mod bitcoin_storage;
+ pub mod model_provider;
  
 -pub mod wildbloom_storage;
  pub mod wildbloom_sales;
@@ -523,5 +523,5 @@ index 0000000..45fd075
 +  })
 +})
 -- 
-2.54.0 (Apple Git-157)
+2.39.5 (Apple Git-154)
 
