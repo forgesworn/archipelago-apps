@@ -37,6 +37,9 @@ rather than migrating its containers between runtimes.
 
 The Bitcoin stack is omitted. Catalogue apps which require rootless Podman
 network modes remain unsupported by the existing Docker runtime; Spry uses
-host networking. This recipe has not yet passed a complete fresh-host install
-or physical home-network call. The separate Spry/FIPS NAT and browser receipts
-do not establish this host-install gate.
+host networking. The [fresh-host receipt](../docs/evidence/spry-docker-host-20261024.json)
+records a complete install, readiness, owner-authentication, Stop/Start/Restart
+and uninstall check through the real Rust controller and Docker runtime.
+Physical home-network calls and Windows/macOS Docker Desktop remain
+unqualified. The separate Spry/FIPS NAT and browser receipts do not establish
+those physical acceptance gates.

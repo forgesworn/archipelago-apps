@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-10-24T22:10:11.392934+00:00",
+  "source": "0f5f91eb67cd1df9fbf5aa3d01f0277ab5245e23",
+  "featurePullRequest": 35,
+  "sprySource": "2efb05102838a45945b11a0f9c82a924bfcb8349",
+  "archipelagoVersion": "1.9.1-alpha",
+  "backendPatchLevel": 2,
+  "frontendPatchLevel": 3,
+  "publicReleaseAssets": {
+    "passed": true,
+    "anonymousDownloads": true,
+    "components": [
+      {
+        "tag": "backend-v1.9.1-alpha-p2",
+        "asset": "archipelago",
+        "url": "https://github.com/forgesworn/archipelago-apps/releases/download/backend-v1.9.1-alpha-p2/archipelago",
+        "sha256": "7f24acff674ac077b1534fd11d56f28e72707480b95e9f7a53a2bb869bdd6546",
+        "bytes": 84303568,
+        "inputsSha256": "f51818a0c6b8d1825314962153793c989daf2bccac394b53485f0d32cfeb0e4c"
+      },
+      {
+        "tag": "frontend-v1.9.1-alpha-p3",
+        "asset": "frontend.tar.gz",
+        "url": "https://github.com/forgesworn/archipelago-apps/releases/download/frontend-v1.9.1-alpha-p3/frontend.tar.gz",
+        "sha256": "6a6ba494b25e449a554c5d53526a9cbd9d329d850bc66c79717529c342d978dd",
+        "bytes": 108023142,
+        "inputsSha256": "91820f52641bb3fea308b907acd6da911e3c9edc311d3b9ad506a559410a1699",
+        "spryCatalogueMatchesSource": true
+      }
+    ]
+  },
+  "publicImage": {
+    "passed": true,
+    "image": "ghcr.io/forgesworn/spry:0.1.0-2efb051-2",
+    "anonymousPullToken": true,
+    "indexDigest": "sha256:15dd7a0aa83c2d9ed9a439af264e79062cecaf1cab5902910a914d4526e30ee8",
+    "platforms": [
+      {
+        "os": "linux",
+        "architecture": "amd64",
+        "manifestDigest": "sha256:9c277fde68abda41df6f74440d572fa7adb952d7cd21825f0f5b7aed75360382",
+        "configDigest": "sha256:6232d1f73bafce1f3559563b270fee567db798063584572af1e6d9ef43ef31c2",
+        "layerCount": 6
+      },
+      {
+        "os": "linux",
+        "architecture": "arm64",
+        "manifestDigest": "sha256:d73769200d670218dd363890fb5d6e558bfb6014bf6d811f2ab41330cd9971f3",
+        "configDigest": "sha256:7a25f573529f0085ac37f765fc1b530a49ea81af42904c79d81e80add8cadecf",
+        "layerCount": 6
+      }
+    ],
+    "uniqueBlobsVerified": 14,
+    "fullBlobBytesVerified": 77392599
+  },
+  "publishedSourceFreshHost": {
+    "passed": true,
+    "scope": "fresh-debian-docker-host-install",
+    "realRustController": true,
+    "existingDockerRuntime": true,
+    "seededFips": true,
+    "spryReady": true,
+    "ownerPairingScreen": true,
+    "spryUninstall": true,
+    "ownerLanAndMdnsOrigins": true,
+    "foreignOriginRefused": true,
+    "realNodeOwnerApprovals": true,
+    "ownerProofReplayRefused": true,
+    "dashboardStopStartRestart": true,
+    "physicalHomeNetwork": false,
+    "dockerDesktopQualified": false
+  },
+  "dockerBundleAssembly": {
+    "passed": true,
+    "script": "node/prepare-docker-bundle.sh",
+    "backendAndFrontendChecksumsVerified": true,
+    "pinnedFipsChecksumVerified": true,
+    "pinnedArchipelagoSourceVerified": true,
+    "installerFirstBootScriptPresent": true,
+    "files": {
+      "archipelago": {
+        "bytes": 84303568,
+        "sha256": "7f24acff674ac077b1534fd11d56f28e72707480b95e9f7a53a2bb869bdd6546"
+      },
+      "frontend.tar.gz": {
+        "bytes": 108023142,
+        "sha256": "6a6ba494b25e449a554c5d53526a9cbd9d329d850bc66c79717529c342d978dd"
+      },
+      "fips.deb": {
+        "bytes": 7126036,
+        "sha256": "9befcc0990c7e08742b5a88f75d753a1088134b20525156688d559a317334ded"
+      },
+      "install-lite.sh": {
+        "bytes": 13229,
+        "sha256": "d46c382df2e373441341504213f9a1def77edb7e0f92e83d7012877ef95ed993"
+      },
+      "first-boot-secrets.sh": {
+        "bytes": 21150,
+        "sha256": "8e87c1fcdec1d76f959927638c909a2ae8bd3d6b02e30b7499274e49521bc86e"
+      }
+    }
+  },
+  "ci": {
+    "allPublicationChecksPassed": true,
+    "backend": "https://github.com/forgesworn/archipelago-apps/actions/runs/40134947872",
+    "frontend": "https://github.com/forgesworn/archipelago-apps/actions/runs/40134947888",
+    "spry": "https://github.com/forgesworn/archipelago-apps/actions/runs/40134947848"
+  },
+  "kithmoot": {
+    "version": "0.6.111",
+    "versionCode": 134,
+    "apkSha256": "28dcd327f6f00a4f652d2b549388ed6323112eb87de07df85ba908277a244068",
+    "publicationRecord": "https://github.com/forgesworn/kithmoot/blob/main/docs/evidence/android-0.6.111-publication-20261024.json"
+  },
+  "physicalHomeNetworkAccepted": false,
+  "dockerDesktopQualified": false,
+  "physicalNoPlayGrapheneOsAccepted": false
+}
