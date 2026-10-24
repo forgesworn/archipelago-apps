@@ -1,4 +1,4 @@
-From 0ebc9998d597dc9b4d34f0094f767f8d4bd98414 Mon Sep 17 00:00:00 2001
+From 82c0aa7898edcd3e1259722c66603daa188683b1 Mon Sep 17 00:00:00 2001
 From: archipelago-apps <ci@invalid>
 Date: Sat, 24 Oct 2026 10:36:17 +0100
 Subject: [PATCH] fix: probe the first TCP published port and restart through
@@ -10,10 +10,10 @@ podman lists a container's tcp and udp publishes in a random order, so taking th
  1 file changed, 61 insertions(+), 20 deletions(-)
 
 diff --git a/core/archipelago/src/api/rpc/package/install.rs b/core/archipelago/src/api/rpc/package/install.rs
-index ae2570e..848dc4e 100644
+index 5112bbf..ec247ed 100644
 --- a/core/archipelago/src/api/rpc/package/install.rs
 +++ b/core/archipelago/src/api/rpc/package/install.rs
-@@ -2133,19 +2133,36 @@ async fn ensure_host_port_listener(
+@@ -2136,19 +2136,36 @@ async fn ensure_host_port_listener(
      .await;
      cleanup_stale_package_ports(package_id).await;
  
@@ -63,7 +63,7 @@ index ae2570e..848dc4e 100644
      }
  
      if wait_for_host_port(package_id, port, 60).await {
-@@ -2173,11 +2190,21 @@ async fn published_host_port(container_name: &str) -> Option<u16> {
+@@ -2176,11 +2193,21 @@ async fn published_host_port(container_name: &str) -> Option<u16> {
      if !output.status.success() {
          return None;
      }
@@ -90,7 +90,7 @@ index ae2570e..848dc4e 100644
      })
  }
  
-@@ -2569,8 +2596,9 @@ fn is_unknown_app_id_error(err: &anyhow::Error) -> bool {
+@@ -2572,8 +2599,9 @@ fn is_unknown_app_id_error(err: &anyhow::Error) -> bool {
  #[cfg(test)]
  mod tests {
      use super::{
@@ -102,7 +102,7 @@ index ae2570e..848dc4e 100644
      };
      use crate::api::rpc::package::runtime::orchestrator_uninstall_app_ids;
  
-@@ -2741,6 +2769,19 @@ mod tests {
+@@ -2744,6 +2772,19 @@ mod tests {
          assert_eq!(parse_setup_token(&logs), None);
      }
  

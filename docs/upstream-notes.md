@@ -397,8 +397,8 @@ Restarting through the unit (`quadlet::restart_service("<name>.service")`, which
 the unit, waits while it is `deactivating` or `activating`, then starts it, retrying the
 start once) does not race.
 
-We carry the fix as `upstream/patches/0025-*`, checked against archy `7abd04a` with
-0003-0024 applied. It does two things. `published_host_port` now goes through
+We carry the fix as `upstream/patches/0026-*`, checked against archy `7abd04a` with
+0003-0025 applied. It does two things. `published_host_port` now goes through
 `first_tcp_host_port`, which takes the host port of the first `/tcp` line only (with a
 unit test for either order, UDP only, an IPv6 host side and empty output). And the
 repair restarts through the Quadlet unit when `quadlet::unit_exists(<container>)`,
