@@ -1,0 +1,132 @@
+From e833d09bde31e05e821686de1fd1baf3d81a0606 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <147930957+TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 22:05:11 +0100
+Subject: [PATCH] Complete host-network readiness and Spry orchestrator install
+
+---
+ .../src/api/rpc/package/install.rs            |  3 +
+ .../src/container/prod_orchestrator.rs        | 61 ++++++++++++++++---
+ 2 files changed, 55 insertions(+), 9 deletions(-)
+
+diff --git a/core/archipelago/src/api/rpc/package/install.rs b/core/archipelago/src/api/rpc/package/install.rs
+index 8104075..22390eb 100644
+--- a/core/archipelago/src/api/rpc/package/install.rs
++++ b/core/archipelago/src/api/rpc/package/install.rs
+@@ -577,6 +577,9 @@ impl RpcHandler {
+                         ensure_host_port_listener(package_id, &container_name, &[]).await?;
+                         crate::api::rpc::package::runtime::reconcile_companions_for(package_id)
+                             .await;
++                        if package_id == "spry" {
++                            crate::container::spry_network::install().await?;
++                        }
+                         install_log(&format!(
+                             "INSTALL ORCH OK: {} (app={}) — container={}",
+                             package_id, orchestrator_app_id, container_name
+diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
+index 1d9d9e8..14946d2 100644
+--- a/core/archipelago/src/container/prod_orchestrator.rs
++++ b/core/archipelago/src/container/prod_orchestrator.rs
+@@ -30,6 +30,7 @@ use archipelago_container::{
+ };
+ use async_trait::async_trait;
+ use std::collections::{HashMap, HashSet};
++use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+ use std::os::unix::fs::FileTypeExt;
+ use std::path::{Path, PathBuf};
+ use std::sync::Arc;
+@@ -687,19 +688,31 @@ async fn ensure_running_container_ownership(name: &str) -> bool {
+     repaired
+ }
+ 
+-async fn wait_for_host_port(port: u16, timeout_secs: u64) -> bool {
++async fn wait_for_host_port(addresses: &[IpAddr], port: u16, timeout_secs: u64) -> bool {
+     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+     loop {
+-        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+-            .await
+-            .is_ok()
+-        {
+-            return true;
++        for address in addresses {
++            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
++            if remaining.is_zero() {
++                return false;
++            }
++            let attempt = std::cmp::min(remaining, std::time::Duration::from_secs(1));
++            if matches!(
++                tokio::time::timeout(
++                    attempt,
++                    tokio::net::TcpStream::connect(SocketAddr::new(*address, port))
++                )
++                .await,
++                Ok(Ok(_))
++            ) {
++                return true;
++            }
+         }
+-        if std::time::Instant::now() >= deadline {
++        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
++        if remaining.is_zero() {
+             return false;
+         }
+-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
++        tokio::time::sleep(std::cmp::min(remaining, std::time::Duration::from_secs(1))).await;
+     }
+ }
+ 
+@@ -773,6 +786,26 @@ async fn wait_for_manifest_host_ports(
+     // loop (observed on .228 after netbird's manifest deploy). Default protocol
+     // (empty) is tcp.
+     let container_name = compute_container_name(manifest);
++    let mut addresses = vec![IpAddr::V4(Ipv4Addr::LOCALHOST)];
++    let network = manifest
++        .app
++        .container
++        .network
++        .as_deref()
++        .filter(|value| !value.is_empty())
++        .unwrap_or(&manifest.app.security.network_policy);
++    if network == "host" {
++        // Host-network services may bind only the LAN address, and the app
++        // gate owns HTTPS/TLS there. Probe our own host, never a remote target.
++        if let Some(address) = crate::host_ip::primary_host_ipv4()
++            .await
++            .and_then(|value| value.parse::<IpAddr>().ok())
++        {
++            if !addresses.contains(&address) {
++                addresses.push(address);
++            }
++        }
++    }
+     for port in manifest
+         .app
+         .ports
+@@ -784,7 +817,7 @@ async fn wait_for_manifest_host_ports(
+             ready = async {
+                 match manifest.app.id.as_str() {
+                     "uptime-kuma" => wait_for_http_host_port(port, "/", timeout_secs).await,
+-                    _ => wait_for_host_port(port, timeout_secs).await,
++                    _ => wait_for_host_port(&addresses, port, timeout_secs).await,
+                 }
+             } => ready,
+             _ = wait_for_user_stop_marker(data_dir, &manifest.app.id, &container_name) => {
+@@ -7259,6 +7292,16 @@ app:
+         assert!(!calls.iter().any(|c| c.starts_with("build_image:")));
+     }
+ 
++    #[tokio::test]
++    async fn host_port_wait_tries_each_local_address_and_refuses_a_closed_target() {
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let port = listener.local_addr().unwrap().port();
++        let wrong: IpAddr = "127.0.0.2".parse().unwrap();
++        let right: IpAddr = "127.0.0.1".parse().unwrap();
++        assert!(!wait_for_host_port(&[wrong], port, 1).await);
++        assert!(wait_for_host_port(&[wrong, right], port, 3).await);
++    }
++
+     #[tokio::test]
+     async fn host_port_wait_aborts_on_user_stop_marker() {
+         // A stop the user requests mid-wait must break the (up to 420s)
+-- 
+2.39.5 (Apple Git-154)
+

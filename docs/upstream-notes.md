@@ -26,6 +26,15 @@ container's capabilities, root filesystem, memory limit and security option.
 repair by the selected runtime. Without that guard a real Docker installation
 stops before creating its container, despite the runtime adapter being correct.
 
+`0033-host-network-readiness-and-spry-rule.patch` probes the node's own primary
+IPv4 address as well as loopback for host-network containers. Spry's TURN and
+TLS listeners bind that address, so loopback alone incorrectly marks a working
+installation as failed. Each connection attempt and the total wait are bounded;
+the socket test checks a closed address and a subsequent reachable address.
+The orchestrator install path also installs Spry's existing fixed mesh rule,
+as the legacy path already does. The installed-host fixture checks both the
+drop-in and the live nftables rule before exercising dashboard lifecycle RPCs.
+
 ## Configured relays through NIP-07 (archy `7f0318c`)
 
 The signer bridge implements `getRelays` with an empty object. Apps cannot use

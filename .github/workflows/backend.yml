@@ -119,8 +119,9 @@ jobs:
             identity_manager::tests::app_signable_nostr_pubkeys_is_empty_with_only_the_node_identity \
             container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_renders_the_signable_identities \
             container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_refuses_an_empty_set \
-            container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_needs_the_node_key_and_never_creates_it | tee "$RUNNER_TEMP/archipelago.log"
-          grep -q 'test result: ok. 7 passed;' "$RUNNER_TEMP/archipelago.log"
+            container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_needs_the_node_key_and_never_creates_it \
+            container::prod_orchestrator::tests::host_port_wait_tries_each_local_address_and_refuses_a_closed_target | tee "$RUNNER_TEMP/archipelago.log"
+          grep -q 'test result: ok. 8 passed;' "$RUNNER_TEMP/archipelago.log"
       # Linked signers and signer login (patches 0003-0006), one module
       # filter at a time (filters are substring matches: signer_login::tests::
       # also counts api::rpc::signer_login::tests::). Each count covers the whole module, upstream's tests

@@ -103,6 +103,12 @@ def ready():
 
 
 wait(ready, 'Installed Spry did not become ready on the seeded mesh')
+dropin = Path('/etc/fips/fips.d/86-spry.nft')
+wait(dropin.is_file, 'Spry installation did not configure its mesh firewall rule')
+wait(lifecycle_idle, 'Spry installation did not finish')
+rules = subprocess.check_output(['nft', 'list', 'ruleset'], text=True)
+assert any('iifname "fips0"' in line and 'tcp dport 3745 accept' in line
+           for line in rules.splitlines())
 # Manifest-driven apps use the selected runtime for normal dashboard controls.
 wait(lifecycle_idle, 'Controller lifecycle remained busy before stop')
 rpc('package.stop', {'id': 'spry'})
@@ -153,7 +159,6 @@ except urllib.error.HTTPError as error:
     assert error.code == 403
 with client.open(node_url + '/', timeout=5) as response:
     assert 'Pair with KithMoot' in response.read().decode()
-dropin = Path('/etc/fips/fips.d/86-spry.nft')
 assert dropin.is_file()
 wait(lifecycle_idle, 'Controller lifecycle remained busy before uninstall')
 rpc('package.uninstall', {'id': 'spry'})
