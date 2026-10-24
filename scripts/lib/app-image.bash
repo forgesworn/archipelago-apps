@@ -15,6 +15,10 @@ app_image() {
     spry)
       APP_REF=${SPRY_REF:?}
       APP_TAG="ghcr.io/forgesworn/spry:0.1.0-${APP_REF:0:7}-${SPRY_PKG_REV:?}" ;;
+    ingle)
+      # Hand-loaded on the node; CI neither builds nor publishes it.
+      APP_REF=hand-loaded
+      APP_TAG="ghcr.io/forgesworn/ingle:${INGLE_TAG:?}" ;;
     *) echo "unknown app: $1" >&2; return 2 ;;
   esac
 }
