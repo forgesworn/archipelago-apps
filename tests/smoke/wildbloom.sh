@@ -56,7 +56,11 @@ done
 # The pinned bundle includes the post-success request-ID rotation used by private
 # checkout retries. Upstream services acceptance exercises the behaviour; this
 # package check catches accidentally building the preceding five-call bundle.
-random_uuid_count=$(docker exec "$cid" sh -c 'grep -o "randomUUID()" /usr/share/nginx/html/assets/index-*.js | wc -l')
+# The main client's entry script, as index.html loads it (its file name follows
+# the Vite entry name, which changed when Wildbloom added the pairing pages).
+entry=$(grep -oE '<script type="module"[^>]* src="\./assets/[A-Za-z0-9_.-]+\.js"' <<<"$html" | grep -oE 'assets/[A-Za-z0-9_.-]+\.js')
+[ "$(wc -l <<<"$entry")" = 1 ] && [ -n "$entry" ] || { echo "FAIL: expected one module entry script in index.html, got: $entry"; exit 1; }
+random_uuid_count=$(docker exec "$cid" sh -c "grep -o 'randomUUID()' /usr/share/nginx/html/$entry | wc -l")
 [ "$random_uuid_count" -ge 6 ] || { echo "FAIL: checkout retry rotation is missing from the browser bundle"; exit 1; }
 # The self-hosted explainer must decode and seek through nginx too. Require
 # exactly one hashed film and the MP4 MIME type, then exercise a byte range.
