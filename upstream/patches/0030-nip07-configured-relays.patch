@@ -1,0 +1,91 @@
+From 8d7aab9e8bf92ad4be189bb2db80456f8e7e5e7b Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <147930957+TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 21:18:39 +0100
+Subject: [PATCH] Expose configured enabled relays through the NIP-07 bridge
+
+---
+ .../__tests__/nostrBridgeLinked.test.ts       | 36 +++++++++++++++++--
+ .../src/views/appSession/useNostrBridge.ts    |  4 ++-
+ 2 files changed, 37 insertions(+), 3 deletions(-)
+
+diff --git a/neode-ui/src/views/appSession/__tests__/nostrBridgeLinked.test.ts b/neode-ui/src/views/appSession/__tests__/nostrBridgeLinked.test.ts
+index e32fc95..e90eb62 100644
+--- a/neode-ui/src/views/appSession/__tests__/nostrBridgeLinked.test.ts
++++ b/neode-ui/src/views/appSession/__tests__/nostrBridgeLinked.test.ts
+@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
+ 
+ vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
+ 
++import { rpcClient } from '@/api/rpc-client'
+ import { useNostrBridge } from '../useNostrBridge'
+ import type { SelectedIdentity } from '../useAppIdentity'
+ 
+@@ -14,13 +15,13 @@ function bridgeFor(identity: SelectedIdentity | null) {
+     frameWindow: () => frame,
+   })
+   const send = (method: string) => {
+-    void bridge.handleNostrRequest({
++    return bridge.handleNostrRequest({
+       data: { type: 'nostr-request', id: 1, method, params: { event: { kind: 1, content: 'hi' } } },
+       source: frame,
+       origin: 'http://localhost:5173',
+     } as unknown as MessageEvent)
+   }
+-  return { bridge, send }
++  return { bridge, send, frame }
+ }
+ 
+ const base = { id: 'i1', name: 'Heartwood', did: 'did:key:z', pubkey: 'aa', nostr_pubkey: 'bb' }
+@@ -51,3 +52,34 @@ describe('consent request for linked identities', () => {
+     expect(bridge.consentRequest.value?.identityLabel).toBe('Node default identity')
+   })
+ })
++
++
++describe('configured relay discovery through the signer bridge', () => {
++  it('returns the node enabled relays to its app without inventing a list', async () => {
++    vi.mocked(rpcClient.call).mockResolvedValueOnce({ relays: [
++      { url: 'wss://chosen.example', enabled: true },
++      { url: 'wss://disabled.example', enabled: false },
++    ] })
++    const { bridge, send, frame } = bridgeFor({ ...base })
++    await send('getRelays')
++    expect(rpcClient.call).toHaveBeenLastCalledWith({ method: 'nostr.list-relays' })
++    expect(frame.postMessage).toHaveBeenCalledWith({ type: 'nostr-response', id: 1,
++      result: { 'wss://chosen.example': { read: true, write: true } } }, 'http://localhost:5173')
++    expect(bridge.showConsent.value).toBe(false)
++  })
++
++  it('preserves an explicitly empty relay list', async () => {
++    vi.mocked(rpcClient.call).mockResolvedValueOnce({ relays: [] })
++    const { send, frame } = bridgeFor({ ...base })
++    await send('getRelays')
++    expect(frame.postMessage).toHaveBeenCalledWith({ type: 'nostr-response', id: 1, result: {} }, 'http://localhost:5173')
++  })
++
++  it('reports a failed node lookup instead of selecting other relays', async () => {
++    vi.mocked(rpcClient.call).mockRejectedValueOnce(new Error('Node relay settings unavailable'))
++    const { send, frame } = bridgeFor({ ...base })
++    await send('getRelays')
++    expect(frame.postMessage).toHaveBeenCalledWith({ type: 'nostr-response', id: 1,
++      error: 'Node relay settings unavailable' }, 'http://localhost:5173')
++  })
++})
+diff --git a/neode-ui/src/views/appSession/useNostrBridge.ts b/neode-ui/src/views/appSession/useNostrBridge.ts
+index b6d9eb5..458d91e 100644
+--- a/neode-ui/src/views/appSession/useNostrBridge.ts
++++ b/neode-ui/src/views/appSession/useNostrBridge.ts
+@@ -192,7 +192,9 @@ export function useNostrBridge(
+           ? await rpcClient.call<unknown>({ method: 'identity.nostr-sign', params: { id: identityId, event: params.event } })
+           : await rpcClient.call<unknown>({ method: 'node.nostr-sign', params: { event: params.event } })
+       } else if (method === 'getRelays') {
+-        result = {}
++        const configured = await rpcClient.call<{ relays: Array<{ url: string; enabled: boolean }> }>({ method: 'nostr.list-relays' })
++        result = Object.fromEntries(configured.relays.filter(relay => relay.enabled)
++          .map(relay => [relay.url, { read: true, write: true }]))
+       } else if (method === 'nip04.encrypt') {
+         result = (await rpcClient.call<{ ciphertext: string }>({ method: 'identity.nostr-encrypt-nip04', params: { id: identityId || undefined, pubkey: params.pubkey, plaintext: params.plaintext } })).ciphertext
+       } else if (method === 'nip04.decrypt') {
+-- 
+2.39.5 (Apple Git-154)
+

@@ -22,6 +22,24 @@ exercises the real install, Stop, Start, Restart and uninstall RPCs.
 existing `no_new_privileges` setting. The host fixture checks the actual
 container's capabilities, root filesystem, memory limit and security option.
 
+`0031-docker-create-without-podman.patch` guards the pre-create Podman socket
+repair by the selected runtime. Without that guard a real Docker installation
+stops before creating its container, despite the runtime adapter being correct.
+
+## Configured relays through NIP-07 (archy `7f0318c`)
+
+The signer bridge implements `getRelays` with an empty object. Apps cannot use
+the node's configured relay list, so Spry pairing stops even on a node with
+enabled relays. `0030-nip07-configured-relays.patch` reads `nostr.list-relays`
+through the existing authenticated dashboard RPC and returns enabled entries
+in NIP-07 form. It adds no relay defaults and keeps an explicitly empty list
+empty. The same bridge serves dashboard frames and detached signer tabs.
+Its tests cover enabled/disabled relays, an empty list and lookup failure.
+
+`0032-dashboard-dompurify-3.4.17.patch` raises the existing DOMPurify dependency
+and lock from 3.4.16 to 3.4.17. The patched version clears the production npm
+audit findings; see the [maintainer's advisory](https://github.com/cure53/DOMPurify/security/advisories/GHSA-cg2g-xh64-v4q7).
+
 The fixture waits for startup recovery's existing lifecycle lock before making
 an install request and supplies the catalogue's image field. HTTP readiness
 alone precedes completion of startup recovery; an asynchronous install response

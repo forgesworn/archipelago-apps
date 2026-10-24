@@ -12,7 +12,7 @@ work=$(mktemp -d)
 cleanup() {
   code=$?
   if [ "$code" != 0 ]; then
-    docker exec "$name" journalctl -u archipelago -u docker -u archipelago-fips --no-pager -n 120 > "$root/.local/docker-host-journal.log" 2>&1 || true
+    docker exec "$name" journalctl -u archipelago -u docker -u archipelago-fips --no-pager -n 1000 > "$root/.local/docker-host-journal.log" 2>&1 || true
   fi
   docker rm -f "$name" >/dev/null 2>&1 || true
   docker image rm "$name" >/dev/null 2>&1 || true
