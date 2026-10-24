@@ -23,6 +23,8 @@ for node requirements and qualification limits. Its install catalogue is
 released only after the public image is available for both architectures.
 The [24 October delivery record](docs/spry-delivery-20261024.md) records released
 versions, fresh-host checks and remaining physical acceptance.
+For an installed 1.9.1 node, the [existing-node updater](docs/existing-node-update.md)
+applies backend p2 and catalogue p3 with a backup and rollback.
 
 The earlier `spry-turn-lab` experiment and independent transport qualification
 remain documented in [Archy call services](docs/archy-call-services.md).

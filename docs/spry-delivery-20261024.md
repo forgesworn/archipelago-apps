@@ -1,7 +1,9 @@
 # Spry pairing delivery — 24 October 2026
 
 For an existing ForgeSworn Archipelago bundle, install the matching 1.9.1
-backend p2 and catalogue p3 update, then:
+backend p2 and catalogue p3 update using the
+[existing-node update command](existing-node-update.md) on a compatible
+installed 1.9.1 node. Then:
 
 1. Install **Spry** from the dashboard.
 2. Open it, choose **Pair with KithMoot** and approve the pairing.
