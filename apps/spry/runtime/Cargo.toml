@@ -9,8 +9,8 @@ authors = ["TheCryptoDonkey"]
 description = "Archipelago adapter for the standalone Spry libraries"
 
 [dependencies]
-spry-access = { git = "https://github.com/forgesworn/spry-turn.git", rev = "492eb708a282f666e6dcec550e4d94a1e56b9599" }
-spry-service = { git = "https://github.com/forgesworn/spry-turn.git", rev = "492eb708a282f666e6dcec550e4d94a1e56b9599" }
+spry-access = { git = "https://github.com/forgesworn/spry-turn.git", rev = "2efb05102838a45945b11a0f9c82a924bfcb8349" }
+spry-service = { git = "https://github.com/forgesworn/spry-turn.git", rev = "2efb05102838a45945b11a0f9c82a924bfcb8349" }
 
 [lints.rust]
 unsafe_code = "forbid"

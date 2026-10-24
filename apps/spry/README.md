@@ -1,79 +1,82 @@
 # Spry on Archipelago
 
-Install **Spry** in Archipelago, open it, and choose **Pair with KithMoot**.
-Approve the pairing in KithMoot. Then use the normal Call button in a
-conversation or group. The people joining need no Spry installation or relay
-settings. The paired app can close after sharing access.
+1. Install **Spry** in the ForgeSworn Archipelago bundle.
+2. Open it and choose **Pair with KithMoot**. Approve the pairing.
+3. Use KithMoot's normal Call button, in a conversation or group.
 
-The node runs the Rust Spry relay and a separate Rust pairing service. The
-browser interface uses JavaScript; Android uses Kotlin and native WebRTC.
-There is no Node interpreter in the installed package.
+The matching ForgeSworn bundle update includes backend p11 and catalogue p11.
+Older bundles need that node update before installing this package.
 
-Spry is a standalone ForgeSworn product. Its relay, access library and HTTP
-service live in the [Spry repository](https://github.com/forgesworn/spry-turn).
-This package consumes pinned `spry-access` and `spry-service` libraries and
-supplies the Archipelago dashboard/signing assets. The app manager supplies
-installation and owner keys; the app gate supplies host HTTPS. Shared pairing
-and credential logic is maintained in Spry and tested there. Other ForgeSworn
-applications can use the same libraries without installing Archipelago.
+Each home node runs its own Spry. Once both people have paired, their nodes
+connect over Archipelago's existing mesh. A third participant's VPS is not
+needed for their call. Docker uses the same real Archipelago backend and package, through
+its existing Docker runtime support.
 
-## Node prerequisites
+The mesh must already work on the node. The package selects its `fips0` route,
+the node's existing owner identities, local hostname and host certificate.
+Spry waits for that route and becomes ready automatically. No port forwarding,
+TURN password or relay address is entered in KithMoot. The owner approves use
+of their selected Nostr read/write relays when pairing; no new default relay
+or publisher-operated directory is installed.
 
-This package needs an Archipelago node with a public IPv4 address, a public
-HTTPS hostname and the host's renewing certificate configuration. An explicit
-IPv4 NAT mapping is supported through operator configuration. Spry does not
-silently configure a router, select a central relay or bypass CGNAT.
-These are node requirements, not settings each caller must enter.
+The people in a private-only call need access to their own paired nodes. A
+publicly reachable standalone Spry can also share TURN access with guests
+who have no node. Spry's public HTTPS access protocol remains supported.
 
-The package needs the backend containing patch 0025 and the matching frontend
-catalogue. It declares its complete transport surface: control HTTPS 3744,
-TURN UDP/TCP 3478, host-terminated TURN TLS 5349 and UDP peer ports
-49160–49191. Installation adds only its named rules to an already active UFW;
-uninstallation removes only its own rules. Existing firewall policy and
-rules remain under node administration. External provider firewalls and NAT
-still need to permit this surface.
+## Libraries and host boundaries
 
-The host terminates TLS using Archipelago's certificate resolver, including
-renewal. The container receives no dashboard TLS key. It runs rootless with
-a read-only root, no extra capabilities, 128 MiB and one CPU. Packet forwarding
-remains in the separate Spry executable.
+Spry is standalone. Its reusable Rust libraries live in the
+[Spry repository](https://github.com/forgesworn/spry-turn):
 
-## Pairing and access
+| Library | Responsibility |
+|---|---|
+| `spry-turn` | Packet forwarding, TURN authentication and resource limits |
+| `spry-access` | Pairing, scoped grants and short-lived credentials; no sockets |
+| `spry-link` | Signed encrypted control messages, peer cards and packet frames; no sockets |
+| `spry-service` | Optional HTTP, Nostr and OS mesh adapters, plus the standalone executable |
+
+This package pins those libraries and supplies only the dashboard/signing
+assets. Archipelago's app manager owns installation and owner keys; its app
+gate owns renewing HTTPS and optional TURN TLS; its networking layer owns
+FIPS, routing and firewall policy. Spry never imports an Archipelago or FIPS
+SDK. Other ForgeSworn products can consume the same libraries independently.
+
+The installed relay and service use Rust. The UI uses JavaScript and Android
+uses Kotlin with native WebRTC. The image contains no Node interpreter. It
+has a read-only root, no extra capabilities, 128 MiB and one CPU. FIPS/TUN
+privileges belong to the Archipelago host, outside the Spry container.
+
+## Transport and access
+
+The owner UI is HTTPS 3744. Clients reach their own node over UDP/TCP 3478,
+with host-managed TURN TLS on 5349. Signed peer traffic uses TCP 3745 bound
+only to the mesh ULA. Virtual relay ports 49160–49191 remain on loopback and
+cross the authenticated peer link; the package does not publish them.
+Installation owns only its named firewall rules and its FIPS drop-in;
+uninstallation removes those exact rules and preserves unrelated policy.
 
 A node identity authorises a five-minute, single-use pairing link. KithMoot
-creates a separate transport signing key and confirms the pairing. The
-node's TURN secret never leaves the node.
+creates a separate transport key. Each room receives opaque access inside its
+encrypted descriptor. Devices obtain independent five-minute credentials;
+KithMoot renews them and updates calls. Room and media keys stay in KithMoot.
+Signed node cards let a paired app authorise room peers with its own node;
+foreign adverts never make the app probe another person's local network or
+open their advertised control relays.
 
-Each room receives an opaque capability inside its encrypted descriptor.
-Every device proves possession of its own transport key to obtain independent
-five-minute TURN credentials. KithMoot renews them and updates live calls.
-Guests can retain and restate shared access while the paired participant is
-offline. The node persists capabilities privately across restarts; their
-30-day idle lease extends through use. A capability authorises bounded relay
-use, and does not itself grant room membership or media decryption keys.
-
-Remove a pairing in Spry to revoke its room capabilities and future
-credentials. Credentials already issued expire within five minutes. Pairing
-management is signed and restricted to node identities; no anonymous issuer
-or arbitrary upstream proxy is installed.
+Remove a pairing to revoke its grants, future credentials and peer routes.
+Existing credentials and allocations expire within five minutes. The node
+persists pairings and grants privately across restarts; room capabilities
+have a 30-day idle lease extended through use. No arbitrary proxy is installed.
 
 ## Verification
 
-Run `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D warnings`
-and `cargo test --locked --workspace`. The image workflow builds both native
-architectures and runs independent socket interop against the packaged relay.
-The frontend release waits for an anonymously pullable image for both
-architectures before publishing its install catalogue.
+Run Rust fmt, clippy and workspace tests. Image CI builds both native
+architectures and runs independent UDP/TCP/TLS interop. The frontend release
+waits for an anonymously pullable image on both architectures.
 
-`tests/spry-flow.mjs` drives the actual pairing and call interfaces with
-locally generated identities and media. It requires a built KithMoot checkout,
-Playwright Chromium, the Rust control executable and a Spry relay executable.
-Its receipt distinguishes local browser/loopback proof from public TLS/NAT,
-independent-node installation and physical Android acceptance. Raw failure
-artifacts belong in ignored local storage.
-
-The [standalone-library receipt](../../docs/evidence/spry-standalone-libraries-browser-20261024.json)
-uses the executable built directly from Spry, including its independent UI.
-It verifies pairing, group media, a new guest and a guest reload with the
-paired participant closed. That extraction check does not repeat the earlier
-330-second renewal run and does not establish cross-home-network operation.
+Spry's `tests/mesh.py` checks real encrypted packet forwarding in two isolated
+Linux containers. Its `tests/home-flow.mjs` drives actual pairing screens and
+a built KithMoot PWA across two or three separate services, including reload
+and renewal. The receipts distinguish generated browser media, Docker routes,
+TLS fixtures, the installed bundle and physical home-network acceptance.
+A Docker bridge test alone does not prove FIPS across independent home NATs.

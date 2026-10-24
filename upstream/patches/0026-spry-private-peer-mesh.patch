@@ -1,0 +1,168 @@
+From 7662336b0f9b2750648766eea9581fead99c6cd5 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <147930957+TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 17:21:51 +0100
+Subject: [PATCH] feat: authorise the bounded Spry link on the existing mesh
+ firewall
+
+---
+ .../archipelago/src/container/spry_network.rs | 109 +++++++++++++++++-
+ 1 file changed, 105 insertions(+), 4 deletions(-)
+
+diff --git a/core/archipelago/src/container/spry_network.rs b/core/archipelago/src/container/spry_network.rs
+index 9809366..a357aff 100644
+--- a/core/archipelago/src/container/spry_network.rs
++++ b/core/archipelago/src/container/spry_network.rs
+@@ -2,11 +2,12 @@
+ //! Never enables a firewall, changes its policy or opens the dashboard.
+ use anyhow::{anyhow, Result};
+ use std::time::Duration;
+-use tokio::process::Command;
++use tokio::{io::AsyncWriteExt, process::Command};
+ 
+ const MARK: &str = "archipelago-spry";
+-const RULES: [&str; 5] = [
++const RULES: [&str; 6] = [
+     "3744/tcp",
++    "3745/tcp",
+     "3478/tcp",
+     "3478/udp",
+     "5349/tcp",
+@@ -40,7 +41,84 @@ fn owned(added: &str, rule: &str) -> bool {
+             .any(|line| line.trim() == format!("ufw allow {rule} comment '{MARK}'"))
+ }
+ 
++const MESH_DROPIN: &str = "/etc/fips/fips.d/86-spry.nft";
++const MESH_RULE: &str =
++    "# Owned by archipelago-spry: authenticated private peer link only.\niifname \"fips0\" ip6 saddr fc00::/7 tcp dport 3745 accept\n";
++
++async fn privileged(args: &[&str]) -> Result<()> {
++    let output = tokio::time::timeout(
++        Duration::from_secs(15),
++        Command::new("sudo")
++            .arg("-n")
++            .args(args)
++            .kill_on_drop(true)
++            .output(),
++    )
++    .await
++    .map_err(|_| anyhow!("Spry mesh firewall operation timed out"))??;
++    if !output.status.success() {
++        return Err(anyhow!("Spry mesh firewall could not be updated"));
++    }
++    Ok(())
++}
++
++/// Own one fixed FIPS drop-in; never replace a file maintained by somebody else.
++async fn mesh_rule(enabled: bool) -> Result<()> {
++    let existing = match tokio::fs::read(MESH_DROPIN).await {
++        Ok(bytes) => Some(bytes),
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
++        Err(error) => return Err(error.into()),
++    };
++    if existing
++        .as_deref()
++        .is_some_and(|bytes| bytes != MESH_RULE.as_bytes())
++    {
++        return Err(anyhow!(
++            "Spry mesh firewall slot is already managed separately"
++        ));
++    }
++    if enabled {
++        if !std::path::Path::new("/etc/fips/fips.nft").exists() {
++            return Ok(());
++        }
++        privileged(&["install", "-d", "-m", "0755", "/etc/fips/fips.d"]).await?;
++        let stage = std::env::temp_dir().join(format!("spry-mesh-{}.nft", uuid::Uuid::new_v4()));
++        let mut file = tokio::fs::OpenOptions::new()
++            .create_new(true)
++            .write(true)
++            .mode(0o600)
++            .open(&stage)
++            .await?;
++        let result = async {
++            file.write_all(MESH_RULE.as_bytes()).await?;
++            file.flush().await?;
++            privileged(&[
++                "install",
++                "-m",
++                "0644",
++                stage
++                    .to_str()
++                    .ok_or_else(|| anyhow!("Invalid staging path"))?,
++                MESH_DROPIN,
++            ])
++            .await
++        }
++        .await;
++        let _ = tokio::fs::remove_file(&stage).await;
++        result?;
++    } else if existing.is_some() {
++        privileged(&["rm", "-f", MESH_DROPIN]).await?;
++    } else {
++        return Ok(());
++    }
++    if std::path::Path::new("/etc/fips/fips.nft").exists() {
++        privileged(&["nft", "-f", "/etc/fips/fips.nft"]).await?;
++    }
++    Ok(())
++}
++
+ pub async fn install() -> Result<()> {
++    mesh_rule(true).await?;
+     if !std::path::Path::new("/usr/sbin/ufw").exists() {
+         return Ok(());
+     }
+@@ -52,7 +130,7 @@ pub async fn install() -> Result<()> {
+         return Ok(());
+     }
+     let before = ufw(&["show", "added"]).await?;
+-    for rule in RULES {
++    for rule in RULES.into_iter().filter(|rule| *rule != "49160:49191/udp") {
+         if let Err(error) = ufw(&["insert", "1", "allow", rule, "comment", MARK]).await {
+             // Insert skips equivalent existing rules, including their comment.
+             // Plain allow would replace the comment and steal ownership.
+@@ -66,10 +144,25 @@ pub async fn install() -> Result<()> {
+             return Err(error);
+         }
+     }
++    // Peer aliases now stay on loopback and cross the signed mesh link.
++    // Remove only the old package-owned public relay range during upgrade.
++    let after = ufw(&["show", "added"]).await?;
++    if owned(&after, "49160:49191/udp") {
++        ufw(&[
++            "--force",
++            "delete",
++            "allow",
++            "49160:49191/udp",
++            "comment",
++            MARK,
++        ])
++        .await?;
++    }
+     Ok(())
+ }
+ 
+ pub async fn remove() -> Result<()> {
++    mesh_rule(false).await?;
+     if !std::path::Path::new("/usr/sbin/ufw").exists() {
+         return Ok(());
+     }
+@@ -98,6 +191,14 @@ mod tests {
+         ] {
+             assert!(!owned(rules, rule));
+         }
+-        assert_eq!(RULES.len(), 5);
++        assert_eq!(RULES.len(), 6);
++        assert_eq!(
++            MESH_RULE
++                .lines()
++                .filter(|line| !line.starts_with('#'))
++                .collect::<Vec<_>>(),
++            vec!["iifname \"fips0\" ip6 saddr fc00::/7 tcp dport 3745 accept"]
++        );
++        assert!(MESH_DROPIN.ends_with("/86-spry.nft"));
+     }
+ }
+-- 
+2.39.5 (Apple Git-154)
+
