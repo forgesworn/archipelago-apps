@@ -74,6 +74,7 @@ def install(source, binary):
         shutil.copyfile(binary, DEST / 'spry-public-issuer')
         (DEST / 'spry-public-issuer').chmod(0o755)
         shutil.copyfile(source / 'refill.py', DEST / 'refill.py')
+        shutil.copyfile(source / 'install.py', DEST / 'install.py')
         DATA.mkdir(mode=0o750); os.chown(DATA, 0, user.pw_gid)
         runtime = DATA / 'runtime'; runtime.mkdir(mode=0o700); os.chown(runtime, user.pw_uid, user.pw_gid)
         for name in UNITS:

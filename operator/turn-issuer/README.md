@@ -70,7 +70,7 @@ rollback removes only this installation's listener, service, pool and firewall
 rule; the existing TURN server and private dashboard remain available:
 
 ```sh
-python3 install.py rollback
+python3 /opt/archipelago/spry-public-issuer/install.py rollback
 ```
 
 Keep the installer and receipt with the operator's deployment record. Do not
