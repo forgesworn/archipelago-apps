@@ -1,0 +1,127 @@
+From 7cd9d1996eed9765301805de3cbdef7e53f0a19a Mon Sep 17 00:00:00 2001
+From: archipelago-apps <ci@invalid>
+Date: Sat, 24 Oct 2026 10:36:17 +0100
+Subject: [PATCH] fix: probe the first TCP published port and restart through
+ the Quadlet unit
+
+podman lists a container's tcp and udp publishes in a random order, so taking the first line of `podman port` probed a UDP port with a TCP connect for about half the installs of an app that publishes both, and the install then failed. Take the first /tcp line. When the probe does fail, restart a Quadlet-owned container through its unit: a bare `podman restart` races the unit's own stop and remove, and the new network helper can find the port still held.
+---
+ .../src/api/rpc/package/install.rs            | 81 ++++++++++++++-----
+ 1 file changed, 61 insertions(+), 20 deletions(-)
+
+diff --git a/core/archipelago/src/api/rpc/package/install.rs b/core/archipelago/src/api/rpc/package/install.rs
+index 22390eba..8c01174c 100644
+--- a/core/archipelago/src/api/rpc/package/install.rs
++++ b/core/archipelago/src/api/rpc/package/install.rs
+@@ -2178,19 +2178,36 @@ async fn ensure_host_port_listener(
+     .await;
+     cleanup_stale_package_ports(package_id).await;
+ 
+-    let output = tokio::process::Command::new("podman")
+-        .args(["restart", container_name])
+-        .output()
+-        .await
+-        .context("failed to restart container after missing host port")?;
+-    if !output.status.success() {
+-        let stderr = String::from_utf8_lossy(&output.stderr);
+-        return Err(anyhow::anyhow!(
+-            "Container {} host port {} was not listening and restart failed: {}",
+-            container_name,
+-            port,
+-            stderr.trim()
+-        ));
++    // A container owned by a Quadlet unit is restarted through the unit. A bare
++    // `podman restart` races the unit's own stop and remove (the container runs --rm):
++    // the new network helper (pasta) can start while the old one still holds the port and
++    // fail with "Address already in use", and systemd then restarts the unit anyway.
++    let unit = format!("{container_name}.service");
++    if crate::container::quadlet::unit_exists(container_name).await {
++        if let Err(err) = crate::container::quadlet::restart_service(&unit).await {
++            return Err(anyhow::anyhow!(
++                "Container {} host port {} was not listening and restarting {} failed: {}",
++                container_name,
++                port,
++                unit,
++                err
++            ));
++        }
++    } else {
++        let output = tokio::process::Command::new("podman")
++            .args(["restart", container_name])
++            .output()
++            .await
++            .context("failed to restart container after missing host port")?;
++        if !output.status.success() {
++            let stderr = String::from_utf8_lossy(&output.stderr);
++            return Err(anyhow::anyhow!(
++                "Container {} host port {} was not listening and restart failed: {}",
++                container_name,
++                port,
++                stderr.trim()
++            ));
++        }
+     }
+ 
+     if wait_for_host_port(package_id, port, 60).await {
+@@ -2218,11 +2235,21 @@ async fn published_host_port(container_name: &str) -> Option<u16> {
+     if !output.status.success() {
+         return None;
+     }
+-    let stdout = String::from_utf8_lossy(&output.stdout);
+-    stdout.lines().find_map(|line| {
+-        line.rsplit(':')
+-            .next()
+-            .and_then(|p| p.trim().parse::<u16>().ok())
++    first_tcp_host_port(&String::from_utf8_lossy(&output.stdout))
++}
++
++/// The host port of the first TCP line of `podman port` output
++/// (`8780/tcp -> 0.0.0.0:8780`). The caller probes it with a TCP connect, which a UDP
++/// publish (`47800/udp -> ...`) can never answer, and podman lists a container's tcp and
++/// udp publishes in a random order (its port parser iterates a Go map), so taking the first
++/// line of any kind failed installs of apps that publish both, about half the time.
++fn first_tcp_host_port(podman_port_output: &str) -> Option<u16> {
++    podman_port_output.lines().find_map(|line| {
++        let (container_side, host_side) = line.split_once("->")?;
++        if !container_side.trim().ends_with("/tcp") {
++            return None;
++        }
++        host_side.rsplit(':').next()?.trim().parse::<u16>().ok()
+     })
+ }
+ 
+@@ -2614,8 +2641,9 @@ fn is_unknown_app_id_error(err: &anyhow::Error) -> bool {
+ #[cfg(test)]
+ mod tests {
+     use super::{
+-        orchestrator_install_app_id, parse_setup_token, patched_indeedhub_nginx_config,
+-        should_try_orchestrator_install, uses_orchestrator_install_flow,
++        first_tcp_host_port, orchestrator_install_app_id, parse_setup_token,
++        patched_indeedhub_nginx_config, should_try_orchestrator_install,
++        uses_orchestrator_install_flow,
+     };
+     use crate::api::rpc::package::runtime::orchestrator_uninstall_app_ids;
+ 
+@@ -2790,6 +2818,19 @@ mod tests {
+         assert_eq!(parse_setup_token(&logs), None);
+     }
+ 
++    #[test]
++    fn host_port_probe_takes_the_first_tcp_line_whatever_the_order() {
++        // podman lists tcp and udp publishes in a random order; a UDP line must not be
++        // probed with a TCP connect.
++        let udp_first = "47800/udp -> 0.0.0.0:47800\n8780/tcp -> 0.0.0.0:8780\n";
++        let tcp_first = "8780/tcp -> 0.0.0.0:8780\n47800/udp -> 0.0.0.0:47800\n";
++        assert_eq!(first_tcp_host_port(udp_first), Some(8780));
++        assert_eq!(first_tcp_host_port(tcp_first), Some(8780));
++        assert_eq!(first_tcp_host_port("47800/udp -> 0.0.0.0:47800\n"), None);
++        assert_eq!(first_tcp_host_port("3000/tcp -> [::]:3001\n"), Some(3001));
++        assert_eq!(first_tcp_host_port(""), None);
++    }
++
+     #[test]
+     fn portainer_setup_token_rejects_short_or_non_hex_values() {
+         assert_eq!(parse_setup_token(&["setup_token=abc123"]), None);
+-- 
+2.39.5 (Apple Git-154)
+
