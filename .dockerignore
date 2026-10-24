@@ -1,0 +1,13 @@
+**
+!LICENSE
+!Cargo.toml
+!Cargo.lock
+!apps/
+!apps/spry/
+!apps/spry/Dockerfile
+!apps/spry/runtime/
+!apps/spry/runtime/Cargo.toml
+!apps/spry/runtime/src/
+!apps/spry/runtime/src/**
+!apps/spry/public/
+!apps/spry/public/**

@@ -13,6 +13,12 @@ Archipelago itself.
 | `wildbloom` | Encrypt, replicate or shard files, recover from receipts, and use your node identities to sign |
 
 For existing installations, see the [Wildbloom upgrade guide](docs/wildbloom-upgrade.md).
+
+For the new operator-owned call transport experiment, see
+[Archy call services](docs/archy-call-services.md). Spry is a private local
+package experiment, outside the installable catalogue; public service
+discovery and Internet deployment are not yet qualified.
+
 The browser defaults to your own node. Optional LNURLcash sales default to the
 reference mint at `mint.lnurlcash.com`; Moneyer remains an explicit test/development
 choice. For capacity reserved for yourself and private configuration, see

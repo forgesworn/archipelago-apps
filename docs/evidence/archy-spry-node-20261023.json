@@ -1,0 +1,65 @@
+{
+  "image_id": "sha256:a1eebc1872ead4c304cd53e746f93d39c019dda37cdbf95c031fce4d77b7b6b0",
+  "archive_sha256": "3728540e0cf6e0503c9d3cca2b99db0436625a96529af0e5713532bb8e61ad76",
+  "architecture": "amd64",
+  "source_ref": "a76496bbcb60e637c0606c8da5919b5a3b2b3cf3",
+  "manifest_sha256": "02f28c27e033a193c2aa268d0a73ff4498ae74828c7ab698ed22a012679f82c1",
+  "date": "2026-10-23",
+  "scope": "owner-authorised qualification on an owner-controlled node",
+  "image_loaded_into_rootless_podman": true,
+  "installed_through_archy_api": false,
+  "node_socket_tests": {
+    "passed": 22,
+    "uid": 1000,
+    "public_network": false,
+    "generated_tls_fixture": true,
+    "temporary_test_files_and_container_removed": true
+  },
+  "local_package_and_installer_tests": 16,
+  "existing_host": {
+    "os": "Debian 13",
+    "architecture": "x86_64",
+    "public_certificate_already_present": true,
+    "certificate_renewal_timer_active": true,
+    "strict_dashboard_tls_verified_from_node": true,
+    "inbound_firewall_ssh_only": true,
+    "container_log_driver": "journald",
+    "firewall_logging": "low",
+    "certificate_http_webroot_renewal_reachability_verified": false
+  },
+  "mutations": {
+    "rootless_image_loaded": true,
+    "private_install_bundle_staged": true,
+    "runtime_manifest_staged": false,
+    "dashboard_or_other_apps_changed": false,
+    "firewall_changed": false,
+    "dns_changed": false,
+    "certificate_changed": false,
+    "discovery_published": false
+  },
+  "pending": [
+    "owner-supplied authenticated dashboard installation",
+    "node-generated TURN secret readback",
+    "service lifecycle and resource enforcement",
+    "public TURN/TLS and credential access",
+    "cross-network media",
+    "signed discovery and independent client interop",
+    "physical GrapheneOS",
+    "OSA application to combined offering"
+  ],
+  "installer_sha256": "6a93016d8e9498232d3a1c534014ccf5dfb0770c438ffd13d64992ee68a1ff6f",
+  "installer_tests_sha256": "e72f5af2790d80c1ab794f01e5eb14f2b88d6f6c9a47b2ce867ef7d5617e5117",
+  "external_probe": {
+    "socket_only_connect_not_service_evidence": true,
+    "dashboard_strict_tls": "timeout",
+    "turn_strict_tls": "timeout"
+  },
+  "cleanup": {
+    "local_task_image_removed": true,
+    "local_private_build_archive_removed": true,
+    "remote_test_fixture_removed": true,
+    "remote_export_container_removed": true,
+    "node_image_and_small_install_bundle_retained_for_installation": true,
+    "existing_apps_preserved": true
+  }
+}

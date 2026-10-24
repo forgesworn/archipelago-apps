@@ -1,0 +1,402 @@
+From f613b84faba47c4bc1f7ff923d44086d88d3b075 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 12:18:07 +0100
+Subject: [PATCH] feat: provision bounded Spry transport and host-managed TURN
+ TLS
+
+---
+ .../src/api/rpc/package/install.rs            |   3 +
+ .../src/api/rpc/package/runtime.rs            |   6 +
+ core/archipelago/src/appgate/identity.rs      |  30 +++++
+ core/archipelago/src/appgate/listener.rs      | 103 +++++++++++++++++-
+ core/archipelago/src/appgate/mod.rs           |   1 +
+ core/archipelago/src/container/mod.rs         |   1 +
+ .../archipelago/src/container/spry_network.rs | 103 ++++++++++++++++++
+ 7 files changed, 241 insertions(+), 6 deletions(-)
+ create mode 100644 core/archipelago/src/container/spry_network.rs
+
+diff --git a/core/archipelago/src/api/rpc/package/install.rs b/core/archipelago/src/api/rpc/package/install.rs
+index ae2570e..5112bbf 100644
+--- a/core/archipelago/src/api/rpc/package/install.rs
++++ b/core/archipelago/src/api/rpc/package/install.rs
+@@ -1053,6 +1053,9 @@ impl RpcHandler {
+             repair_nextcloud_permissions().await;
+         }
+ 
++        if package_id == "spry" {
++            crate::container::spry_network::install().await?;
++        }
+         ensure_host_port_listener(package_id, container_name, &ports).await?;
+ 
+         install_log(&format!(
+diff --git a/core/archipelago/src/api/rpc/package/runtime.rs b/core/archipelago/src/api/rpc/package/runtime.rs
+index ca081db..6029ac0 100644
+--- a/core/archipelago/src/api/rpc/package/runtime.rs
++++ b/core/archipelago/src/api/rpc/package/runtime.rs
+@@ -498,6 +498,12 @@ impl RpcHandler {
+             ));
+         }
+ 
++        if package_id == "spry" {
++            if let Err(error) = crate::container::spry_network::remove().await {
++                cleanup_errors.push(error.to_string());
++            }
++        }
++
+         // Containers are gone → the app is uninstalled. Remove its state entry
+         // NOW, before the (possibly slow, possibly fallible) volume/data
+         // teardown below, so My Apps updates immediately and a residue failure
+diff --git a/core/archipelago/src/appgate/identity.rs b/core/archipelago/src/appgate/identity.rs
+index 36a0d6e..5131bd3 100644
+--- a/core/archipelago/src/appgate/identity.rs
++++ b/core/archipelago/src/appgate/identity.rs
+@@ -49,6 +49,8 @@ pub struct GatedPort {
+     /// proxying (frame-header fixes, app-down page, Tor upstream); it just
+     /// forwards every request to the app's own authentication.
+     pub auth_enabled: bool,
++    /// Fixed native TURN target for the explicit Spry TLS declaration only.
++    pub turn_upstream: Option<u16>,
+ }
+ 
+ /// A port deliberately left unauthenticated, and the manifest's stated reason.
+@@ -286,6 +288,13 @@ fn classify_manifest(manifest: &AppManifest, map: &mut PortMap) {
+                         declared: true,
+                         session_passthrough: port.session_passthrough,
+                         auth_enabled: port.auth_policy() == PortAuth::Gated,
++                        turn_upstream: (app_id == "spry"
++                            && protocol == "tcp"
++                            && port.host == 5349
++                            && port.container == 3478
++                            && port.bind == "127.0.0.1"
++                            && port.auth_policy() == PortAuth::Open)
++                            .then_some(3478),
+                     },
+                 );
+             }
+@@ -340,6 +349,7 @@ fn classify_manifest(manifest: &AppManifest, map: &mut PortMap) {
+                         // can stand: reporting-and-protecting is the safe
+                         // default (operator override still applies below).
+                         auth_enabled: true,
++                        turn_upstream: None,
+                     },
+                 );
+             }
+@@ -384,6 +394,26 @@ mod tests {
+         map
+     }
+ 
++    #[test]
++    fn only_the_explicit_spry_tls_mapping_selects_a_native_target() {
++        let base = BASE.replace("id: testapp", "id: spry");
++        let declaration = format!("{base}  ports:\n    - host: 5349\n      container: 3478\n      protocol: tcp\n      bind: 127.0.0.1\n      auth: open\n      auth_rationale: Native TURN verifies its own credentials\n");
++        assert_eq!(
++            classified(&declaration).gated(5349).unwrap().turn_upstream,
++            Some(3478)
++        );
++        for changed in [
++            declaration.replace("id: spry", "id: another"),
++            declaration.replace("container: 3478", "container: 22"),
++            declaration.replace("bind: 127.0.0.1", "bind: 0.0.0.0"),
++            declaration.replace("auth: open", "auth: none"),
++        ] {
++            assert!(classified(&changed)
++                .gated_ports()
++                .all(|p| p.turn_upstream.is_none()));
++        }
++    }
++
+     /// An installed manifest the catalogue does not list still reports the
+     /// auth it declares, so the dashboard can frame a gated port over https.
+     #[test]
+diff --git a/core/archipelago/src/appgate/listener.rs b/core/archipelago/src/appgate/listener.rs
+index a375cb9..32e9427 100644
+--- a/core/archipelago/src/appgate/listener.rs
++++ b/core/archipelago/src/appgate/listener.rs
+@@ -245,7 +245,13 @@ async fn sweep(
+         // port for an app that is not installed makes its later install hit
+         // "address already in use", and the install's port-free step then
+         // kills the daemon holding it.
+-        if !app_is_listening(app.port).await {
++        if !app_is_listening(if app.turn_upstream.is_some() {
++            3744
++        } else {
++            app.port
++        })
++        .await
++        {
+             continue;
+         }
+ 
+@@ -357,9 +363,18 @@ fn spawn_accept_loop(
+             tokio::select! {
+                 accepted = listener.accept() => {
+                     let Ok((stream, peer)) = accepted else { break };
++                    // Bound native TLS tasks across all addresses/listeners.
++                    let permit = if app.turn_upstream.is_some() {
++                        static TURN_SLOTS: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
++                        match TURN_SLOTS.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(64))).clone().try_acquire_owned() {
++                            Ok(permit) => Some(permit),
++                            Err(_) => continue,
++                        }
++                    } else { None };
+                     let gate = gate.clone();
+                     let app = app.clone();
+                     tokio::spawn(async move {
++                        let _permit = permit;
+                         serve_connection(stream, peer, gate, app).await;
+                     });
+                 }
+@@ -421,6 +436,9 @@ async fn serve_connection(
+     gate: Arc<AppGate>,
+     app: GatedPort,
+ ) {
++    if app.turn_upstream.is_some() && app.auth_enabled {
++        return;
++    }
+     let mut first = [0u8; 1];
+     let peeked = tokio::time::timeout(FIRST_BYTE_TIMEOUT, stream.peek(&mut first)).await;
+ 
+@@ -440,7 +458,11 @@ async fn serve_connection(
+                 if let Some(tls_stream) =
+                     accept_tls(acceptor, stream, peer, TLS_HANDSHAKE_TIMEOUT).await
+                 {
+-                    serve_http(tls_stream, peer, gate, app).await;
++                    if let Some(port) = app.turn_upstream {
++                        relay_turn(tls_stream, port).await;
++                    } else {
++                        serve_http(tls_stream, peer, gate, app).await;
++                    }
+                 }
+             }
+             None => {
+@@ -453,14 +475,46 @@ async fn serve_connection(
+                 );
+             }
+         }
+-    } else {
++    } else if app.turn_upstream.is_none() {
+         serve_http(stream, peer, gate, app).await;
+     }
+ }
+ 
+-/// The HTTP half, generic over the transport so TLS and plain share one path —
+-/// the gate's authentication, proxying and upgrade handling must not differ by
+-/// scheme, and generics make that structural rather than a thing to remember.
++/// TLS terminates with the host's renewing certificate. The app receives no
++/// host private key. The only destination is this host's native Spry socket;
++/// no request, manifest URL or peer address can select another destination.
++async fn relay_turn<IO>(mut client: IO, port: u16)
++where
++    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
++{
++    if port != 3478 {
++        return;
++    }
++    for address in host_addresses()
++        .await
++        .into_iter()
++        .filter(|ip| ip.is_ipv4())
++        .take(8)
++    {
++        if let Ok(Ok(mut upstream)) = tokio::time::timeout(
++            std::time::Duration::from_millis(300),
++            tokio::net::TcpStream::connect(SocketAddr::new(address, port)),
++        )
++        .await
++        {
++            // Tokio's two fixed 8 KiB buffers and the global connection cap
++            // bound memory. TURN performs its own auth, quotas and expiry.
++            let _ = tokio::time::timeout(
++                std::time::Duration::from_secs(86400),
++                tokio::io::copy_bidirectional(&mut client, &mut upstream),
++            )
++            .await;
++            return;
++        }
++    }
++}
++
++/// HTTP retains the gate authentication and upgrade path.
+ async fn serve_http<S>(stream: S, peer: SocketAddr, gate: Arc<AppGate>, app: GatedPort)
+ where
+     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+@@ -483,6 +537,43 @@ where
+ mod tests {
+     use super::*;
+ 
++    #[cfg(target_os = "linux")]
++    #[tokio::test]
++    async fn spry_native_target_relays_bytes_and_refuses_other_ports() {
++        use tokio::io::{AsyncReadExt, AsyncWriteExt};
++        let address = host_addresses()
++            .await
++            .into_iter()
++            .find(|ip| ip.is_ipv4())
++            .expect("Linux node needs an IPv4 interface");
++        let upstream = TcpListener::bind(SocketAddr::new(address, 3478))
++            .await
++            .unwrap();
++        let echo = tokio::spawn(async move {
++            let (mut stream, _) = upstream.accept().await.unwrap();
++            let mut generated = vec![0; 32768];
++            stream.read_exact(&mut generated).await.unwrap();
++            stream.write_all(&generated).await.unwrap();
++        });
++        let (mut client, server) = tokio::io::duplex(1024);
++        let relay = tokio::spawn(relay_turn(server, 3478));
++        tokio::time::timeout(std::time::Duration::from_secs(5), async {
++            let expected = vec![42; 32768];
++            client.write_all(&expected).await.unwrap();
++            client.shutdown().await.unwrap();
++            let mut received = Vec::new();
++            client.read_to_end(&mut received).await.unwrap();
++            assert_eq!(received, expected);
++            echo.await.unwrap();
++            relay.await.unwrap();
++        })
++        .await
++        .expect("native forwarding stalled");
++        let (mut client, server) = tokio::io::duplex(32);
++        relay_turn(server, 22).await;
++        assert_eq!(client.read(&mut [0; 1]).await.unwrap(), 0);
++    }
++
+     #[tokio::test]
+     async fn host_addresses_excludes_loopback() {
+         for addr in host_addresses().await {
+diff --git a/core/archipelago/src/appgate/mod.rs b/core/archipelago/src/appgate/mod.rs
+index e529517..d6f7807 100644
+--- a/core/archipelago/src/appgate/mod.rs
++++ b/core/archipelago/src/appgate/mod.rs
+@@ -1351,6 +1351,7 @@ mod tests {
+             declared: true,
+             session_passthrough: false,
+             auth_enabled: true,
++            turn_upstream: None,
+         }
+     }
+ 
+diff --git a/core/archipelago/src/container/mod.rs b/core/archipelago/src/container/mod.rs
+index da3968f..4fbef9c 100644
+--- a/core/archipelago/src/container/mod.rs
++++ b/core/archipelago/src/container/mod.rs
+@@ -18,6 +18,7 @@ pub mod prod_orchestrator;
+ pub mod quadlet;
+ pub mod registry;
+ pub mod secrets;
++pub mod spry_network;
+ pub mod traits;
+ pub mod ui_detection;
+ pub mod version_config;
+diff --git a/core/archipelago/src/container/spry_network.rs b/core/archipelago/src/container/spry_network.rs
+new file mode 100644
+index 0000000..9809366
+--- /dev/null
++++ b/core/archipelago/src/container/spry_network.rs
+@@ -0,0 +1,103 @@
++//! Fixed transport firewall lifecycle for an owner-requested Spry install.
++//! Never enables a firewall, changes its policy or opens the dashboard.
++use anyhow::{anyhow, Result};
++use std::time::Duration;
++use tokio::process::Command;
++
++const MARK: &str = "archipelago-spry";
++const RULES: [&str; 5] = [
++    "3744/tcp",
++    "3478/tcp",
++    "3478/udp",
++    "5349/tcp",
++    "49160:49191/udp",
++];
++
++async fn ufw(args: &[&str]) -> Result<String> {
++    let output = tokio::time::timeout(
++        Duration::from_secs(15),
++        Command::new("sudo")
++            .args(["-n", "/usr/sbin/ufw"])
++            .args(args)
++            .env("LC_ALL", "C")
++            .kill_on_drop(true)
++            .output(),
++    )
++    .await
++    .map_err(|_| anyhow!("Spry firewall operation timed out"))??;
++    if !output.status.success() || output.stdout.len() > 65536 {
++        return Err(anyhow!(
++            "Spry could not configure its transport firewall rules"
++        ));
++    }
++    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
++}
++
++fn owned(added: &str, rule: &str) -> bool {
++    RULES.contains(&rule)
++        && added
++            .lines()
++            .any(|line| line.trim() == format!("ufw allow {rule} comment '{MARK}'"))
++}
++
++pub async fn install() -> Result<()> {
++    if !std::path::Path::new("/usr/sbin/ufw").exists() {
++        return Ok(());
++    }
++    if !ufw(&["status"])
++        .await?
++        .lines()
++        .any(|l| l == "Status: active")
++    {
++        return Ok(());
++    }
++    let before = ufw(&["show", "added"]).await?;
++    for rule in RULES {
++        if let Err(error) = ufw(&["insert", "1", "allow", rule, "comment", MARK]).await {
++            // Insert skips equivalent existing rules, including their comment.
++            // Plain allow would replace the comment and steal ownership.
++            if let Ok(after) = ufw(&["show", "added"]).await {
++                for added in RULES {
++                    if !owned(&before, added) && owned(&after, added) {
++                        let _ = ufw(&["--force", "delete", "allow", added, "comment", MARK]).await;
++                    }
++                }
++            }
++            return Err(error);
++        }
++    }
++    Ok(())
++}
++
++pub async fn remove() -> Result<()> {
++    if !std::path::Path::new("/usr/sbin/ufw").exists() {
++        return Ok(());
++    }
++    let added = ufw(&["show", "added"]).await?;
++    for rule in RULES {
++        if owned(&added, rule) {
++            ufw(&["--force", "delete", "allow", rule, "comment", MARK]).await?;
++        }
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn only_exact_owned_fixed_transport_rules_can_be_removed() {
++        let rules = "ufw allow 22/tcp\nufw allow 3744/tcp comment 'another-app'\nufw allow 3478/udp comment 'archipelago-spry'\nufw allow 443/tcp comment 'archipelago-spry'\n";
++        assert!(owned(rules, "3478/udp"));
++        for rule in [
++            "22/tcp",
++            "3744/tcp",
++            "443/tcp",
++            "1:65535/tcp",
++            "3478/udp; reboot",
++        ] {
++            assert!(!owned(rules, rule));
++        }
++        assert_eq!(RULES.len(), 5);
++    }
++}
+-- 
+2.39.5 (Apple Git-154)
+

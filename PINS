@@ -16,11 +16,13 @@ WILDBLOOM_NODE_REF=b9a7cf48752037fe3588e62ec3a6a12aaebf7ee5
 # The node never re-pulls an existing tag, so every image change needs a new tag.
 WILDBLOOM_PKG_REV=2
 WILDBLOOM_NODE_PKG_REV=2
+SPRY_REF=367efc77c84db7a20eddf70ab243dcd13d9065ef
+SPRY_PKG_REV=1
 # Bumped whenever upstream/patches changes; names the backend release asset.
-BACKEND_PATCH_LEVEL=9
+BACKEND_PATCH_LEVEL=10
 # Frontend build: bumped whenever upstream/patches or the build recipe changes;
 # names the frontend release asset. Node major matches archy's own CI (ci.yml NODE_VERSION).
-FRONTEND_PATCH_LEVEL=8
+FRONTEND_PATCH_LEVEL=9
 FRONTEND_NODE_MAJOR=20
 # Ingle (game hosting on a Keep: Stampede and Twang rooms on one port): hand-loaded into the node's podman, not built or pushed by CI.
 # Bump to the new build's tag whenever the image changes: the node never re-pulls a tag it has.

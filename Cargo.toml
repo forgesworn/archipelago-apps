@@ -1,0 +1,16 @@
+[workspace]
+members = ["apps/spry/runtime"]
+exclude = ["tools/manifest-check"]
+resolver = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+debug = false

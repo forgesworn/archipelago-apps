@@ -1,0 +1,364 @@
+{
+  "date": "2026-10-23",
+  "stage": "public-invited-transport-qualification",
+  "source_ref": "a76496bbcb60e637c0606c8da5919b5a3b2b3cf3",
+  "image_id": "sha256:a1eebc1872ead4c304cd53e746f93d39c019dda37cdbf95c031fce4d77b7b6b0",
+  "manifest_sha256": "118ea32cf4570e2d5f3c88e2f5e4ea0990f7920e43f365907856cddd4948a7fe",
+  "helper_sha256": "d667019df3e30216c1d8be40afa68c04236027335ab29401c7c0e9d32bf2d678",
+  "tests": {
+    "local_unit_tests": 33,
+    "shell_manifest_checks": 18,
+    "canonical_parser": "deployed Archy loaded and rendered the candidate; no separate local Rust checker build",
+    "before_renewal_wire": [
+      {
+        "transport": "udp",
+        "authenticated_bidirectional_data": true,
+        "relay_ports": [
+          49160,
+          49161
+        ],
+        "private_and_loopback_peers_refused": true,
+        "refresh": true
+      },
+      {
+        "transport": "tcp",
+        "authenticated_bidirectional_data": true,
+        "relay_ports": [
+          49162,
+          49163
+        ],
+        "private_and_loopback_peers_refused": true,
+        "refresh": true
+      },
+      {
+        "transport": "tls",
+        "authenticated_bidirectional_data": true,
+        "relay_ports": [
+          49164,
+          49165
+        ],
+        "private_and_loopback_peers_refused": true,
+        "refresh": true
+      },
+      {
+        "negative": "wrong-password",
+        "unauthorised_allocation_refused": true
+      },
+      {
+        "negative": "expired",
+        "unauthorised_allocation_refused": true
+      },
+      {
+        "negative": "wrong-tls-name",
+        "certificate_refused": true
+      }
+    ],
+    "before_renewal_browser": [
+      {
+        "transport": "transport=udp",
+        "dataRoundTrip": true,
+        "endpoints": [
+          {
+            "local": "relay",
+            "remote": "relay",
+            "relayProtocol": "udp",
+            "localPort": 49166,
+            "remotePort": 49167,
+            "framesDecoded": 23,
+            "audioBytes": 4325
+          },
+          {
+            "local": "relay",
+            "remote": "relay",
+            "relayProtocol": "udp",
+            "localPort": 49167,
+            "remotePort": 49166,
+            "framesDecoded": 22,
+            "audioBytes": 4096
+          }
+        ]
+      },
+      {
+        "transport": "transport=tcp",
+        "dataRoundTrip": true,
+        "endpoints": [
+          {
+            "local": "relay",
+            "remote": "relay",
+            "relayProtocol": "tcp",
+            "localPort": 49169,
+            "remotePort": 49168,
+            "framesDecoded": 10,
+            "audioBytes": 1941
+          },
+          {
+            "local": "relay",
+            "remote": "relay",
+            "relayProtocol": "tcp",
+            "localPort": 49168,
+            "remotePort": 49171,
+            "framesDecoded": 8,
+            "audioBytes": 1554
+          }
+        ]
+      },
+      {
+        "transport": "transport=tcp",
+        "dataRoundTrip": true,
+        "endpoints": [
+          {
+            "local": "relay",
+            "remote": "relay",
+            "relayProtocol": "tls",
+            "localPort": 49173,
+            "remotePort": 49174,
+            "framesDecoded": 10,
+            "audioBytes": 1798
+          },
+          {
+            "local": "relay",
+            "remote": "relay",
+            "relayProtocol": "tls",
+            "localPort": 49174,
+            "remotePort": 49172,
+            "framesDecoded": 8,
+            "audioBytes": 1381
+          }
+        ]
+      }
+    ],
+    "after_renewal_wire": [
+      {
+        "transport": "udp",
+        "authenticated_bidirectional_data": true,
+        "relay_ports": [
+          49162,
+          49163
+        ],
+        "data_send_attempts": [
+          1,
+          1
+        ],
+        "private_and_loopback_peers_refused": true,
+        "refresh": true
+      },
+      {
+        "transport": "tcp",
+        "authenticated_bidirectional_data": true,
+        "relay_ports": [
+          49164,
+          49165
+        ],
+        "data_send_attempts": [
+          1,
+          1
+        ],
+        "private_and_loopback_peers_refused": true,
+        "refresh": true
+      },
+      {
+        "transport": "tls",
+        "authenticated_bidirectional_data": true,
+        "relay_ports": [
+          49166,
+          49167
+        ],
+        "data_send_attempts": [
+          1,
+          1
+        ],
+        "private_and_loopback_peers_refused": true,
+        "refresh": true
+      },
+      {
+        "negative": "wrong-password",
+        "unauthorised_allocation_refused": true
+      },
+      {
+        "negative": "expired",
+        "unauthorised_allocation_refused": true
+      },
+      {
+        "negative": "wrong-tls-name",
+        "certificate_refused": true
+      }
+    ],
+    "after_renewal_browser": [
+      {
+        "transport": "transport=udp",
+        "dataRoundTrip": true,
+        "endpoints": [
+          {
+            "decodedAudioRms": 0.7109205613406353,
+            "local": "relay",
+            "remote": "relay",
+            "relayProtocol": "udp",
+            "localPort": 49168,
+            "remotePort": 49169,
+            "framesDecoded": 9,
+            "audioEnergy": 0,
+            "audioSamples": 12480,
+            "audioBytes": 1221
+          },
+          {
+            "decodedAudioRms": 0.7104865437569315,
+            "local": "relay",
+            "remote": "relay",
+            "relayProtocol": "udp",
+            "localPort": 49169,
+            "remotePort": 49168,
+            "framesDecoded": 7,
+            "audioEnergy": 0,
+            "audioSamples": 9600,
+            "audioBytes": 999
+          }
+        ]
+      },
+      {
+        "transport": "transport=tcp",
+        "dataRoundTrip": true,
+        "endpoints": [
+          {
+            "decodedAudioRms": 0.710947310216745,
+            "local": "relay",
+            "remote": "relay",
+            "relayProtocol": "tcp",
+            "localPort": 49171,
+            "remotePort": 49170,
+            "framesDecoded": 11,
+            "audioEnergy": 0,
+            "audioSamples": 27360,
+            "audioBytes": 2368
+          },
+          {
+            "decodedAudioRms": 0.7051488543976514,
+            "local": "relay",
+            "remote": "relay",
+            "relayProtocol": "tcp",
+            "localPort": 49170,
+            "remotePort": 49171,
+            "framesDecoded": 10,
+            "audioEnergy": 0,
+            "audioSamples": 21600,
+            "audioBytes": 1802
+          }
+        ]
+      },
+      {
+        "transport": "transport=tcp",
+        "dataRoundTrip": true,
+        "endpoints": [
+          {
+            "decodedAudioRms": 0.7058936153270291,
+            "local": "relay",
+            "remote": "relay",
+            "relayProtocol": "tls",
+            "localPort": 49175,
+            "remotePort": 49176,
+            "framesDecoded": 12,
+            "audioEnergy": 0,
+            "audioSamples": 27360,
+            "audioBytes": 2285
+          },
+          {
+            "decodedAudioRms": 0.707756105550769,
+            "local": "relay",
+            "remote": "relay",
+            "relayProtocol": "tls",
+            "localPort": 49176,
+            "remotePort": 49175,
+            "framesDecoded": 9,
+            "audioEnergy": 0,
+            "audioSamples": 22560,
+            "audioBytes": 1873
+          }
+        ]
+      }
+    ],
+    "http_boundary": {
+      "/": 404,
+      "/rpc/v1": 404,
+      "/ca.crt": 404,
+      "/app/filebrowser/": 404,
+      "acme_challenge": true,
+      "dashboard_tls_unreachable_from_test_network": true
+    }
+  },
+  "runtime": {
+    "running": true,
+    "readonly_root": true,
+    "log_driver": "none",
+    "memory_max": "134217728",
+    "cpu_max": "100000 100000",
+    "secret_owner_uid": 1000,
+    "secret_mode": "0o600",
+    "secret_absent_from_inspect": true,
+    "tls_mount_readonly": true,
+    "other_apps": [
+      "fedimint-clientd",
+      "wildbloom",
+      "wildbloom-node",
+      "filebrowser",
+      "spry-turn-lab"
+    ],
+    "ufw": "Status: active\n\nTo                         Action      From\n--                         ------      ----\n22/tcp                     ALLOW       Anywhere                  \n3478/udp                   ALLOW       Anywhere                   # spry-invited-qualification\n3478/tcp                   ALLOW       Anywhere                   # spry-invited-qualification\n5349/tcp                   ALLOW       Anywhere                   # spry-invited-qualification\n49160:49191/udp            ALLOW       Anywhere                   # spry-invited-qualification\n80/tcp                     ALLOW       Anywhere                   # spry-invited-qualification\n22/tcp (v6)                ALLOW       Anywhere (v6)             \n3478/udp (v6)              ALLOW       Anywhere (v6)              # spry-invited-qualification\n3478/tcp (v6)              ALLOW       Anywhere (v6)              # spry-invited-qualification\n5349/tcp (v6)              ALLOW       Anywhere (v6)              # spry-invited-qualification\n49160:49191/udp (v6)       ALLOW       Anywhere (v6)              # spry-invited-qualification\n80/tcp (v6)                ALLOW       Anywhere (v6)              # spry-invited-qualification\n\n",
+    "helper_sha256": "d667019df3e30216c1d8be40afa68c04236027335ab29401c7c0e9d32bf2d678"
+  },
+  "certificate": "issuer=C=US, O=Let's Encrypt, CN=YE1\nnotBefore=Oct  4 08:50:54 2026 GMT\nnotAfter=Jan  2 08:50:53 2027 GMT\nX509v3 Subject Alternative Name: \n    DNS:demo.forgesworn.dev\n",
+  "certificate_lifecycle": {
+    "staging_renewal_dry_run": "passed",
+    "deploy_hooks_executed": true,
+    "public_certificate_replaced": false,
+    "active_allocations_lost_on_restart": true
+  },
+  "credential_issuer": {
+    "http_endpoint": false,
+    "mechanism": "owner SSH; node CLI writes an expiring per-device profile",
+    "default_ttl_seconds": 3600,
+    "root_secret_exported": false
+  },
+  "scope": {
+    "dashboard_443_public": false,
+    "discovery_published": false,
+    "client_defaults_changed": false,
+    "independent_third_party_operation_proven": false,
+    "both_browser_peers": "one external Mac, two WebRTC peers, one remote node",
+    "physical_GrapheneOS_acceptance": false,
+    "real_KithMoot_two_device_acceptance": false,
+    "multi_party_screen_redaction_acceptance": false,
+    "performance_or_soak_qualification": false,
+    "provider_firewall_rule_inventory": "not read; actual allowed-path traffic tested"
+  },
+  "observations": [
+    {
+      "phase": "first two activation attempts",
+      "result": "Stopped before firewall opening; saved manifests and SSH-only firewall restored. Corrected port auth from open (HTTP gateway) to none with explicit TURN rationale, and waited for rendered/runtime convergence."
+    },
+    {
+      "phase": "intermediate stronger audio check",
+      "result": "Failed a totalAudioEnergy>0 assertion. This Chromium reports that field as zero even with positive decoded PCM RMS and sample counts. Final gate measures remote decoded waveform through Web Audio with a silent output."
+    },
+    {
+      "phase": "intermediate UDP wire repeat",
+      "result": "One ChannelData receive timed out. Root cause unresolved. Final test allowed at most three UDP attempts and recorded one attempt per direction; no reliability or loss-rate claim."
+    }
+  ],
+  "fixture": {
+    "base_wire_ref": "a76496bbcb60e637c0606c8da5919b5a3b2b3cf3:tests/interop.py",
+    "base_browser_ref": "a76496bbcb60e637c0606c8da5919b5a3b2b3cf3:tests/browser.mjs",
+    "runner_sha256": "6fbd03d3151f4a921da2476dd9bac716ae231acbd6498321173621057f1a76fc",
+    "certificate_bypass_removed": true,
+    "media": "generated oscillator and alternating canvas; no person or screen content",
+    "runner_retained": "private node qualification bundle; source, not credentials"
+  },
+  "legal": {
+    "position_today": "owner-controlled project qualification running invited transport infrastructure",
+    "position_intended": "software/protocol publisher plus independently operated services",
+    "law_note_verified": "2026-09-28",
+    "section_2_11_updated": "2026-10-23",
+    "review_by": "2027-03-28",
+    "access_facility_distinction": "P",
+    "application_to_transport_and_combined_offering": "U",
+    "OSA_exemption_established": false
+  }
+}

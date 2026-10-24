@@ -37,9 +37,13 @@ case "$app" in
   wildbloom)
     smoke=(tests/smoke/wildbloom.sh tests/smoke/own-node.mjs tests/smoke/fixtures tests/smoke/package.json tests/smoke/package-lock.json)
     pin_re='^(WILDBLOOM_REF|WILDBLOOM_PKG_REV)=' ;;
+  spry)
+    smoke=(Cargo.toml Cargo.lock .github/workflows/spry.yml)
+    pin_re='^(SPRY_REF|SPRY_PKG_REV)=' ;;
 esac
 smoke+=("${common_smoke[@]}")
 context=("apps/$app" ":(exclude)apps/$app/manifest.yml")
+if [ "$app" = spry ]; then context+=(Cargo.toml Cargo.lock LICENSE .dockerignore); fi
 
 out=${GITHUB_OUTPUT:-/dev/stdout}
 decide() { # build push message-kind message

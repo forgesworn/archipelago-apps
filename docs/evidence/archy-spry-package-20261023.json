@@ -1,0 +1,50 @@
+{
+  "imageId": "sha256:bbf6bab40de4497301ae6272555c41b7f28d1c20454884e1e80a8b668aff795c",
+  "architecture": "arm64",
+  "os": "linux",
+  "imageSizeBytes": 102473778,
+  "sourceRef": "48d75adf51c73b1ef2a51a3cb663e424f2b4ea35",
+  "imageBuild": true,
+  "isolatedProcessStarted": true,
+  "readOnlyRoot": true,
+  "capabilitiesDropped": true,
+  "credentialHmacVerified": true,
+  "network": "none",
+  "logs": "none",
+  "archysOwnRuntimeTested": false,
+  "networkInteropTestedInContainer": false,
+  "date": "2026-10-23",
+  "sourceFiles": {
+    "scripts/prepare-spry-turn.py": "7229e652ffec1b26a7a598cb4e5754a3bdc709a8149fb24be97fdd0ff857f1cb",
+    "experimental/spry-turn/Dockerfile": "a7809771077321af4f3514d69078cfe3802b80ca404e808b0e2ccbc6a942b956",
+    "tests/test_spry_package.py": "34e13571ac9f7cd938e71cfe9a475fa68a8c2e10039a26c43daf3a85c5334fac"
+  },
+  "packageTestsPassed": 10,
+  "archipelagoRef": "7abd04a7f680e72105ae783cecbe2268e3c8e71b",
+  "shellValidator": {
+    "passed": 18,
+    "failed": 0,
+    "warnings": 0
+  },
+  "rustManifestParserPassed": true,
+  "discoveryEnabled": false,
+  "publicServiceEnabled": false,
+  "generatedNodeSecretIsolationVerified": false,
+  "legalReview": "AI review against jurisdiction-kit notes; not a solicitor opinion or exemption finding",
+  "limits": [
+    "Linux ARM64 Docker build and isolated process/credential smoke only",
+    "No network interoperability test inside this image",
+    "No installed Archy rootless Podman or independent operator acceptance",
+    "No public certificate, bounded relay ports or signed service-discovery implementation"
+  ],
+  "cleanup": {
+    "taskImageAndContainerRemoved": true,
+    "privateSourceContextRemoved": true,
+    "validatorBuildOutputRemoved": true,
+    "retainedCaches": [
+      "pinned upstream Archy source under .cache/archy",
+      "shared Docker build cache"
+    ],
+    "servicesLeftRunning": false
+  }
+}
