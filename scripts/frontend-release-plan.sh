@@ -20,7 +20,7 @@ no() { echo "skip=false"; echo "reason: $1" >&2; exit 0; }
 [ -n "$before" ] && ! [[ "$before" =~ ^0+$ ]] || no "no usable before sha"
 git cat-file -e "$before^{commit}" 2>/dev/null || no "before sha not in the clone"
 git diff --quiet "$before" HEAD -- .github/workflows/frontend.yml scripts/fetch-archy.sh scripts/apply-patches.sh \
-  scripts/frontend-inputs.sh scripts/frontend-release-plan.sh scripts/build-frontend.sh || no "frontend.yml or a script it runs changed"
+  scripts/frontend-inputs.sh scripts/frontend-release-plan.sh scripts/build-frontend.sh scripts/wait-backend-release.sh || no "frontend.yml or a script it runs changed"
 gh release view "$tag" >/dev/null 2>&1 || no "release $tag does not exist"
 prev=$(mktemp -d)
 gh release download "$tag" -p inputs.sha256 -D "$prev" >/dev/null 2>&1 || no "release $tag has no inputs.sha256"

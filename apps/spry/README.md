@@ -9,8 +9,9 @@ Older bundles need that node update before installing this package.
 
 Each home node runs its own Spry. Once both people have paired, their nodes
 connect over Archipelago's existing mesh. A third participant's VPS is not
-needed for their call. Docker uses the same real Archipelago backend and package, through
-its existing Docker runtime support.
+needed for their call. The [Linux Docker host recipe](../../node/docker.md)
+uses the same real Archipelago backend and its existing Docker runtime;
+its fresh-host install qualification remains separate.
 
 The mesh must already work on the node. The package selects its `fips0` route,
 the node's existing owner identities, local hostname and host certificate.

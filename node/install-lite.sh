@@ -3,7 +3,7 @@
 # pinned release frontend + patched backend, nginx, avahi, rootless Podman,
 # no Bitcoin stack. See node/README.md.
 #
-# Usage (on the node, as root): ./install-lite.sh <bundle-dir>
+# Usage (on a fresh Debian 13 node, as root): ./install-lite.sh <bundle-dir> [podman|docker]
 # <bundle-dir> holds: PINS, archipelago, archipelago.sha256, frontend.tar.gz
 #   (checked against frontend.sha256 from our frontend release when present,
 #   else against PINS FRONTEND_SHA256, i.e. upstream's own asset),
@@ -13,9 +13,22 @@
 # reached through an SSH SOCKS tunnel, so connections originate on the node.
 set -euo pipefail
 bundle=${1:?usage: install-lite.sh <bundle-dir>}
+runtime=${2:-podman}
+case "$runtime" in podman|docker) ;; *) echo 'runtime must be podman or docker' >&2; exit 1 ;; esac
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 . "$bundle/PINS"
 test -f "$bundle/recover-wildbloom-payment.py" || { echo "bundle is missing the payment recovery tool" >&2; exit 1; }
+if [ "$runtime" = docker ]; then
+  # This is a fresh-host recipe, not a migration of existing Podman apps.
+  [ ! -f /etc/archipelago/config.toml ] && [ ! -d /var/lib/archipelago/data ] \
+    || { echo 'Docker mode needs a fresh host; existing Archipelago data is preserved' >&2; exit 1; }
+  test -s "$bundle/fips.deb" || { echo 'Docker bundle is missing verified FIPS' >&2; exit 1; }
+  echo '9befcc0990c7e08742b5a88f75d753a1088134b20525156688d559a317334ded  fips.deb' \
+    | (cd "$bundle" && sha256sum -c -)
+  [ "$(dpkg --print-architecture)" = amd64 ] || { echo 'This bundle requires Debian 13 amd64' >&2; exit 1; }
+  . /etc/os-release
+  [ "${VERSION_CODENAME:-}" = trixie ] || { echo 'This bundle requires Debian 13' >&2; exit 1; }
+fi
 archy=$bundle/archy
 # From /, because the service user cannot enter root's cwd and podman exits on
 # that; with the user's own bus, not one inherited from root's login session.
@@ -27,8 +40,14 @@ run_user() {
 export DEBIAN_FRONTEND=noninteractive
 # A fresh cloud image runs apt-daily in the background; wait for its lock.
 apt-get -o DPkg::Lock::Timeout=600 update
-apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends podman netavark aardvark-dns passt uidmap \
-  slirp4netns fuse-overlayfs dbus-user-session nginx avahi-daemon openssl curl jq \
+runtime_packages=()
+if [ "$runtime" = podman ]; then
+  runtime_packages=(podman netavark aardvark-dns passt uidmap slirp4netns fuse-overlayfs)
+elif ! command -v docker >/dev/null; then
+  runtime_packages=(docker.io)
+fi
+apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends "${runtime_packages[@]}" \
+  dbus-user-session nginx avahi-daemon openssl curl jq \
   python3 python3-yaml ufw ca-certificates rsync sudo iproute2
 
 # Service user: archipelago.service hard-codes /run/user/1000.
@@ -38,6 +57,17 @@ if ! id archipelago >/dev/null 2>&1; then
 fi
 # The unit's SupplementaryGroups= names these; systemd refuses to start without them.
 for g in debian-tor fips; do getent group "$g" >/dev/null || groupadd --system "$g"; done
+if [ "$runtime" = docker ]; then
+  getent group docker >/dev/null || groupadd --system docker
+  usermod -aG docker archipelago
+  systemctl enable --now docker
+  run_user docker info >/dev/null
+  # The reviewed upstream package supplies fips.service. Prevent its default
+  # identity from starting; Archy's seeded identity owns activation instead.
+  systemctl mask fips.service
+  apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends "$bundle/fips.deb"
+  install -m 0644 "$archy/image-recipe/configs/archipelago-fips.service" /etc/systemd/system/archipelago-fips.service
+fi
 grep -q '^archipelago:' /etc/subuid || echo "archipelago:100000:65536" >> /etc/subuid
 grep -q '^archipelago:' /etc/subgid || echo "archipelago:100000:65536" >> /etc/subgid
 # As the ISO does: the daemon uses sudo for volume ownership, hostname sync and
@@ -131,6 +161,7 @@ chown -R archipelago:archipelago /opt/archipelago /var/log/archipelago
 install -d -o archipelago -g archipelago /home/archipelago/.config \
   /home/archipelago/.config/containers /home/archipelago/.local \
   /home/archipelago/.local/share /home/archipelago/.local/share/containers
+if [ "$runtime" = podman ]; then
 ln -sfn /var/lib/archipelago/containers/storage /home/archipelago/.local/share/containers/storage
 cat > /home/archipelago/.config/containers/storage.conf <<'EOF'
 [storage]
@@ -150,6 +181,7 @@ chown -h archipelago:archipelago /home/archipelago/.local/share/containers/stora
 run_user podman system migrate
 run_user sh -c 'podman network exists archy-net || podman network create archy-net'
 run_user systemctl --user enable --now podman.socket
+fi
 
 # nginx + systemd unit, verbatim from archy at the pinned ref.
 install -m 0644 "$archy/image-recipe/configs/nginx-archipelago.conf" /etc/nginx/sites-available/archipelago
@@ -158,6 +190,17 @@ rm -f /etc/nginx/sites-enabled/default
 ln -sf /etc/nginx/sites-available/archipelago /etc/nginx/sites-enabled/archipelago
 nginx -t
 install -m 0644 "$archy/image-recipe/configs/archipelago.service" /etc/systemd/system/archipelago.service
+if [ "$runtime" = docker ]; then
+  install -d /etc/systemd/system/archipelago.service.d
+  cat > /etc/systemd/system/archipelago.service.d/20-docker.conf <<'EOF'
+[Unit]
+After=docker.service
+Requires=docker.service
+[Service]
+Environment="ARCHIPELAGO_CONTAINER_RUNTIME=docker"
+Environment="ARCHIPELAGO_USE_QUADLET_BACKENDS=false"
+EOF
+fi
 install -m 0644 "$archy/tests/lifecycle/lib/rpc.bash" /opt/archipelago/rpc.bash
 
 # Firewall: SSH only. Dashboard and app ports are reached through an SSH tunnel.
