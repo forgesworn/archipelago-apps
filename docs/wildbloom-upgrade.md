@@ -169,6 +169,19 @@ ip-address from Wildbloom PR 105, and undici 7.30.1 under wrangler's miniflare),
 plus the NIP-07 provider from Archipelago `v1.9.1-alpha`. It adds no Wildbloom
 features; keep that branch, because the image build fetches the commit by hash.
 
+Browser image `0.0.1-ee21ed5-4` moves to Wildbloom `ee21ed5`, which supersedes
+that branch for new builds. It adds the recipient page for shared files (`/get`),
+sending a file from a phone to Drop (`/send`, over STUN alone when the invitation
+names no TURN server) and the security-review fixes for direct send, plus the same
+dependency fixes, now on Wildbloom main. The header link's accessible name now
+includes its visible Preview tag. The package serves the two pairing pages as
+Wildbloom's own production server does: only at `/get` and `/send`, a trailing
+slash redirects, and the file names return 404. The signer provider is injected
+into the main client only. The browser package's routes are covered by the
+package smoke check; a phone-to-Drop transfer through an installed node has not
+been tried. The Wildbloom Node image, storage volume, identities and signer
+provider are unchanged.
+
 Dashboard-managed sales on the new Node require backend
 `backend-v1.9.0-alpha-p9`; frontend p8 remains compatible. The backend and
 private payment-recovery helper accept the exact old and new package tags,
