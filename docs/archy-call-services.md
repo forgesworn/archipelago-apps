@@ -153,6 +153,19 @@ the intended position; a package name, protocol, encryption or no-log setting
 does not establish an exemption. A publisher-operated discovery directory
 or a service managed through nominal third parties needs its own assessment.
 
+Discovery is classified in section 2.13 of the note (added 25 October
+2026). Operators' own signed adverts on relays they choose, read by clients
+from relays the user picks, leave the publisher providing nothing; default
+read relays run by others add only the publisher-with-defaults duties, and
+must be named in privacy wording (3.2). A list built into the client is
+publication. A directory the publisher runs is a service of its own:
+provider content if the publisher writes every entry, user-to-user if
+operators submit entries, and close to search if it indexes adverts from
+many sources. Each application is `[U]`. Spry's opt-in public mode
+(spry-turn `docs/public-mode.md`) follows the first design: the operator
+signs and publishes its own advert, and nothing in this package lists,
+approves or ranks operators. This package does not turn public mode on.
+
 An operator's transport authentication is distinct from room membership.
 Each deployment's actual service role still matters. Do not promise that
 every Archy owner or voluntary forwarding peer is outside the OSA. Data
