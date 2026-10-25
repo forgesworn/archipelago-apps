@@ -842,7 +842,7 @@ dependencies = [
 [[package]]
 name = "spry-access"
 version = "0.1.0"
-source = "git+https://github.com/forgesworn/spry-turn.git?rev=2efb05102838a45945b11a0f9c82a924bfcb8349#2efb05102838a45945b11a0f9c82a924bfcb8349"
+source = "git+https://github.com/forgesworn/spry-turn.git?rev=6b34f061ab25cac402bfaa833ce6ef95e98d0621#6b34f061ab25cac402bfaa833ce6ef95e98d0621"
 dependencies = [
  "base64",
  "getrandom 0.3.4",
@@ -858,7 +858,7 @@ dependencies = [
 [[package]]
 name = "spry-link"
 version = "0.1.0"
-source = "git+https://github.com/forgesworn/spry-turn.git?rev=2efb05102838a45945b11a0f9c82a924bfcb8349#2efb05102838a45945b11a0f9c82a924bfcb8349"
+source = "git+https://github.com/forgesworn/spry-turn.git?rev=6b34f061ab25cac402bfaa833ce6ef95e98d0621#6b34f061ab25cac402bfaa833ce6ef95e98d0621"
 dependencies = [
  "base64",
  "chacha20 0.9.1",
@@ -883,7 +883,7 @@ dependencies = [
 [[package]]
 name = "spry-service"
 version = "0.1.0"
-source = "git+https://github.com/forgesworn/spry-turn.git?rev=2efb05102838a45945b11a0f9c82a924bfcb8349#2efb05102838a45945b11a0f9c82a924bfcb8349"
+source = "git+https://github.com/forgesworn/spry-turn.git?rev=6b34f061ab25cac402bfaa833ce6ef95e98d0621#6b34f061ab25cac402bfaa833ce6ef95e98d0621"
 dependencies = [
  "bytes",
  "futures-util",
@@ -906,7 +906,7 @@ dependencies = [
 [[package]]
 name = "spry-turn"
 version = "0.2.1"
-source = "git+https://github.com/forgesworn/spry-turn.git?rev=2efb05102838a45945b11a0f9c82a924bfcb8349#2efb05102838a45945b11a0f9c82a924bfcb8349"
+source = "git+https://github.com/forgesworn/spry-turn.git?rev=6b34f061ab25cac402bfaa833ce6ef95e98d0621#6b34f061ab25cac402bfaa833ce6ef95e98d0621"
 dependencies = [
  "base64",
  "crc32fast",
