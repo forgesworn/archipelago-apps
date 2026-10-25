@@ -152,6 +152,8 @@ jobs:
           check public_host 7
           check wildbloom 25
           check storage_crypto::tests:: 6
+          # Patch 0034 (install port probe): its parser test, by name.
+          check host_port_probe_takes_the_first_tcp_line 1
       - uses: docker/setup-buildx-action@v3
         if: steps.plan.outputs.skip != 'true'
         with:
