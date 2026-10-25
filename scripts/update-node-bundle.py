@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import shutil
 import ssl
 import subprocess
@@ -19,6 +20,7 @@ import tarfile
 import tempfile
 import time
 import urllib.request
+import urllib.parse
 import uuid
 
 
@@ -32,6 +34,9 @@ IMAGE = "ghcr.io/forgesworn/spry:0.1.0-2efb051-2"
 INDEX_SHA = "ddf581ca2a9419f54d0d5c4fb18f8c6c667a7a58b405b8888dfa7fa92f3cd007"
 SPRY_SHA = "6a7ab53d9b51bf765ae094d1c8c13260e0e3e3dfb3b93463007983671fdccc2f"
 CATALOGUE_SHA = "36231ab4e41c17f2a8b26bafac325937bd6958d247c9f4e64ce38ad2741bee55"
+DASHBOARD_ORIGINS = "https://{{HOST_IP}},https://{{HOST_MDNS}},https://{{HOST_IP}}:3744,https://{{HOST_MDNS}}:3744"
+ORIGIN_TEMPLATE = re.compile(r"(key: SPRY_DASHBOARD_ORIGINS, template: ')" +
+                             re.escape(DASHBOARD_ORIGINS) + r"([^'\n]*)(')")
 
 
 class Refused(RuntimeError):
@@ -57,6 +62,54 @@ def digest(path):
     return sha.hexdigest()
 
 
+def dashboard_origins(text):
+    """Read only explicit HTTPS dashboard origins, never a wildcard or URL path."""
+    matches = list(ORIGIN_TEMPLATE.finditer(text))
+    if not matches:
+        return []
+    if len(matches) != 1:
+        raise Refused("Expected one Spry dashboard-origin template")
+    suffix = matches[0][2]
+    if not suffix:
+        return []
+    origins = suffix.removeprefix(",").split(",")
+    if not suffix.startswith(",") or len(origins) > 16 or len(suffix) > 4096:
+        raise Refused("Invalid configured Spry dashboard origins")
+    for origin in origins:
+        try:
+            url = urllib.parse.urlsplit(origin)
+            valid = (url.scheme == "https" and url.hostname and
+                     re.fullmatch(r"[a-zA-Z0-9.-]{1,253}", url.hostname) and
+                     url.username is None and url.password is None and
+                     url.port in (None, 443, 3744) and
+                     not (url.path or url.query or url.fragment) and
+                     origin == urllib.parse.urlunsplit(url))
+        except ValueError:
+            valid = False
+        if not valid:
+            raise Refused("Invalid configured Spry dashboard origin")
+    return list(dict.fromkeys(origins))
+
+
+def spry_manifest_digest(path):
+    text = path.read_text()
+    if dashboard_origins(text):
+        text = ORIGIN_TEMPLATE.sub(lambda m: m[1] + DASHBOARD_ORIGINS + m[3], text)
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def preserve_dashboard_origins(existing, staged):
+    if not existing.is_file() or existing.is_symlink():
+        return
+    origins = dashboard_origins(existing.read_text())
+    if origins:
+        text = staged.read_text()
+        if len(ORIGIN_TEMPLATE.findall(text)) != 1:
+            raise Refused("Updated Spry manifest cannot retain configured dashboard origins")
+        staged.write_text(ORIGIN_TEMPLATE.sub(
+            lambda m: m[1] + DASHBOARD_ORIGINS + "," + ",".join(origins) + m[3], text))
+
+
 def inspect(paths):
     if paths.binary.is_symlink() or not paths.binary.is_file():
         raise Refused("Expected an existing, regular Archipelago backend file")
@@ -74,7 +127,9 @@ def inspect(paths):
                 (paths.web / "archipelago-runtime/apps/spry/manifest.yml", SPRY_SHA),
                 (paths.apps / "spry/manifest.yml", SPRY_SHA)]
     already_current = current == BACKEND[1] and all(
-        path.is_file() and not path.is_symlink() and digest(path) == sha for path, sha in expected)
+        path.is_file() and not path.is_symlink() and
+        (spry_manifest_digest(path) if path.name == "manifest.yml" else digest(path)) == sha
+        for path, sha in expected)
     return {"backendSha256": current, "targetBackend": "1.9.1-alpha-p2",
             "targetCatalogue": "1.9.1-alpha-p4", "meshRoutePresent": paths.mesh.exists(),
             "alreadyCurrent": already_current, "changesApplied": False}
@@ -206,6 +261,9 @@ def install(paths, binary, web, uid, gid, control=service, check=None, timeout=9
     """Swap only the backend and frontend, restoring both after failure."""
     if digest(binary) != BACKEND[1]:
         raise Refused("Staged backend SHA-256 does not match the pinned release")
+    spry = web / "archipelago-runtime/apps/spry/manifest.yml"
+    preserve_dashboard_origins(paths.apps / "spry/manifest.yml", spry)
+    spry_sha = digest(spry)
     check = check or (lambda: healthy(paths))
     identifier = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
     backups = paths.web.parent / ".forgesworn-bundle-backups"
@@ -219,8 +277,6 @@ def install(paths, binary, web, uid, gid, control=service, check=None, timeout=9
     temporary_binary = paths.binary.parent / (".archipelago-" + identifier)
     attempted_stop = swapped = False
     previous_sha = digest(paths.binary)
-    spry = web / "archipelago-runtime/apps/spry/manifest.yml"
-    spry_sha = digest(spry)
     try:
         with locked(paths.lifecycle):
             attempted_stop = True
