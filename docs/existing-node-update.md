@@ -1,6 +1,6 @@
 # Update an existing ForgeSworn 1.9.1 node
 
-Backend **p2** and catalogue **p3** are an in-place node update. The updater
+Backend **p2** and catalogue **p4** are an in-place node update. The updater
 supports the published ForgeSworn 1.9.1 p1/p2 backend and the existing
 directory-based `web-ui` layout. Other versions or custom backend binaries
 are refused; use their appropriate migration path first.
@@ -40,12 +40,13 @@ administrator. Review and retain the backup until the updated node is
 accepted. Repeating the command when the expected backend, dashboard entry
 and Spry manifest are present does not download or restart again.
 
-Refresh the Archipelago dashboard after success. Then install/open Spry,
+Refresh the Archipelago dashboard after success. Open **App Store** beside
+**My Apps**, search **Spry** and choose **Install**. Then open Spry,
 choose **Pair with KithMoot**, approve the node request and choose **Pair Spry**
 in KithMoot.
 
 The updater reports whether `fips0` is present. Spry's private node-to-node
-mode also needs Archipelago's working seeded FIPS mesh. This updater replaces
+mode also needs Archipelago's working FIPS mesh and existing node identity. This updater replaces
 the bundle; it does not install or enable FIPS, expose a public relay or
 edit host firewall rules itself. Controller startup still performs
 its usual runtime promotion and app reconciliation. An older lite node with
@@ -55,8 +56,8 @@ The [fresh Debian Docker-host recipe](../node/docker.md) is a separate path
 for a new dedicated host or VM. Use this existing-node updater for an already
 installed compatible node.
 
-Verification: fifteen generated-filesystem tests cover configuration and
+Verification: sixteen generated-filesystem tests cover configuration and
 identity preservation, rollback, busy locks, unexpected versions, low disk,
 damaged downloads, unsafe archives and repeat application. The exact public
-p3 archive passed extraction, and a compatible existing node passed the
+p4 archive passed extraction and listing verification. A compatible existing node passed the
 read-only check. A production application is a separate acceptance step.

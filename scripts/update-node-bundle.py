@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checked, reversible 1.9.1 p1 -> backend p2 / catalogue p3 node update.
+"""Checked, reversible 1.9.1 p1/p2 -> backend p2 / catalogue p4 node update.
 
 Run on the existing node as root. Without --apply this only inspects the node.
 MIT; see LICENSE in the archipelago-apps repository.
@@ -26,11 +26,12 @@ BASE = "https://github.com/forgesworn/archipelago-apps/releases/download/"
 OLD_BACKEND = "d0bf29292bf36a2cafd6c455af2250e7d9af8cab63da84932f1b6ce857072cc9"
 BACKEND = ("backend-v1.9.1-alpha-p2/archipelago",
            "7f24acff674ac077b1534fd11d56f28e72707480b95e9f7a53a2bb869bdd6546", 84303568)
-FRONTEND = ("frontend-v1.9.1-alpha-p3/frontend.tar.gz",
-            "6a6ba494b25e449a554c5d53526a9cbd9d329d850bc66c79717529c342d978dd", 108023142)
+FRONTEND = ("frontend-v1.9.1-alpha-p4/frontend.tar.gz",
+            "1554f8e70536bc19628a7e673797a182d3b62679b52cbc0bcc95eec0f8f36694", 108023612)
 IMAGE = "ghcr.io/forgesworn/spry:0.1.0-2efb051-2"
-INDEX_SHA = "1e377b87f2fcbb975569e6ab4e7e73c587685dcfecc832b19616c3118954dd27"
-SPRY_SHA = "cf7c772eacf9d974133b38b59039e89d1c87a373c580110a1c1b67ad8ba8b78c"
+INDEX_SHA = "ddf581ca2a9419f54d0d5c4fb18f8c6c667a7a58b405b8888dfa7fa92f3cd007"
+SPRY_SHA = "6a7ab53d9b51bf765ae094d1c8c13260e0e3e3dfb3b93463007983671fdccc2f"
+CATALOGUE_SHA = "36231ab4e41c17f2a8b26bafac325937bd6958d247c9f4e64ce38ad2741bee55"
 
 
 class Refused(RuntimeError):
@@ -69,12 +70,13 @@ def inspect(paths):
     if shutil.disk_usage(paths.web.parent).free < 2 * 1024**3:
         raise Refused("At least 2 GiB free is required on the web-ui filesystem")
     expected = [(paths.web / "index.html", INDEX_SHA),
+                (paths.web / "catalog.json", CATALOGUE_SHA),
                 (paths.web / "archipelago-runtime/apps/spry/manifest.yml", SPRY_SHA),
                 (paths.apps / "spry/manifest.yml", SPRY_SHA)]
     already_current = current == BACKEND[1] and all(
         path.is_file() and not path.is_symlink() and digest(path) == sha for path, sha in expected)
     return {"backendSha256": current, "targetBackend": "1.9.1-alpha-p2",
-            "targetCatalogue": "1.9.1-alpha-p3", "meshRoutePresent": paths.mesh.exists(),
+            "targetCatalogue": "1.9.1-alpha-p4", "meshRoutePresent": paths.mesh.exists(),
             "alreadyCurrent": already_current, "changesApplied": False}
 
 
