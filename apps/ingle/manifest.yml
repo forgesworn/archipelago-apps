@@ -78,11 +78,12 @@ app:
     - storage: 1Gi
 
   resources:
-    # 512Mi was measured with the world plus one or two test players near the spawn
-    # (258-304 MiB in use). Enough for a phone test with a few players; raise it (1Gi)
-    # before opening the world to 8 players spread across it. Ingle itself now uses about
-    # 13 MB at rest (the world's own process only runs while someone is in it). cpu_limit is unmeasured.
-    memory_limit: 512Mi
+    # 1Gi so the world gets its full 384 MB cap (Ingle holds each world's cap under this
+    # limit less 192 MB set aside for the tunnel and Ingle, and the rooms' estimates) with
+    # room left for Stampede and Twang matches. Measured: the world 258-304 MiB in use with
+    # one or two test players near the spawn; Ingle about 13 MB at rest; the tunnel up to
+    # about 106 MB. The world's own process only runs while someone is in it. cpu_limit is unmeasured.
+    memory_limit: 1Gi
     cpu_limit: 1
 
   # Proton server choice, not secret. The image already asks for WireGuard and
