@@ -1,7 +1,7 @@
 # Update an existing ForgeSworn 1.9.1 node
 
-Backend **p2** and catalogue **p4** are an in-place node update. The updater
-supports the published ForgeSworn 1.9.1 p1/p2 backend and the existing
+Backend **p3** and catalogue **p5** are an in-place node update. The updater
+supports the published ForgeSworn 1.9.1 p1/p2/p3 backend and the existing
 directory-based `web-ui` layout. Other versions or custom backend binaries
 are refused; use their appropriate migration path first.
 
@@ -46,8 +46,11 @@ and Spry manifest are present does not download or restart again.
 
 Refresh the Archipelago dashboard after success. Open **App Store** beside
 **My Apps**, search **Spry** and choose **Install**. Then open Spry,
-choose **Pair with KithMoot**, approve the node request and choose **Pair Spry**
-in KithMoot.
+choose **Pair with KithMoot**, approve the node request and choose **Open KithMoot
+app**. Approve **Pair Spry** in the installed app where you are already signed
+in. Safari does not need its own KithMoot sign-in. **Copy pairing link** is
+available beside the app link; desktop 0.1.105 can paste it in **Settings →
+Connections → Spry**.
 
 The updater reports whether `fips0` is present. Spry's private node-to-node
 mode also needs Archipelago's working FIPS mesh and existing node identity. This updater replaces
