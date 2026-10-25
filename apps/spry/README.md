@@ -8,7 +8,7 @@
    private, short-lived and single-use.
 3. Use KithMoot's normal Call button, in a conversation or group.
 
-The matching ForgeSworn 1.9.1 bundle update includes backend p2 and catalogue p3.
+The matching ForgeSworn 1.9.1 bundle update includes backend p3 and catalogue p5.
 Older bundles need that node update before installing this package.
 
 Each home node runs its own Spry. Once both people have paired, their nodes

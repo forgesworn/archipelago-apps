@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checked, reversible 1.9.1 p1/p2 -> backend p2 / catalogue p4 node update.
+"""Checked, reversible 1.9.1 p1/p2/p3 -> backend p3 / catalogue p5 node update.
 
 Run on the existing node as root. Without --apply this only inspects the node.
 MIT; see LICENSE in the archipelago-apps repository.
@@ -26,14 +26,15 @@ import uuid
 
 BASE = "https://github.com/forgesworn/archipelago-apps/releases/download/"
 OLD_BACKEND = "d0bf29292bf36a2cafd6c455af2250e7d9af8cab63da84932f1b6ce857072cc9"
-BACKEND = ("backend-v1.9.1-alpha-p2/archipelago",
-           "7f24acff674ac077b1534fd11d56f28e72707480b95e9f7a53a2bb869bdd6546", 84303568)
-FRONTEND = ("frontend-v1.9.1-alpha-p4/frontend.tar.gz",
-            "1554f8e70536bc19628a7e673797a182d3b62679b52cbc0bcc95eec0f8f36694", 108023612)
-IMAGE = "ghcr.io/forgesworn/spry:0.1.0-2efb051-2"
-INDEX_SHA = "ddf581ca2a9419f54d0d5c4fb18f8c6c667a7a58b405b8888dfa7fa92f3cd007"
-SPRY_SHA = "6a7ab53d9b51bf765ae094d1c8c13260e0e3e3dfb3b93463007983671fdccc2f"
-CATALOGUE_SHA = "36231ab4e41c17f2a8b26bafac325937bd6958d247c9f4e64ce38ad2741bee55"
+PREVIOUS_BACKEND = "7f24acff674ac077b1534fd11d56f28e72707480b95e9f7a53a2bb869bdd6546"
+BACKEND = ("backend-v1.9.1-alpha-p3/archipelago",
+           "e6158a4a34641562b77a1cbe754e60168caa07a6d558cb1fa9d7fdf1d3e7d94e", 84409856)
+FRONTEND = ("frontend-v1.9.1-alpha-p5/frontend.tar.gz",
+            "c7b8ad9bf2407cfcf2e83941d7360fca6ba0a4f309a989307b8d23e3c76bbfb3", 108023464)
+IMAGE = "ghcr.io/forgesworn/spry:0.1.0-6b34f06-3"
+INDEX_SHA = "d1de8b97ff0e0230befae2ae13b657328ff9be76f3d745911e7058ae2a410eef"
+SPRY_SHA = "6092a8aeb68017b28530c1e33788da3dd2be6b0fed43af931f8898b0b554b7d6"
+CATALOGUE_SHA = "d5229d7a8f1d3077e60c7876300a0d8bb07532c23a377b2338443857e05fa089"
 DASHBOARD_ORIGINS = "https://{{HOST_IP}},https://{{HOST_MDNS}},https://{{HOST_IP}}:3744,https://{{HOST_MDNS}}:3744"
 ORIGIN_TEMPLATE = re.compile(r"(key: SPRY_DASHBOARD_ORIGINS, template: ')" +
                              re.escape(DASHBOARD_ORIGINS) + r"([^'\n]*)(')")
@@ -116,8 +117,8 @@ def inspect(paths):
     if paths.web.is_symlink() or not paths.web.is_dir():
         raise Refused("This updater requires the existing directory-based web-ui layout")
     current = digest(paths.binary)
-    if current not in (OLD_BACKEND, BACKEND[1]):
-        raise Refused("Backend is not the published 1.9.1 p1 or p2; refusing an unknown or cross-version update")
+    if current not in (OLD_BACKEND, PREVIOUS_BACKEND, BACKEND[1]):
+        raise Refused("Backend is not the published 1.9.1 p1, p2 or p3; refusing an unknown or cross-version update")
     if paths.lifecycle.is_symlink() or not paths.lifecycle.is_file():
         raise Refused("The existing node lifecycle lock is missing or symlinked")
     if shutil.disk_usage(paths.web.parent).free < 2 * 1024**3:
@@ -130,8 +131,8 @@ def inspect(paths):
         path.is_file() and not path.is_symlink() and
         (spry_manifest_digest(path) if path.name == "manifest.yml" else digest(path)) == sha
         for path, sha in expected)
-    return {"backendSha256": current, "targetBackend": "1.9.1-alpha-p2",
-            "targetCatalogue": "1.9.1-alpha-p4", "meshRoutePresent": paths.mesh.exists(),
+    return {"backendSha256": current, "targetBackend": "1.9.1-alpha-p3",
+            "targetCatalogue": "1.9.1-alpha-p5", "meshRoutePresent": paths.mesh.exists(),
             "alreadyCurrent": already_current, "changesApplied": False}
 
 
