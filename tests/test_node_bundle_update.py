@@ -154,6 +154,33 @@ class UpdateTests(unittest.TestCase):
             (self.paths.web / "catalog.json").write_text("generated old catalogue")
             self.assertFalse(update.inspect(self.paths)["alreadyCurrent"])
 
+    def test_update_retains_explicit_dashboard_origins_and_remains_current(self):
+        canonical = (Path(__file__).parents[1] / "apps/spry/manifest.yml").read_text()
+        configured = canonical.replace(update.DASHBOARD_ORIGINS,
+                                       update.DASHBOARD_ORIGINS + ",https://dashboard.example,https://dashboard.example:3744")
+        self.write(self.paths.apps / "spry/manifest.yml", configured.encode())
+        self.write(self.web / "archipelago-runtime/apps/spry/manifest.yml", canonical.encode())
+        with patch.object(update, "SPRY_SHA", hashlib.sha256(canonical.encode()).hexdigest()), \
+             patch.object(update, "INDEX_SHA", update.digest(self.web / "index.html")), \
+             patch.object(update, "CATALOGUE_SHA", update.digest(self.web / "catalog.json")):
+            self.apply()
+            self.assertEqual((self.paths.apps / "spry/manifest.yml").read_text(), configured)
+            self.assertTrue(update.inspect(self.paths)["alreadyCurrent"])
+            (self.paths.apps / "spry/manifest.yml").write_text(configured.replace('memory_limit: 128m', 'memory_limit: 256m'))
+            self.assertFalse(update.inspect(self.paths)["alreadyCurrent"])
+
+    def test_invalid_dashboard_origins_refuse_before_stopping_the_node(self):
+        canonical = (Path(__file__).parents[1] / "apps/spry/manifest.yml").read_text()
+        for origin in ['*', 'http://dashboard.example', 'https://owner@dashboard.example',
+                       'https://dashboard.example/path', 'https://dashboard.example:8443',
+                       'https://dashboard.example#fragment']:
+            with self.subTest(origin=origin):
+                self.write(self.paths.apps / "spry/manifest.yml",
+                           canonical.replace(update.DASHBOARD_ORIGINS, update.DASHBOARD_ORIGINS + ',' + origin).encode())
+                with self.assertRaisesRegex(update.Refused, 'dashboard origin'):
+                    self.apply()
+                self.assertEqual(self.actions, [])
+
     def test_symlinked_layout_is_refused(self):
         original = self.paths.web
         moved = original.with_name("other-web")

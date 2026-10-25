@@ -32,7 +32,11 @@ promotion restores the previous bundle and live app definitions. A failure
 during rollback reports that manual attention is needed and names the backup.
 Identity and application data under `/var/lib/archipelago` are retained.
 SSH keys and host certificates are retained. The command replaces the Spry
-package definition with the matching release's definition.
+package definition with the matching release's definition. Explicit additional
+HTTPS dashboard origins in Spry's `SPRY_DASHBOARD_ORIGINS` template are retained,
+so a configured dashboard hostname continues to work after the update. Wildcards,
+credentials, paths and unexpected ports are refused. Other Spry definition
+customisations still require their appropriate migration path.
 
 Backups and the successful receipt remain under
 `/opt/archipelago/.forgesworn-bundle-backups/`, readable only by the
@@ -56,7 +60,7 @@ The [fresh Debian Docker-host recipe](../node/docker.md) is a separate path
 for a new dedicated host or VM. Use this existing-node updater for an already
 installed compatible node.
 
-Verification: sixteen generated-filesystem tests cover configuration and
+Verification: eighteen generated-filesystem tests cover configuration and
 identity preservation, rollback, busy locks, unexpected versions, low disk,
 damaged downloads, unsafe archives and repeat application. The exact public
 p4 archive passed extraction and listing verification. A compatible existing node passed the
