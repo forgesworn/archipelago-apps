@@ -4,7 +4,7 @@ app:
   version: 0.1.0
   upstream:
     kind: internal
-  description: Hosts Stampede and Twang rooms, and an always-on AxeNStax world. Each of Stampede and Twang always has one open lobby, and a new one opens when a race or match starts, so more than one group can play at once. The AxeNStax world is one persistent world that stays open when nobody is in, kept on this node and joined by its room code, which changes when the world restarts (signed-in players only, up to 8; no invite links for it yet). Players join by a room's six-letter code or an invite link, from anywhere, because the game's traffic goes out and in through a Proton VPN tunnel run inside this app; phones on the home Wi-Fi connect directly. The public home address is not shown and nothing else on the node uses the tunnel. The status page on the home network lists every open room with its code, who is in, and the invites. Test identity.
+  description: Hosts Stampede and Twang rooms, and an always-on AxeNStax world. Each of Stampede and Twang always has one open lobby, and a new one opens when a race or match starts, so more than one group can play at once. The AxeNStax world is one persistent world on this node, joined by its room code. It stays open all the time. When nobody is in it, it saves and sleeps, and it wakes when someone joins (a second or so). It keeps the same room code across its sleeps and restarts of the world; a restart of the whole app gives a new code. Only signed-in players can join, up to 8, and there are no invite links for it yet. Players join by a room's six-letter code or an invite link, from anywhere, because the game's traffic goes out and in through a Proton VPN tunnel run inside this app; phones on the home Wi-Fi connect directly. The public home address is not shown and nothing else on the node uses the tunnel. The status page on the home network lists every open room with its code, who is in, and the invites. Test identity.
   category: games
 
   container:
@@ -12,7 +12,7 @@ app:
     # loaded into the node's podman under this name (podman load + podman tag),
     # and the node never pulls a tag it already holds. The tag comes from
     # INGLE_TAG in PINS; every new build needs a new tag.
-    image: ghcr.io/forgesworn/ingle:k3-4
+    image: ghcr.io/forgesworn/ingle:k4-4
     pull_policy: if-not-present
     # No host networking: the app has its own network namespace, so the tunnel below
     # carries this app's traffic only and the node's other apps and the host are
@@ -80,7 +80,8 @@ app:
   resources:
     # 512Mi was measured with the world plus one or two test players near the spawn
     # (258-304 MiB in use). Enough for a phone test with a few players; raise it (1Gi)
-    # before opening the world to 8 players spread across it. cpu_limit is unmeasured.
+    # before opening the world to 8 players spread across it. Ingle itself now uses about
+    # 13 MB at rest (the world's own process only runs while someone is in it). cpu_limit is unmeasured.
     memory_limit: 512Mi
     cpu_limit: 1
 
