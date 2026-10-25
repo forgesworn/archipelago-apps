@@ -40,6 +40,7 @@ class UpdateTests(unittest.TestCase):
         self.web = self.stage / "web-ui"
         self.write(self.binary, b"generated new backend")
         self.write(self.web / "index.html", b"new dashboard")
+        self.write(self.web / "catalog.json", b"generated catalogue with spry")
         self.write(self.web / "archipelago-runtime/apps/spry/manifest.yml", update.IMAGE.encode())
         self.old_sha = update.digest(self.paths.binary)
         self.new_sha = update.digest(self.binary)
@@ -127,10 +128,12 @@ class UpdateTests(unittest.TestCase):
     def test_repeating_current_update_neither_downloads_nor_restarts(self):
         self.paths.binary.write_bytes(self.binary.read_bytes())
         self.write(self.paths.web / "index.html", b"new dashboard")
+        self.write(self.paths.web / "catalog.json", b"generated catalogue with spry")
         for path in [self.paths.apps / "spry/manifest.yml",
                      self.paths.web / "archipelago-runtime/apps/spry/manifest.yml"]:
             self.write(path, update.IMAGE.encode())
         with patch.object(update, "INDEX_SHA", hashlib.sha256(b"new dashboard").hexdigest()), \
+             patch.object(update, "CATALOGUE_SHA", hashlib.sha256(b"generated catalogue with spry").hexdigest()), \
              patch.object(update, "SPRY_SHA", hashlib.sha256(update.IMAGE.encode()).hexdigest()), \
              patch.object(update, "Paths", return_value=self.paths), \
              patch.object(update.os, "geteuid", return_value=0), \
@@ -141,6 +144,15 @@ class UpdateTests(unittest.TestCase):
             update.main()
         download.assert_not_called()
         service.assert_not_called()
+
+    def test_current_dashboard_without_expected_store_listing_needs_update(self):
+        self.apply()
+        with patch.object(update, "INDEX_SHA", update.digest(self.paths.web / "index.html")), \
+             patch.object(update, "SPRY_SHA", update.digest(self.paths.apps / "spry/manifest.yml")), \
+             patch.object(update, "CATALOGUE_SHA", update.digest(self.paths.web / "catalog.json")):
+            self.assertTrue(update.inspect(self.paths)["alreadyCurrent"])
+            (self.paths.web / "catalog.json").write_text("generated old catalogue")
+            self.assertFalse(update.inspect(self.paths)["alreadyCurrent"])
 
     def test_symlinked_layout_is_refused(self):
         original = self.paths.web
