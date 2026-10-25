@@ -159,6 +159,7 @@ try {
   await a.goto(endpoint + '/');
   await wait(() => a.locator('#pair').isEnabled(), Boolean, 'Pair button not ready');
   await a.getByRole('button', { name: 'Pair with KithMoot', exact: true }).click();
+  await a.getByRole('link', { name: 'Pair in this browser instead', exact: true }).click();
   await a.getByRole('button', { name: 'Pair Spry', exact: true }).click({ timeout: 30000 });
   await wait(() => a.locator('#spryPairingStatus').textContent(), text => text.includes('Paired with'), 'Pairing not saved');
   assert.equal(new URL(a.url()).hash, '');
