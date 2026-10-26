@@ -83,7 +83,9 @@ app:
     # room left for Stampede and Twang matches. Measured: the world 258-304 MiB in use with
     # one or two test players near the spawn; Ingle about 13 MB at rest; the tunnel up to
     # about 106 MB. The world's own process only runs while someone is in it. cpu_limit is unmeasured.
-    memory_limit: 1Gi
+    # Written as 1g: the node's renderer (upstream quadlet.rs parse_memory_mib) reads only g, m or a
+    # bare number and silently drops 1Gi, which left the Keep with no limit until 2026-10-26.
+    memory_limit: 1g
     cpu_limit: 1
 
   # Proton server choice, not secret. The image already asks for WireGuard and
