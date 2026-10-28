@@ -1,6 +1,6 @@
-# Spry public mode on Archy: design
+# Spry call relay positions on Archy: design
 
-25 October 2026. Design only: nothing here is built, installed or switched on.
+25 October 2026, amended 28 October 2026 for three positions. Design only: nothing here is built, installed or switched on.
 `S` means spry-turn at `origin/main` 58563c9, path `crates/spry-service/src/`
 unless another is given; that directory is unchanged since 0261719, so the
 line references hold. `P00NN` means `upstream/patches/00NN-*.patch` here.
@@ -21,11 +21,54 @@ The ForgeSworn demo issuer (`operator/turn-issuer/`,
 service and timer disabled, firewall port closed, proxy configuration moved
 aside, all reversibly. `demo.forgesworn.dev` never gets public mode.
 
-## 1. One Spry per box: private or public
+## Three positions (owner decision, 28 October 2026)
+
+The private-node profile helps only people who each have a paired node:
+KithMoot redeems another member's `spry:` offer only through the device's own
+pairing (kithmoot `src/spry.ts` `spryCredentials`). An `https:` offer from
+the standard profile is redeemed by any member of the room, guests with no
+node included (kithmoot `app/src/spry-room.ts`, Android `SpryRoomAccess.kt`).
+So a group where one person runs Spry is served only by the standard
+profile. The owner chose three positions, built together in one Settings
+release:
+
+| Position | Profile | Who gets credentials | Advert |
+|---|---|---|---|
+| Private (default) | Private node, mesh | Owner-paired apps, calls between paired nodes | None |
+| Share with my rooms | Standard | Paired apps' room grants, so every member of those rooms | None |
+| Open to anyone | Standard, `SPRY_PUBLIC=true` | Room grants as above, plus anyone through the public endpoint | Only if the owner names relays |
+
+Public mode leaves pairing and grants unchanged (spry-turn
+`docs/public-mode.md`, "What changes when it is on"), so rooms and public
+share one standard-profile state: moving between them toggles
+`SPRY_PUBLIC` and keeps pairings. Only moving to or from Private switches
+state directories (section 2).
+
+Which rooms get a grant is decided in KithMoot, not on the node:
+automatically in rooms the owner created, and elsewhere by a one-tap "Share
+my call relay here". Today a paired app grants every room it opens; that
+client change is tracked in KithMoot.
+
+Share with my rooms is a closed service only as far as room links stay
+closed: membership follows the link. Before it ships, room-grant redemption
+must be sealed to devices admitted to the room (spry-turn design
+`docs/design/2026-10-28-room-grant-seal-and-advert-privacy.md`), since grant
+tokens are bearer today. The closed-service record
+(`docs/archy-spry-service-closed-service-20261025.md`) names sharing rooms
+with unpaired people as the trigger for that fix.
+
+Other owner decisions on 28 October: home caps ship lower than Spry's
+defaults and the owner may raise them within Spry's maxima (section 6);
+one App Store package, with Open to anyone a setting inside it; an optional
+privacy-notice URL in the advert; direct-public-IP nodes are not supported
+in v1 (a VPS runs standalone Spry instead).
+
+## 1. One Spry per box: private or standard
 
 v1 runs one Spry instance, private (today's private-node profile and mesh) by
-default. The owner may switch it to public, which restarts the same package
-in the standard profile with `SPRY_PUBLIC=true`. Never both at once.
+default. The owner may switch it to Share with my rooms or Open to anyone,
+which restarts the same package in the standard profile, with
+`SPRY_PUBLIC=true` for the latter. Never private and standard at once.
 
 Public relaying inside the private-node profile is rejected: private
 allocations sit on a loopback alias with the peer bridge (`S mesh.rs:81-86`),
@@ -48,11 +91,11 @@ Each mode gets its own state, selected when the app is applied. Patch 0015 is
 the precedent for rendering owner settings into the environment (P0015 line
 514); the Settings patch extends it to the volume and secret:
 
-| Field | Private (default) | Public |
+| Field | Private (default) | Standard (rooms or public) |
 |---|---|---|
 | Volume at `/data` | `/var/lib/archipelago/spry` | `/var/lib/archipelago/spry-public`, created 0700 for the service user, since restore refuses group or world access (`spry-access/src/lib.rs:322`) |
 | `SPRY_TURN_SECRET` | `spry-turn-rest-secret` | `spry-public-secret`, a second `generated_secrets` entry, materialised on upgrade by the self-healing generator |
-| Profile | `SPRY_PEER_INTERFACE=fips0` and peer settings | `SPRY_PEER_INTERFACE` and `SPRY_PEER_BIND` both removed (either selects private, `S node.rs:244-254`); `SPRY_PUBLIC=true`, `SPRY_PUBLIC_URL`, `SPRY_OWNER_KEYS`, `SPRY_PUBLIC_IP`, relays, region, note |
+| Profile | `SPRY_PEER_INTERFACE=fips0` and peer settings | `SPRY_PEER_INTERFACE` and `SPRY_PEER_BIND` both removed (either selects private, `S node.rs:244-254`); `SPRY_PUBLIC=true` only for Open to anyone; `SPRY_PUBLIC_URL`, `SPRY_OWNER_KEYS`, `SPRY_PUBLIC_IP`, relays, region, note |
 
 Each data directory carries a mode marker naming its mode and secret file.
 Apply refuses a mismatched directory and secret pair, because grant tokens are
@@ -68,11 +111,15 @@ its recorded phase on boot.
 
 Paired apps and grants:
 
-- **Private to public.** The public store starts empty, so it has no
+- **Private to standard.** The standard store starts empty, so it has no
   `transport_endpoint`. Paired apps' grants live in the unmounted private file,
   so their credential requests are refused; issued credentials expire within
-  five minutes (`apps/spry/README.md:67-68`).
-- **Public to private.** The private file is restored as it was: no
+  five minutes (`apps/spry/README.md:67-68`). The owner pairs KithMoot again
+  with the standard endpoint on the first switch; the UI says so before the
+  switch starts.
+- **Rooms to public and back.** One store, so pairings and room grants carry
+  over; only the public endpoint and advert start or stop.
+- **Standard to private.** The private file is restored as it was: no
   re-pairing, and the same secret gives the same mesh identity, so
   `S node.rs:382-387` does not fire. Room capabilities have a 30-day idle
   lease (`apps/spry/README.md:69-70`), so a longer public spell can expire
@@ -134,7 +181,25 @@ the dashboard.
 
 ## 5. The owner-facing switch
 
-Settings → Public call relay, off by default, needs two ticks:
+Settings → Call relay offers the three positions, Private selected by
+default. Share with my rooms and Open to anyone both need the reachability in
+section 4: guests fetch credentials from `SPRY_PUBLIC_URL` and relay through
+the node's public IPv4, so CGNAT nodes cannot offer either. Whether Share with
+my rooms can use the existing 3744 gate (with a port in `SPRY_PUBLIC_URL`)
+instead of the 8443 front is to be checked; KithMoot builds TURN URLs from the
+hostname alone, so a port on the credential origin does not affect them. An
+advert still requires an origin with no port.
+
+Share with my rooms needs one tick. Draft, legal check owed:
+
+> People in your KithMoot rooms will relay call traffic through your node and
+> connection, including guests you have not met: anyone who holds a room link
+> can join that room. KithMoot shares automatically in rooms you created and
+> asks in other rooms. Your node sees their IP addresses and call timing, not
+> what they say. You run it, not ForgeSworn. While shared, private calling
+> over the mesh is off until you switch back.
+
+Open to anyone needs two ticks:
 
 > You will run a public relay. Anyone on the internet can get credentials and
 > relay call traffic through your node and connection. You run it, not
@@ -219,16 +284,21 @@ Each step needs:
 
 PRs:
 
+0. **spry-turn:** seal room-grant redemption to devices admitted to the room,
+   and the optional advert privacy URL (spry-turn design, 28 October). Then
+   matching KithMoot web and Android changes, including the rooms-I-created
+   sharing rule. Gates Share with my rooms for anyone outside the team.
 1. **spry-turn:** standard-profile cap settings, bounded, defaults unchanged.
-   Skip if the built-in caps are accepted.
 2. **archipelago-apps:** re-pin at or after 58563c9 under a new image tag,
    with the second secret, mode markers and UI status. Re-qualify private mode
    unchanged.
 3. **archipelago-apps (Archy patch):** the 8443 front with its rule, plus
    `X-Forwarded-For` overwrite on the 3744 gate.
-4. **archipelago-apps (Archy patch):** Settings → Public call relay. Per-mode
-   volume, secret and environment; persisted switch state with resume;
-   pre-flight; both ticks; switch-off phases.
+4. **archipelago-apps (Archy patch):** Settings → Call relay with the three
+   positions. Per-mode volume, secret and environment; persisted switch state
+   with resume; pre-flight; the ticks; switch-off phases; home caps with a
+   bounded raise. Archipelago UI: needs the maintainer's ZAT review and
+   approval before merge.
 5. **archipelago-apps:** acceptance doc, receipt, and the
    `docs/archy-call-services.md` update below.
 
@@ -259,16 +329,21 @@ per-mode state, withdrawal). It would add private port moves
   switch-off, the owner wording, App Store neutrality, and the call-services
   update list.
 
-Remaining owner decisions:
+Owner decisions, 28 October 2026:
 
-1. Home caps, whether owners may raise them, and therefore whether PR 1 is
-   needed.
-2. Whether to add a privacy-notice URL to the advert. That changes the kind
-   31478 v1 schema upstream.
-3. App Store or sideload only for public mode (`[U]`).
-4. Final wording of both ticks, including the `[INPUT: retention]` statement
-   after the logging readback.
-5. Direct-public-IP nodes: unsupported in v1, or a 443 SNI split shared with
-   the dashboard.
-6. Overriding the recommendation to show no example relay list (default: none
-   shown).
+1. Home caps: lower defaults (8 / 2 / 16, 125,000 bytes/s per allocation);
+   the owner may raise them up to Spry's built-in maxima. PR 1 is needed.
+2. Privacy-notice URL in the advert: yes, optional, in a form shipped
+   clients still accept (spry-turn design, 28 October).
+3. App Store: one package; Open to anyone is a setting inside it.
+5. Direct-public-IP nodes: not in v1.
+0. Three positions, built together; sharing automatic in rooms the owner
+   created, one tap elsewhere (section "Three positions").
+
+Still open:
+
+4. Final wording of all ticks, including the `[INPUT: retention]` statement
+   after the logging readback, and a legal check of the new rooms tick.
+6. Example relay list: none shown unless the owner overrides. Note that
+   spry-turn `docs/public-mode.md` itself prints an example list; the legal
+   check should say whether Spry's own docs may keep it.
