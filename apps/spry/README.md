@@ -1,10 +1,14 @@
 # Spry on Archipelago
 
 1. Install **Spry** in the ForgeSworn Archipelago bundle.
-2. Open it and choose **Pair with KithMoot**. Approve the pairing.
+2. Open it and choose **Pair with KithMoot**. Approve the request, then choose
+   **Open KithMoot app**. The account already signed into that app is used;
+   Safari does not need its own KithMoot sign-in. Or choose **Copy pairing link**
+   and paste it in KithMoot's **Settings → Connections → Spry**. Each link is
+   private, short-lived and single-use.
 3. Use KithMoot's normal Call button, in a conversation or group.
 
-The matching ForgeSworn 1.9.1 bundle update includes backend p2 and catalogue p3.
+The matching ForgeSworn 1.9.1 bundle update includes backend p3 and catalogue p5.
 Older bundles need that node update before installing this package.
 
 Each home node runs its own Spry. Once both people have paired, their nodes
@@ -37,7 +41,9 @@ Spry is standalone. Its reusable Rust libraries live in the
 | `spry-service` | Optional HTTP, Nostr and OS mesh adapters, plus the standalone executable |
 
 This package pins those libraries and supplies only the dashboard/signing
-assets. Archipelago's app manager owns installation and owner keys; its app
+assets. The pairing script and styles come directly from `spry-service`, so
+the standalone and Archipelago handoffs keep the same copy/expiry behaviour.
+Archipelago's app manager owns installation and owner keys; its app
 gate owns renewing HTTPS and optional TURN TLS; its networking layer owns
 FIPS, routing and firewall policy. Spry never imports an Archipelago or FIPS
 SDK. Other ForgeSworn products can consume the same libraries independently.

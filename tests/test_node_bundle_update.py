@@ -125,6 +125,14 @@ class UpdateTests(unittest.TestCase):
         with self.assertRaisesRegex(update.Refused, "unknown or cross-version"):
             update.inspect(self.paths)
 
+    def test_published_previous_p2_backend_can_upgrade_without_already_current(self):
+        with patch.object(update, "OLD_BACKEND", "0" * 64), \
+             patch.object(update, "PREVIOUS_BACKEND", self.old_sha):
+            result = update.inspect(self.paths)
+        self.assertFalse(result["alreadyCurrent"])
+        self.assertFalse(result["changesApplied"])
+        self.assertEqual(self.actions, [])
+
     def test_repeating_current_update_neither_downloads_nor_restarts(self):
         self.paths.binary.write_bytes(self.binary.read_bytes())
         self.write(self.paths.web / "index.html", b"new dashboard")

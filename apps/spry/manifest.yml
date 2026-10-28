@@ -5,7 +5,7 @@ app:
   description: Pair once with KithMoot to share your node’s call relay automatically with the people in your calls.
   category: networking
   container:
-    image: ghcr.io/forgesworn/spry:0.1.0-2efb051-2
+    image: ghcr.io/forgesworn/spry:0.1.0-6b34f06-3
     pull_policy: if-not-present
     network: host
     generated_secrets:

@@ -68,7 +68,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: forgesworn/spry-turn
-          ref: 2efb05102838a45945b11a0f9c82a924bfcb8349
+          ref: 6b34f061ab25cac402bfaa833ce6ef95e98d0621
           path: .local/relay-source
       - name: Real native socket interop
         run: python3 .local/relay-source/tests/interop.py --binary "$RUNNER_TEMP/spry-turn" --tls
