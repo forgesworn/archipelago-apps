@@ -1,0 +1,175 @@
+From 3e0f6269d41f20bccbf6921e5258f367954f5b30 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 01:51:10 +0000
+Subject: [PATCH] Retain private dashboard signing routes on the node hostname
+
+---
+ docs/kithmoot-node-host-ingress.md           |  7 +++-
+ scripts/kithmoot-node-ingress.py             | 39 ++++++++++++++------
+ scripts/qualification/kithmoot-node-nginx.py |  8 +++-
+ scripts/tests/test_kithmoot_node_ingress.py  | 17 +++++----
+ 4 files changed, 49 insertions(+), 22 deletions(-)
+
+diff --git a/docs/kithmoot-node-host-ingress.md b/docs/kithmoot-node-host-ingress.md
+index 4e5319b..de0602e 100644
+--- a/docs/kithmoot-node-host-ingress.md
++++ b/docs/kithmoot-node-host-ingress.md
+@@ -36,12 +36,15 @@ address for the dashboard's source checks. Public callers and other app gates
+ cannot supply that metadata. The native header parser is bounded and discards
+ addresses after validation. TURN still authenticates each admitted device.
+ 
+-Only the node's declared HTTPS API and `/events` are forwarded. Cookies,
++Public clients reach only the node's declared HTTPS API and `/events`. Private
++clients retain the existing dashboard and signer routes on the node hostname,
++so the companion signing bridge also works in a tab or WebView. On node routes, cookies,
+ dashboard bearer credentials, CSRF headers and unrelated headers are withheld;
+ only a syntactically scoped Nostr authorization header passes. Set-Cookie is
+ removed from responses. Unknown paths and query strings are refused. Node HTTP,
+ WebSocket and stream access logs are off; native TLS errors omit participant
+-addresses. This does not change normal dashboard logging.
++addresses. The original dashboard's logging is unchanged; access on the new
++node hostname is not access-logged.
+ 
+ ## Lifecycle
+ 
+diff --git a/scripts/kithmoot-node-ingress.py b/scripts/kithmoot-node-ingress.py
+index 9704388..a4ad8c9 100644
+--- a/scripts/kithmoot-node-ingress.py
++++ b/scripts/kithmoot-node-ingress.py
+@@ -125,17 +125,9 @@ def plan(text, host, certificate, key):
+     public = MARK + ('map $http_upgrade $archy_node_upgrade { default upgrade; "" close; }\n'
+                      'map $http_authorization $archy_node_authorization {\n'
+                      '    default "";\n    "~^Nostr [A-Za-z0-9+/]+={0,2}$" $http_authorization;\n}\n')
+-    public += f'map $ssl_server_name $archy_node_sni {{ hostnames; default 0; {host} 1; }}\nserver {{\n'
+-    public += (f'    listen unix:{SOCKET} ssl proxy_protocol;\n    server_name {host};\n'
+-               f'    ssl_certificate {certificate};\n    ssl_certificate_key {key};\n'
+-               '    ssl_protocols TLSv1.2 TLSv1.3;\n    set_real_ip_from unix:;\n'
+-               '    real_ip_header proxy_protocol;\n    access_log off;\n    error_log /dev/null crit;\n'
+-               '    client_max_body_size 64k;\n    client_body_timeout 10s;\n'
+-               '    client_header_timeout 10s;\n    keepalive_timeout 15s;\n'
+-               '    if ($archy_node_sni = 0) { return 421; }\n'
+-               f'    if ($host != {host}) {{ return 421; }}\n'
+-               '    add_header Referrer-Policy no-referrer always;\n')
++    public += f'map $ssl_server_name $archy_node_sni {{ hostnames; default 0; {host} 1; }}\n'
+     common = ('        if ($args != "") { return 404; }\n'
++              '        client_max_body_size 64k;\n        client_body_timeout 10s;\n'
+               '        proxy_http_version 1.1;\n        proxy_connect_timeout 5s;\n'
+               '        proxy_read_timeout 75s;\n        proxy_send_timeout 15s;\n'
+               '        proxy_buffering off;\n        proxy_request_buffering on;\n'
+@@ -147,10 +139,33 @@ def plan(text, host, certificate, key):
+               '        proxy_set_header Proxy-Authorization "";\n'
+               '        proxy_set_header X-Forwarded-For $remote_addr;\n'
+               '        proxy_set_header X-Forwarded-Proto https;\n'
+-              '        proxy_hide_header Set-Cookie;\n        proxy_hide_header Proxy-Authenticate;\n')
++              '        proxy_hide_header Set-Cookie;\n        proxy_hide_header Proxy-Authenticate;\n'
++              '        proxy_hide_header Referrer-Policy;\n        add_header Referrer-Policy no-referrer always;\n'
++              '        add_header X-Content-Type-Options nosniff always;\n')
+     paths = {'/node/v1/info': 3750, '/node/v1/status': 3750, '/node/v1/claim': 3750,
+              '/node/v1/enrol': 3750, '/node/v1/access': 3750, '/node/v1/close': 3750,
+              '/node/v1/operation': 3750, '/groups/v1/events': 3750, '/v1/credentials': 3751, '/events': 3752}
++    public += ('map "$archy_management_private_source:$archy_management_private_client:$archy_management_public_ingress:$uri" $archy_node_management_denied {\n'
++               '    default 1;\n    ~^1:1:0: 0;\n')
++    for path in paths:
++        public += '    "~^[01]:[01]:[01]:' + re.escape(path) + '$" 0;\n'
++    public += '}\n'
++    # Keep the exact dashboard, signing-frame and app proxy routes for private
++    # owner clients. Public requests get only the explicit node exceptions.
++    dashboard = LISTEN.sub('', block)
++    dashboard = dashboard.replace('    server_name _;', f'    server_name {host};', 1)
++    dashboard = dashboard.replace('ssl_certificate /etc/archipelago/ssl/archipelago.crt;', f'ssl_certificate {certificate};', 1)
++    dashboard = dashboard.replace('ssl_certificate_key /etc/archipelago/ssl/archipelago.key;', f'ssl_certificate_key {key};', 1)
++    if dashboard.count('if ($archy_management_denied) { return 404; }') != 1:
++        raise ValueError('Expected the managed dashboard source guard')
++    dashboard = dashboard.replace('if ($archy_management_denied)', 'if ($archy_node_management_denied)', 1)
++    dashboard = dashboard.replace('server {', 'server {\n' +
++        f'    listen unix:{SOCKET} ssl proxy_protocol;\n'
++        '    set_real_ip_from unix:;\n    real_ip_header proxy_protocol;\n'
++        '    access_log off;\n    error_log /dev/null crit;\n'
++        '    if ($archy_node_sni = 0) { return 421; }\n'
++        f'    if ($host != {host}) {{ return 421; }}\n', 1)
++    public += dashboard[:dashboard.rfind('}')]
+     for path, port in paths.items():
+         public += f'    location = {path} {{\n' + (common.replace('proxy_read_timeout 75s;', 'proxy_read_timeout 1h;') if path == '/events' else common)
+         if path == '/events':
+@@ -161,7 +176,7 @@ def plan(text, host, certificate, key):
+         else:
+             public += '        proxy_set_header Connection "";\n'
+         public += f'        proxy_pass http://127.0.0.1:{port};\n    }}\n'
+-    public += '    location / { return 404; }\n}\n'
++    public += '}\n'
+     return {'site': updated.encode(), 'stream': stream.encode(), 'public': public.encode(), 'addresses': addresses,
+             'tmpfiles': (MARK + f'd {RUNTIME} 0750 root www-data -\n').encode()}
+ 
+diff --git a/scripts/qualification/kithmoot-node-nginx.py b/scripts/qualification/kithmoot-node-nginx.py
+index 56a8758..7954dc2 100644
+--- a/scripts/qualification/kithmoot-node-nginx.py
++++ b/scripts/qualification/kithmoot-node-nginx.py
+@@ -157,6 +157,7 @@ try:
+     for name in ('archipelago-pwa.conf', 'archipelago-https-app-proxies.conf'):
+         write('/etc/nginx/snippets/' + name, (ROOT / 'image-recipe/configs/snippets' / name).read_bytes())
+     write('/opt/archipelago/web-ui/index.html', 'Fixture dashboard')
++    write('/opt/archipelago/web-ui/nostr-signer.html', 'Fixture private signer frame')
+     run(['nginx', '-t']); run(['nginx'])
+     wait(lambda: len(ingress.workers(ingress.nginx_master())) > 0, 'original nginx workers')
+     assert request('archy.local')[0] == 200
+@@ -197,6 +198,10 @@ try:
+     assert installed['phase'] == 'ready'
+     assert request('archy.local')[0] == 200
+     assert request('archy.local', source='1.2.3.5', headers={'X-Forwarded-For': '127.0.0.1'})[0] == 404
++    assert request('node.example')[0] == 200
++    assert request('node.example', '/nostr-signer.html')[0] == 200
++    assert request('node.example', source='1.2.3.5')[0] == 404
++    assert request('node.example', '/nostr-signer.html', source='1.2.3.5')[0] == 404
+     progress('killed routing apply recovered with dashboard guards intact')
+ 
+     # Exact privacy boundary for ordinary HTTP and WebSocket handshakes.
+@@ -221,7 +226,7 @@ try:
+     assert not {k.lower() for k in records[-1][1]} & {'cookie', 'authorization', 'x-csrf-token'}
+     count = len(records)
+     for path in ('/node/v1/unknown', '/turn', '/v1/vouch', '/index.html', '/node/v1/info?room=fixture'):
+-        assert request('node.example', path)[0] == 404
++        assert request('node.example', path, source='1.2.3.5')[0] == 404
+     assert request('archy.local', '/node/v1/info', headers={'Host': 'node.example'})[0] == 421
+     assert len(records) == count
+     for server in servers:
+@@ -352,6 +357,7 @@ try:
+         'actualNginx': True, 'actualGateTlsSource': True, 'actualNativeRelaySource': True,
+         'normalCertificateAndHostnameVerification': True, 'privateDashboardBeforeAfter': True,
+         'externalDashboardRefusedBeforeAfter': True, 'forgedForwardedSourceRefused': True,
++        'nodeHostnamePrivateDashboardAndSignerRetained': True, 'nodeHostnamePublicDashboardAndSignerRefused': True,
+         'httpAndWebsocketHostCredentialsStripped': True, 'unknownRoutesRefused': True,
+         'failedApplyRestored': True, 'killedApplyRecovered': True, 'operatorChangesPreserved': True,
+         'incompleteRenewalPreservesLastGoodPair': True, 'renewedHttpsAndTurnCertificatesReadBack': True,
+diff --git a/scripts/tests/test_kithmoot_node_ingress.py b/scripts/tests/test_kithmoot_node_ingress.py
+index f5b3588..80ec286 100644
+--- a/scripts/tests/test_kithmoot_node_ingress.py
++++ b/scripts/tests/test_kithmoot_node_ingress.py
+@@ -33,15 +33,18 @@ class HostIngress(unittest.TestCase):
+ 
+     def test_public_vhost_exposes_only_node_routes_without_browser_cookies(self):
+         public = self.render()['public'].decode()
+-        self.assertEqual(public.count('location = '), 10)
+-        self.assertIn('location / { return 404; }', public)
+-        self.assertEqual(public.count('proxy_set_header Cookie "";'), 10)
+-        self.assertEqual(public.count('proxy_hide_header Set-Cookie;'), 10)
+-        self.assertEqual(public.count('proxy_set_header X-Forwarded-For $remote_addr;'), 10)
+-        self.assertNotIn('proxy_add_x_forwarded_for', public)
++        self.assertIn('root /opt/archipelago/web-ui;', public)
++        self.assertIn('if ($archy_node_management_denied) { return 404; }', public)
++        self.assertIn('default 1;\n    ~^1:1:0: 0;', public)
++        for path in ['/node/v1/info', '/node/v1/status', '/events']:
++            location = public.split('location = ' + path + ' {')[1].split('\n    }')[0]
++            self.assertIn('proxy_set_header Cookie "";', location)
++            self.assertIn('proxy_hide_header Set-Cookie;', location)
++            self.assertIn('proxy_set_header X-Forwarded-For $remote_addr;', location)
++            self.assertNotIn('proxy_add_x_forwarded_for', location)
++            self.assertIn('client_max_body_size 64k;', location)
+         self.assertIn('proxy_set_header Upgrade $http_upgrade;', public)
+         self.assertIn('access_log off;', public)
+-        self.assertNotIn('root /opt/archipelago/web-ui;', public)
+ 
+     def test_custom_listener_and_other_vhosts_are_refused(self):
+         for text in [site().replace('1.2.3.4:443 ssl;', '1.2.3.4:443 ssl http2;'),
+-- 
+2.39.5 (Apple Git-154)
+
