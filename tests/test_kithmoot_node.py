@@ -74,7 +74,7 @@ class PrivatePackaging(unittest.TestCase):
         self.assertEqual(ports[53499]['container'], 34790)
         self.assertEqual({port['host'] for port in app['ports'] if port['protocol'] == 'udp' and port['host'] != 34790}, set(range(49192, 49224)))
         self.assertFalse(any('ssl' in volume.get('source', '') for volume in app['volumes']))
-        self.assertEqual(app['interfaces']['main']['protocol'], 'https')
+        self.assertEqual(app['interfaces']['main']['protocol'], 'http')
 
 
 if __name__ == '__main__': unittest.main()

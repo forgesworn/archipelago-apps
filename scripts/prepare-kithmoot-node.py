@@ -108,7 +108,7 @@ def manifest(image):
       description: Set up, pair and manage your private room node.
       type: ui
       port: 3753
-      protocol: https
+      protocol: http
       path: /
   metadata:
     author: ForgeSworn

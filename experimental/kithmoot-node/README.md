@@ -21,8 +21,9 @@ does not prove that a public address belongs to a data centre.
 
 Use Node 24 and an already verified private Linux node bundle with its complete
 `release.json` inventory. The preparation script accepts ARM64 or x64 inputs;
-only the ARM64 candidate has been exercised locally. Build for the bundle's
-architecture. Do not mix native architectures.
+ARM64 has passed local fixture checks and Linux x64 is installed on the
+authorised demo host. See the [live review pack](../../docs/kithmoot-node-demo-review.md).
+Build for the bundle's architecture. Do not mix native architectures.
 
 ```sh
 cd experimental/kithmoot-node
@@ -69,7 +70,8 @@ publicly. The application cannot read the host's TLS keys.
 The separate ports preserve the existing Spry app's HTTP, TURN and relay range.
 The image has a read-only root, no capabilities, no privilege escalation, a
 16 MiB temporary filesystem and a 256 MiB memory limit. Persistent node data
-uses its declared owned bind volume. No browser form accepts paths, commands,
+uses its declared owned bind volume. The manifest uses Podman-compatible
+`256m`; patched Quadlet generation also preserves the bounded `/tmp` mount. No browser form accepts paths, commands,
 hostnames or binaries. Resource limits are bounded choices.
 
 Pausing preserves saved rooms and data. Closing rooms and removing devices

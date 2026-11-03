@@ -1,54 +1,45 @@
 # KithMoot Node: Archy maintainer review
 
-**Maintainer must review and approve UI work on the Archy install, launch,
-pairing hand-off, delete-everything and status screens before merging or
-approval. ZAT pending.**
+The owner clarified on 3 November that maintainer ZAT applies only when
+submitting back to the official Archy repository. It does not block delivery
+through ForgeSworn's repositories or the authorised demo installation.
 
-No maintainer approval has been recorded. Do not merge this revision or treat
-the checks below as ZAT. The owner can pass this pack to the maintainer; no
-message has been sent on the owner's behalf.
+For official Archy submission: **Maintainer must review and approve UI work on
+the Archy install, launch, pairing hand-off, delete-everything and status screens
+before merging or approval. ZAT pending.** No official submission or maintainer
+approval has been recorded; no maintainer message has been sent.
 
 ## Exact candidate
 
 - UI/controller source: `3d447f14b13ea8fa5d6f7703a3f2cb98017cb5cd`.
 - Draft [PR 53](https://github.com/forgesworn/archipelago-apps/pull/53).
-- Private ARM64 image: `localhost/kithmoot-node:0.1.0-rc.1-f6c9c23f04d3`.
-- Image ID: `sha256:afcbfec16663a90bf079689a304e278ef380f3c7069d54a2e676f06a05670e55`.
-- Private bundle inventory SHA-256:
-  `3e7f78635f9c69e7e281fb943e707328857c492038f6e1c87b2995215dd54a65`.
-- Patched Archy host source: `fa356d36c3910867dbea17c7494c90a984aa10c6`
-  (patches 0035–0040); backend patch level 5.
-- [Combined evidence](evidence/kithmoot-node-archy-20261103.json) records
-  source/asset hashes, manifest checks, private image hardening and the actual
-  offline host journey. [Component receipt](evidence/kithmoot-node-archy-20261103/component-review.json)
-  records the browser checks and their fixture limits.
+- Live Linux x64 candidate: see the [demo review pack](kithmoot-node-demo-review.md)
+  for the installed image, patched host revision, private access and rollback.
+- The original [ARM64 fixture evidence](evidence/kithmoot-node-archy-20261103.json)
+  and [component receipt](evidence/kithmoot-node-archy-20261103/component-review.json)
+  remain historical evidence for the same operator UI/controller assets.
 
-There is no deployed review URL. No live Archy node has been changed. The image
-and private backend inputs remain local and have not been pushed to a registry.
-Use this exact build for review; record a new reviewed revision after material
-UI changes.
+The owner authorised the private demo installation on 3 November. Open
+<https://demo.forgesworn.dev/dashboard> through the Archy SSH SOCKS browser
+profile, launch KithMoot Node and approve its local sign-in proof using the
+existing linked signer. The direct endpoint is <https://demo.forgesworn.dev:3753/>.
+The app gate requires a dashboard session and private connection. The image
+and private Shelter inputs have not been published to a registry.
 
 ## Build and setup
 
 The [private package instructions](../experimental/kithmoot-node/README.md)
-provide build and manifest preparation commands. The verified output for this
-run is `.cache/kithmoot-node-candidate-4-20261103/`; its manifest is
-`apps/kithmoot-node/manifest.yml` within that private output directory. It is
-outside the published app catalogue and uses `pull_policy: never`.
-
-For a live review, the owner must authorise a particular rented-server or
-away-from-home Archy target, privately load the image into its actual runtime,
-and install that local manifest on this patched host. The host needs a current
-public certificate covering its hostname and `turn.` plus that hostname, and
-the documented port/firewall access. This pack does not authorise that live
-installation. Host preflight must succeed before app startup. The UI opens
-through Archy's HTTPS app gate on port 3753. An identity belonging to that Archy
-node must sign in again inside the app.
+provide reproducible local preparation commands. Host preflight requires a
+current public certificate covering the hostname and its `turn.` hostname.
+The [live review pack](kithmoot-node-demo-review.md) identifies the current
+candidate and full evidence; no additional live target is authorised by this
+note. Record a new reviewed revision after material UI changes.
 
 The reproducible component check needs no live node or private backend. Run
 the commands in the package README. It runs the actual signed controller with
 a fixture signer and node adapter and writes the captures below. This proves
-component behaviour, not integration with the real dashboard signer/app gate.
+component behaviour. The separate demo receipt records integration with the
+real dashboard signer/app gate.
 
 ## Named screens and review steps
 
