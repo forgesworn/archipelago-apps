@@ -11,13 +11,15 @@ approval has been recorded; no maintainer message has been sent.
 
 ## Exact candidate
 
-- UI/controller source: `3d447f14b13ea8fa5d6f7703a3f2cb98017cb5cd`.
+- UI/controller source: `bd7d0c8f5077d1ceef6b26f4c768052a5ffe5066`.
 - Draft [PR 53](https://github.com/forgesworn/archipelago-apps/pull/53).
 - Live Linux x64 candidate: see the [demo review pack](kithmoot-node-demo-review.md)
   for the installed image, patched host revision, private access and rollback.
 - The original [ARM64 fixture evidence](evidence/kithmoot-node-archy-20261103.json)
   and [component receipt](evidence/kithmoot-node-archy-20261103/component-review.json)
-  remain historical evidence for the same operator UI/controller assets.
+  remain historical evidence for the original operator UI/controller. The
+  [current component receipt](evidence/kithmoot-node-copy-20261103/component-review.json)
+  covers the revised wording, access count, connection errors and session policy.
 
 The owner authorised the private demo installation on 3 November. Open
 <https://demo.forgesworn.dev/dashboard> through the Archy SSH SOCKS browser

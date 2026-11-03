@@ -2,20 +2,21 @@
   "v": 1,
   "date": "2026-11-03",
   "deployment": {
-    "image": "localhost/kithmoot-node:0.1.0-rc.1-ee8307c5b832",
-    "imageId": "5a84a38ac1bb2c35bf08c4aae6312e4050a88b597e60fcb4a787f7a62aaa8d66",
+    "image": "localhost/kithmoot-node:0.1.0-rc.1-d31b2a3ed1e9",
+    "imageId": "56c02cb2877fec8b58c3ce2f7a116f3f9c95a9ca45ae3029aafae874eb6294c8",
     "platform": "linux-x64",
     "bundleSha256": "65b951512c9dc1df845cbcf7183bc1685585500a934d1096a90217d629a8de47",
     "loadedIn": "archipelago rootless Podman",
     "backendSha256": "81a184a97a04b02ac65d44fe2b71e7c34f3d9c91486001b3cced60efa913230d",
     "sourceRevision": "f389e68b904e21dbd54343d4b71a61bac78efd11",
-    "uiSourceRevision": "3d447f14b13ea8fa5d6f7703a3f2cb98017cb5cd",
+    "uiSourceRevision": "bd7d0c8f5077d1ceef6b26f4c768052a5ffe5066",
     "dashboard": "https://demo.forgesworn.dev/dashboard",
     "operatorUi": "https://demo.forgesworn.dev:3753/",
     "managementAccess": "Private connection or SSH SOCKS tunnel",
     "zat": "pending",
     "installedAt": "2026-11-03T09:38:30Z",
-    "backendPatchLevel": 10
+    "backendPatchLevel": 10,
+    "pairingAndRoomCustodyPreserved": true
   },
   "resources": {
     "passed": true,
@@ -45,7 +46,9 @@
     "prepareCancelDeletion": true,
     "livePairingSecretsRecorded": false,
     "roomsCreated": 0,
-    "errors": []
+    "errors": [],
+    "sourceRevision": "3d447f14b13ea8fa5d6f7703a3f2cb98017cb5cd",
+    "historicalCaptures": true
   },
   "embedded": {
     "passed": true,
@@ -80,12 +83,24 @@
         390
       ],
       "actualKeeperClaim": false,
-      "reason": "Preserves the owner\u2019s unpaired node; no synthetic identity claims it.",
+      "reason": "Preserves the owner’s unpaired node; no synthetic identity claims it.",
       "errors": []
     },
     "ownerConfirmation": "Paired and ready",
     "ownerConfirmationSource": "Owner reply in this task on 3 November 2026",
-    "cachedClientRecovery": "Owner used Update now, after which pairing screen opened and pairing/status succeeded."
+    "cachedClientRecovery": "Owner used Update now, after which pairing screen opened and pairing/status succeeded.",
+    "currentDeployment": {
+      "source": "e86bf15b86e60201855b94e479eacd7190c875ec",
+      "release": "20261103T130008Z",
+      "publicIndexMatches": true,
+      "publicMainMatches": true,
+      "mainSha256": "f872764da3e0c1828cf495d0bdfb7a9d11490062264dfb55b3866e3a508f91a5",
+      "diagnosticHookAbsent": true,
+      "pr": 681,
+      "focusedTestsPassed": 93,
+      "appBackendJourneyPassed": true,
+      "appBackendJourneySeconds": 52.6
+    }
   },
   "publicNetwork": {
     "normalPublicCA": true,
@@ -96,7 +111,14 @@
     "spoofedForwardedIPDashboardStatus": 404,
     "infoStatus": 200,
     "claimPreflightStatus": 204,
-    "corsOrigin": "https://kithmoot.forgesworn.dev"
+    "corsOrigin": "https://kithmoot.forgesworn.dev",
+    "shortApplicationTLS443MediaObserved": true,
+    "rawNativeTLS443Seconds": 60,
+    "rawNativeDecodedFrames": [
+      728,
+      725
+    ],
+    "applicationVPNQualification": "Open: intermittent application media setup and route-change recovery failures"
   },
   "maintenance": {
     "ingressJournalRetained": true,
@@ -118,7 +140,19 @@
   },
   "limits": [
     "No public signed node release or private Shelter source publication",
-    "Public forced TLS443 media, independent networks, physical GrapheneOS and capacity remain separate",
+    "Short TLS443 media observed; sustained application media, VPN switching, independent mobile networks, physical GrapheneOS and capacity remain open",
     "No private room key, live pairing code, authentication proof or dashboard password recorded"
-  ]
+  ],
+  "controls": {
+    "idleMinutes": 30,
+    "absoluteHours": 8,
+    "automaticPollingRenews": false,
+    "signOutRevokes": true,
+    "testsPassed": 17,
+    "screensCaptured": 15,
+    "cleanAxeScans": 6,
+    "countLabel": "Devices with access",
+    "countMeaning": "Includes offline devices; counted separately in each room",
+    "privateTunnelReconnectTestPassed": true
+  }
 }

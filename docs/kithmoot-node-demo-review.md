@@ -25,7 +25,7 @@ proxy. Open <https://demo.forgesworn.dev/dashboard>, log in with the existing
 dashboard account, then launch **KithMoot Node**. The app endpoint is
 <https://demo.forgesworn.dev:3753/>; its outer gate requires the dashboard
 session. Inside the app, choose the existing linked identity and approve
-the local sign-in proof on its signer. This is separate from pairing a keeper's KithMoot app.
+the local sign-in proof on its signer. This is separate from pairing your KithMoot account in its app.
 
 The public certificate covers `demo.forgesworn.dev` and
 `turn.demo.forgesworn.dev`. The dashboard and operator app remain private.
@@ -63,10 +63,10 @@ separate when diagnosing VPN changes.
 
 ## Revision
 
-- Operator UI/controller source: `3d447f14b13ea8fa5d6f7703a3f2cb98017cb5cd`.
+- Operator UI/controller source: `bd7d0c8f5077d1ceef6b26f4c768052a5ffe5066`.
 - Patched host source: `f389e68b904e21dbd54343d4b71a61bac78efd11`, patches
   0035–0045, backend patch level 10.
-- Native private image: `localhost/kithmoot-node:0.1.0-rc.1-ee8307c5b832`.
+- Native private image: `localhost/kithmoot-node:0.1.0-rc.1-d31b2a3ed1e9`.
 - Bundle inventory SHA-256:
   `65b951512c9dc1df845cbcf7183bc1685585500a934d1096a90217d629a8de47`.
 - The existing dashboard frontend is retained. The real host supplies its
@@ -75,7 +75,7 @@ separate when diagnosing VPN changes.
 The native daemon uses release-built dependencies with the daemon crate at
 opt-level 0 and 256 codegen units to fit the review host. Normal full-release
 builds run separately in CI. This candidate establishes functionality, with no
-capacity or performance claim. The UI/controller assets are unchanged.
+capacity or performance claim. The current UI/controller includes the account wording, access-count explanation, private connection errors and longer controls sessions described above.
 
 ## Review
 
@@ -88,9 +88,8 @@ In particular:
 2. Confirm the away-from-home setting before setup. Check unconfigured,
    ready, paused, restarting and failed-start status, including recovery.
 3. Create a pairing code. Check its QR, copy and same-device link, explicit
-   keeper instructions, one-use behaviour and expiry. Use the separately
-   identified KithMoot client candidate; the public clients do not yet contain
-   these unapproved UI changes.
+   account instructions, one-use behaviour and expiry. The public web client
+   includes pairing; identify any native client candidate separately.
 4. With no rooms, prepare deletion, cancel it and check admission is restored.
    Review Archy's normal **Delete app and data** hand-off. Do not delete any
    room that another reviewer is using.
@@ -106,11 +105,15 @@ before merging or approval. ZAT pending.** No maintainer message has been sent.
 
 ## Pair from the web
 
-The web client was deployed from merge `2c1977dacad883d730bd7ec6cfc9c66dbfe99486`
-as release `20261103T101924Z`. Open KithMoot and accept **Update now** if an older
+Web pairing was first verified from merge `2c1977dacad883d730bd7ec6cfc9c66dbfe99486`
+in release `20261103T101924Z`. The current web deployment is
+`e86bf15b86e60201855b94e479eacd7190c875ec`, release `20261103T130008Z`, with
+public index and main script byte comparisons passed. It includes the network
+recovery and initial TURN route fixes. Sustained application video and VPN
+route switching remain open: short calls pass but longer runs are inconsistent. Open KithMoot and accept **Update now** if an older
 installed web app is still running. Refreshing alone can retain the previous
 service worker. Generate a fresh code in Archy, open its link, sign in to the
-keeper's KithMoot account and choose **Pair node**. **Check status** should show
+KithMoot account and choose **Pair node**. **Check status** should show
 `demo.forgesworn.dev` ready. No native app is required. The owner completed this
 journey successfully. No site data, saved room or identity was cleared.
 
