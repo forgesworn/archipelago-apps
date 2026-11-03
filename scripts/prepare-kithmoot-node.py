@@ -86,7 +86,7 @@ def manifest(image):
 ''' + ''.join(f'      - {{ name: kithmoot-node-{name}, kind: hex32 }}\n' for name, _ in secrets) + '''    secret_env:
 ''' + ''.join(f'      - {{ key: KITHMOOT_NODE_{key}, secret_file: kithmoot-node-{name} }}\n' for name, key in secrets) + '''    derived_env:
 ''' + ''.join(f"      - {{ key: {key}, template: '{{{{{key}}}}}' }}\n" for key in ["PUBLIC_HOST", "HOST_IP", "HOST_MDNS", "MESH_HOST", "NODE_IDENTITY_PUBKEYS"]) + '''  resources:
-    memory_limit: 256Mi
+    memory_limit: 256m
     cpu_limit: 2
   security:
     capabilities: []
