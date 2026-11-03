@@ -111,9 +111,12 @@ reachability, physical GrapheneOS and cross-client sustained media remain
 separate acceptance gates. No public signed node/Shelter release or source
 publication is authorised by these checks.
 
-The web/desktop and Android node screens are held separately in KithMoot
-[PR 675](https://github.com/forgesworn/kithmoot/pull/675) and
-[PR 392](https://github.com/forgesworn/kithmoot-android/pull/392). The web/desktop pack identifies the final port-aware source and successful
-local browser/Electron checks. The Android pack is being refreshed after its
-final local matrix (4,014 passed tests, one opt-in skip). General ship
-instructions and automated checks do not approve those screens either.
+The web node screens shipped in KithMoot
+[PR 675](https://github.com/forgesworn/kithmoot/pull/675), with browser media
+recovery in [PR 686](https://github.com/forgesworn/kithmoot/pull/685). The live
+release and controlled TLS443 call results are in the demo review pack.
+The packaged desktop release and Android node UI
+[PR 392](https://github.com/forgesworn/kithmoot-android/pull/392) remain separate;
+no new native UI release is claimed. The Android candidate's local matrix
+passed 4,014 tests with one opt-in skip. Official Archy UI acceptance remains
+pending for this review revision.

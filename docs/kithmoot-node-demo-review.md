@@ -107,10 +107,24 @@ before merging or approval. ZAT pending.** No maintainer message has been sent.
 
 Web pairing was first verified from merge `2c1977dacad883d730bd7ec6cfc9c66dbfe99486`
 in release `20261103T101924Z`. The current web deployment is
-`e86bf15b86e60201855b94e479eacd7190c875ec`, release `20261103T130008Z`, with
-public index and main script byte comparisons passed. It includes the network
-recovery and initial TURN route fixes. Sustained application video and VPN
-route switching remain open: short calls pass but longer runs are inconsistent. Open KithMoot and accept **Update now** if an older
+`3de4f219d9e319fdd46fa751846448b573dc7299`, release `20261103T165540Z`, with
+public index and main script byte comparisons passed. It includes authenticated
+socket probes, bounded subscription recovery and fixed media slots for node
+rooms. Explicit opt-out and negotiation with older clients remain supported.
+The strict two-browser test passed 479 seconds of matched-pair audio/video over
+TURN TLS443, including VPN on/off, a 12-second outage and credential renewal.
+It continued for 314 seconds after the final recovery. Recovery took 42 seconds
+on VPN, 11 seconds off VPN and 15 seconds after the outage. There were no browser
+errors or subscription overflows. The test used candidate source `599467de`
+against the real public node; the deployment has the same main script bytes.
+A separate fresh production-browser smoke passed 28 seconds of paired media.
+
+The earlier 503-second run counted aggregate room media, which could hide a
+frozen pair. The previous production and rotation-grace builds failed the
+stricter gate; the fresh-allocation change supersedes them. Independent VPNs,
+physical mobile handoff, GrapheneOS and capacity remain separate gates.
+
+Open KithMoot and accept **Update now** if an older
 installed web app is still running. Refreshing alone can retain the previous
 service worker. Generate a fresh code in Archy, open its link, sign in to the
 KithMoot account and choose **Pair node**. **Check status** should show
@@ -164,5 +178,6 @@ systemd and nginx, and verify the dashboard and original apps. Remove only UFW
 rules labelled `kithmoot-node-review-20261103`. Retain the app's data and the
 expanded certificate; neither needs to be destroyed for rollback.
 
-Public NAT/media, forced TURN-over-TLS443, capacity and physical GrapheneOS
-acceptance are separate from making this review UI available.
+Controlled public TLS443 media and route recovery are recorded separately from
+UI acceptance. Independent networks, capacity and physical GrapheneOS remain
+separate acceptance gates.

@@ -83,29 +83,69 @@
         390
       ],
       "actualKeeperClaim": false,
-      "reason": "Preserves the owner’s unpaired node; no synthetic identity claims it.",
+      "reason": "Preserves the owner\u2019s unpaired node; no synthetic identity claims it.",
       "errors": []
     },
     "ownerConfirmation": "Paired and ready",
     "ownerConfirmationSource": "Owner reply in this task on 3 November 2026",
     "cachedClientRecovery": "Owner used Update now, after which pairing screen opened and pairing/status succeeded.",
     "currentDeployment": {
-      "source": "e86bf15b86e60201855b94e479eacd7190c875ec",
-      "release": "20261103T130008Z",
+      "source": "3de4f219d9e319fdd46fa751846448b573dc7299",
+      "release": "20261103T165540Z",
       "publicIndexMatches": true,
       "publicMainMatches": true,
-      "mainSha256": "f872764da3e0c1828cf495d0bdfb7a9d11490062264dfb55b3866e3a508f91a5",
+      "mainSha256": "93bd107c7a20d7b0b4ee37f05060a7e9fe7f748f9848a4b85f19f60803b44e31",
       "diagnosticHookAbsent": true,
-      "pr": 681,
-      "focusedTestsPassed": 93,
+      "pr": 686,
+      "relayRecoveryPR": 684,
+      "relayFocusedTestsPassed": 161,
+      "profileTestsPassed": 46,
+      "profileTestsSkipped": 2,
       "appBackendJourneyPassed": true,
-      "appBackendJourneySeconds": 52.6
-    }
+      "appBackendJourneySeconds": 57.1,
+      "nodeCallProfileDefault": 2,
+      "explicitOffAndLegacyPeerFallback": true,
+      "focusedTestsPassed": 118,
+      "focusedTestsSkipped": 5,
+      "freshNativeAllocationOnCredentialRenewal": true,
+      "productionPairSmokeSeconds": 28
+    },
+    "deploymentHistory": [
+      {
+        "source": "e86bf15b86e60201855b94e479eacd7190c875ec",
+        "release": "20261103T130008Z",
+        "publicIndexMatches": true,
+        "publicMainMatches": true,
+        "mainSha256": "f872764da3e0c1828cf495d0bdfb7a9d11490062264dfb55b3866e3a508f91a5",
+        "diagnosticHookAbsent": true,
+        "pr": 681,
+        "focusedTestsPassed": 93,
+        "appBackendJourneyPassed": true,
+        "appBackendJourneySeconds": 52.6
+      },
+      {
+        "source": "56cbfad9f1aa38dbfe63bc227242a72f556c03fe",
+        "release": "20261103T155431Z",
+        "publicIndexMatches": true,
+        "publicMainMatches": true,
+        "mainSha256": "a660bf5df0a729b5926a94856215b2b84b63a184db5a0b63d03773463579deb1",
+        "diagnosticHookAbsent": true,
+        "pr": 685,
+        "relayRecoveryPR": 684,
+        "relayFocusedTestsPassed": 161,
+        "profileTestsPassed": 46,
+        "profileTestsSkipped": 2,
+        "appBackendJourneyPassed": true,
+        "appBackendJourneySeconds": 42.3,
+        "nodeCallProfileDefault": 2,
+        "explicitOffAndLegacyPeerFallback": true
+      }
+    ]
   },
   "publicNetwork": {
     "normalPublicCA": true,
     "turnTLS443BindingSuccess": true,
-    "fullTLS443MediaCall": false,
+    "fullTLS443MediaCall": true,
     "externalDashboardStatus": 404,
     "externalSignerStatus": 404,
     "spoofedForwardedIPDashboardStatus": 404,
@@ -118,7 +158,31 @@
       728,
       725
     ],
-    "applicationVPNQualification": "Open: intermittent application media setup and route-change recovery failures"
+    "applicationVPNQualification": {
+      "passed": true,
+      "candidateCodeSource": "599467deab502c99a42465b94c5b44f929bdc398",
+      "mediaSeconds": 479,
+      "afterFinalRecoverySeconds": 314,
+      "matchedGuestPairOnly": true,
+      "mutualDtlsFingerprintMatching": true,
+      "vpnOnRecoverySeconds": 42,
+      "vpnOffRecoverySeconds": 11,
+      "outageSeconds": 12,
+      "outageRecoverySeconds": 15,
+      "credentialRenewalSeconds": [
+        394,
+        395
+      ],
+      "credentialLifetimeSeconds": 300,
+      "peakSubscriptions": 12,
+      "subscriptionOverflows": 0,
+      "pageErrors": 0,
+      "candidateRendererUnderProductionHeaders": true,
+      "productionByteReadbackPassed": true,
+      "productionPairSmokeSeconds": 28,
+      "proof": "https://github.com/forgesworn/kithmoot/blob/488bcfcd03b3f708db2709742fc347cf576ddb79/docs/evidence/kithmoot-node-matched-pair-tls443-20261103.json",
+      "limits": "Controlled node-route WireGuard with private SSH carrier; synthetic Chromium camera/microphone. Not independent mobile, commercial VPN or physical GrapheneOS acceptance."
+    }
   },
   "maintenance": {
     "ingressJournalRetained": true,
@@ -140,7 +204,7 @@
   },
   "limits": [
     "No public signed node release or private Shelter source publication",
-    "Short TLS443 media observed; sustained application media, VPN switching, independent mobile networks, physical GrapheneOS and capacity remain open",
+    "Independent mobile networks, commercial VPNs, physical GrapheneOS and capacity remain open; this controlled run recovered within 42 seconds.",
     "No private room key, live pairing code, authentication proof or dashboard password recorded"
   ],
   "controls": {
