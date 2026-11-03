@@ -12,10 +12,10 @@ import QRCode from 'qrcode'
 import { createController } from './server.mjs'
 
 assert.equal(process.env.E2E_KITHMOOT_NODE_UI, 'component-review')
-const directory = fileURLToPath(new URL('../../docs/evidence/kithmoot-node-archy-20261103/', import.meta.url))
+const directory = process.env.E2E_KITHMOOT_NODE_REVIEW_OUTPUT || fileURLToPath(new URL('../../docs/evidence/kithmoot-node-archy-20261103/', import.meta.url))
 await mkdir(directory, { recursive: true })
 const key = generateSecretKey(), pubkey = getPublicKey(key)
-let configured = false, running = false, deleting = false, rooms = 0, setupCalls = 0
+let configured = false, running = false, deleting = false, rooms = 0, setupCalls = 0, loseNextStatus = false
 const link = 'https://kithmoot.app/j/#kithmoot-node=component-review-only'
 const node = {
   status: async () => ({ v: 1, host: 'node.example', configured, running, ready: running && !deleting, paired: false, rooms, devices: 0, pending: 0, deleting }),
@@ -34,6 +34,7 @@ await page.exposeFunction('fixtureSign', event => finalizeEvent(event, key))
 await context.route('**/*', async route => {
   const input = route.request(), url = new URL(input.url())
   if (url.hostname !== 'node.example') return route.abort()
+  if (loseNextStatus && url.pathname === '/api/status') { loseNextStatus = false; return route.abort() }
   if (url.pathname === '/nostr-provider.js') return route.fulfill({ contentType: 'text/javascript', body: `window.archipelagoNostr={selectIdentity:async()=>{},onIdentitySelected:()=>{}};window.nostr={getPublicKey:async()=>${JSON.stringify(pubkey)},signEvent:event=>window.fixtureSign(event)};` })
   const response = await new Promise((resolve, reject) => {
     const req = request(base + url.pathname + url.search, { method: input.method(), headers: { ...input.headers(), host: url.host } }, reply => {
@@ -75,6 +76,12 @@ try {
   await capture('04-status-390'); await capture('05-status-768', 768, 1024); await capture('06-status-1440', 1440, 900)
   await capture('07-status-large-text', 390, 844, true)
   await page.evaluate(() => { document.documentElement.style.fontSize = '' }); await page.setViewportSize({ width: 390, height: 844 }); await axe('status')
+  loseNextStatus = true
+  await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+  await page.getByText('Cannot reach the Archy controls.', { exact: false }).waitFor()
+  await capture('14-controls-connection-lost-390')
+  await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+  assert.equal(await page.locator('#notice').isVisible(), false)
   await page.getByRole('button', { name: 'Pair with KithMoot', exact: true }).click()
   await page.getByRole('heading', { name: 'Pair with your KithMoot app' }).waitFor()
   await capture('08-pairing-390'); assert.equal(await page.getByRole('link', { name: 'Open KithMoot' }).getAttribute('href'), link); await axe('pairing')
@@ -93,7 +100,7 @@ try {
   assert.deepEqual(errors, [])
   await writeFile(join(directory, 'component-review.json'), JSON.stringify({ schema: 'kithmoot-node-ui-component/1', passed: true, actualController: true,
     fixtureSigner: true, fixtureNodeAdapter: true, actualHostGate: false, actualTurn: false, uiMaintainerApproval: false, zat: 'pending', screenshots, accessibility, pageErrors: errors }, null, 2) + '\n')
-  console.log('Browser component journey passed; 14 captures, six accessibility scans, ZAT pending.')
+  console.log(`Browser component journey passed; ${screenshots.length} captures, six accessibility scans; official Archy ZAT pending.`)
 } finally {
   await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); key.fill(0)
 }

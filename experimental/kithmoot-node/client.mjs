@@ -19,6 +19,8 @@ const messages = {
   'busy': 'The node is busy. Wait a moment and try again.'
 }
 function inform(message, error = false) { notice.textContent = message; notice.hidden = !message; notice.classList.toggle('error', error) }
+const managementConnectionError = 'Cannot reach the Archy controls. Check your private connection to Archy, then refresh these controls.'
+function errorMessage(error) { return error instanceof Error && !['TypeError', 'TimeoutError', 'AbortError'].includes(error.name) ? error.message : managementConnectionError }
 function clearPairing() { pairing = undefined; clearTimeout(expiryTimer) }
 async function api(action, value = {}) {
   const response = await fetch('/api/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
@@ -71,15 +73,15 @@ function renderStatus() {
   const label = status.deleting ? 'Prepared for deletion' : status.ready ? 'Ready' : status.running ? 'Needs attention' : 'Paused'
   mount(`<span class="badge ${status.ready ? 'ready' : ''}">${label}</span><h2 class="host">${escape(status.host)}</h2>
     <p>${status.deleting ? 'New rooms and requests are blocked. Return to Archy to delete the app and its data, or cancel below.' : status.ready ? 'Your rooms and calls can use this node.' : status.running ? 'The node is running, but its local checks have not passed. Refresh its status before pairing.' : 'Start the node to make hosted rooms and calls available again.'}</p>
-    <div class="facts"><div class="fact"><strong>${status.rooms ?? '—'}</strong><span>Hosted rooms</span></div><div class="fact"><strong>${status.devices ?? '—'}</strong><span>Admitted devices</span></div><div class="fact"><strong>${status.pending ?? '—'}</strong><span>Pending requests</span></div><div class="fact"><strong>${status.paired ? 'Paired' : 'Unpaired'}</strong><span>Keeper’s KithMoot app</span></div></div>
-    <div class="actions">${status.deleting ? '<button class="primary" data-action="cancel-delete">Cancel deletion</button>' : status.running ? `<button class="primary" data-action="pair" ${status.ready ? '' : 'disabled'}>${status.paired ? 'Pair another keeper device' : 'Pair with KithMoot'}</button><button data-action="pause">Pause node</button>` : '<button class="primary" data-action="start">Start node</button>'}<button data-action="refresh">Refresh status</button></div>
+    <div class="facts"><div class="fact"><strong>${status.rooms ?? '—'}</strong><span>Hosted rooms</span></div><div class="fact"><strong>${status.devices ?? '—'}</strong><span>Admitted devices</span></div><div class="fact"><strong>${status.pending ?? '—'}</strong><span>Pending requests</span></div><div class="fact"><strong>${status.paired ? 'Paired' : 'Unpaired'}</strong><span>Your KithMoot account</span></div></div>
+    <div class="actions">${status.deleting ? '<button class="primary" data-action="cancel-delete">Cancel deletion</button>' : status.running ? `<button class="primary" data-action="pair" ${status.ready ? '' : 'disabled'}>${status.paired ? 'Pair KithMoot on another device' : 'Pair with KithMoot'}</button><button data-action="pause">Pause node</button>` : '<button class="primary" data-action="start">Start node</button>'}<button data-action="refresh">Refresh status</button></div>
     <hr><p class="muted">Kicking someone and closing a room happen in KithMoot. Pausing this node keeps its saved data.</p><div class="actions"><button class="danger" data-action="delete" ${!status.deleting ? '' : 'disabled'}>Delete everything…</button><button data-action="sign-out">Sign out</button></div>`)
 }
 function renderDelete() {
   mount('<h2>Delete this node and its data</h2><p>First close every hosted room in KithMoot. Closing revokes access, ends calls, purges the room’s messages and sends the devices their self-destruct instruction.</p><p>Prepare deletion below once all rooms, devices and pending requests are gone. Then use Archy’s <strong>Delete app and data</strong> action. This screen cannot close rooms for you.</p><div class="actions"><button class="danger" data-action="prepare-delete">Check rooms and prepare deletion</button><button data-action="back">Keep node</button></div>')
 }
 function renderPairing() {
-  mount('<h2>Pair with your KithMoot app</h2><p>Scan this code with your keeper device, or open the link on this device. Anyone holding this code can attempt keeper pairing. Keep it private.</p><div class="qr"><img alt="Private KithMoot keeper pairing code" width="256" height="256"></div><p>This code expires within six minutes. Guests join through a room link after you admit them.</p><a class="button primary" id="open-pair">Open KithMoot</a><div class="actions"><button data-action="copy-pair">Copy pairing link</button><button data-action="back">Done</button></div>')
+  mount('<h2>Pair with your KithMoot app</h2><p>Open this link in KithMoot on the browser, computer or phone you want to use. Sign in to the same KithMoot account on each device. This code connects that account to your node. Keep it private.</p><div class="qr"><img alt="Private KithMoot pairing code" width="256" height="256"></div><p>This code expires within six minutes. Guests join through a room link after you admit them.</p><a class="button primary" id="open-pair">Open KithMoot</a><div class="actions"><button data-action="copy-pair">Copy pairing link</button><button data-action="back">Done</button></div>')
   content.querySelector('img').src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(pairing.qr)
   content.querySelector('#open-pair').href = pairing.link
 }
@@ -107,7 +109,7 @@ async function run(action) {
       view = 'status'; await refresh()
       if (action === 'prepare-delete') inform('Prepared for deletion. Return to Archy and choose Delete app and data.')
     }
-  } catch (error) { inform(error instanceof Error && error.name !== 'TypeError' ? error.message : 'The node is unreachable. Check your connection and try again.', true) }
+  } catch (error) { inform(errorMessage(error), true) }
   finally {
     busy = false; content.setAttribute('aria-busy', 'false')
     // Re-rendering restores only the controls appropriate to the current state.
@@ -123,6 +125,7 @@ window.archipelagoNostr?.onIdentitySelected(() => { token = undefined; clearPair
 setInterval(async () => {
   if (!token || busy || polling || view !== 'status' || !status?.configured || document.hidden) return
   polling = true
-  try { await refresh() } catch (error) { inform(error.message, true) } finally { polling = false }
+  try { await refresh(); if (notice.textContent === managementConnectionError) inform('Connection to the Archy controls restored.') }
+  catch (error) { inform(errorMessage(error), true) } finally { polling = false }
 }, 10000)
 renderSignIn()

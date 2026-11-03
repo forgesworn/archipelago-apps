@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "base": "51a9516451b08e924e1381b6cf56ade042913553",
+  "files": [
+    {
+      "path": "experimental/kithmoot-node/client.mjs",
+      "sha256": "b23e52ac87686eb51f315e998f276acb0e4c4e7f6975b0fa63d1dcfbdc442915"
+    },
+    {
+      "path": "experimental/kithmoot-node/server.mjs",
+      "sha256": "d4b33ae1d296dac5fbef47314dca9fd554b15b70f56198c9c13cb4bc1fb1e1a8"
+    },
+    {
+      "path": "experimental/kithmoot-node/entrypoint.mjs",
+      "sha256": "94c8b4340108be1e258e9a978d586f552098bd67a784fb671a4e43472df61a99"
+    },
+    {
+      "path": "scripts/node-management-tunnel.sh",
+      "sha256": "cdc9ab24d10cc653e4ebaab0b780df5ae9f3dd04d79762995a45f00805901ea0"
+    }
+  ],
+  "changes": [
+    "Plain-language account and device pairing instructions",
+    "Named private management connection errors and recovery",
+    "Self-reconnecting loopback-only SSH tunnel"
+  ],
+  "officialArchyZAT": "pending",
+  "maintainerContacted": false
+}

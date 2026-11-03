@@ -14,8 +14,11 @@ private image or public node release has been published.
 Keep an SSH SOCKS tunnel open:
 
 ```sh
-ssh -N -D 1080 root@95.216.164.146
+scripts/node-management-tunnel.sh root@95.216.164.146 1080
 ```
+
+The [tunnel helper](../scripts/node-management-tunnel.sh) reconnects after a VPN
+or Wi-Fi change. Keep it running. It binds only local loopback.
 
 Use an Archy browser profile with SOCKS5 `127.0.0.1:1080` and DNS through the
 proxy. Open <https://demo.forgesworn.dev/dashboard>, log in with the existing
@@ -28,6 +31,21 @@ The public certificate covers `demo.forgesworn.dev` and
 `turn.demo.forgesworn.dev`. The dashboard and operator app remain private.
 External callers receive only the room node's explicit API and authenticated
 TURN transports. Existing Spry ports and app data are retained.
+
+## Devices and connections
+
+“Your KithMoot account” replaces “keeper device” in the controls. Open the
+pairing link in the browser, computer or phone you want to use; sign in to the
+same KithMoot account on each device. No special hardware is required.
+The [updated component review](evidence/kithmoot-node-copy-20261103/component-review.json)
+contains 15 captures and six clean accessibility scans, including a failed
+management fetch and retry. A lost management connection is now named as an
+Archy controls connection error instead of “The node is unreachable” or the
+browser’s raw “Failed to fetch”.
+
+KithMoot room HTTPS, relay and TURN traffic use the public node routes. Private
+Archy management uses its private connection. Keep those two access paths
+separate when diagnosing VPN changes.
 
 ## Revision
 
