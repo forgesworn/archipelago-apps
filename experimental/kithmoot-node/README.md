@@ -8,7 +8,10 @@ The controller sets up and runs the existing node supervisor as uid/gid 1000.
 It signs no room grants and stores no room keys. Archy owns its HTTPS/TURN TLS
 front and certificate keys; the app has no certificate mount or root commands.
 The operator UI uses Archy's app gate, then a body-bound NIP-98 proof from a
-declared node identity. Its five-minute session stays in browser memory.
+declared node identity. Its controls token stays in browser memory. Explicit use extends its 30-minute
+inactivity timeout, up to an eight-hour absolute limit. Status polling alone
+does not keep it alive. Signing out revokes that token without stopping rooms
+or calls. TURN logins remain limited to five minutes.
 Changing the host's declared identities requires recreating the container so
 its derived identity list is current. The outer app gate still checks host
 sessions on each request. Guest room admission remains in the keeper's app.

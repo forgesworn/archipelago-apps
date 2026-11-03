@@ -61,7 +61,33 @@ test('owner proof is bound to HTTPS audience, exact body and one-use challenge',
 
 test('session lifetime cannot be extended by wall clock rollback', async t => {
   const f = await fixture(t), token = await f.session()
-  f.rollbackWall(3600000); f.advanceMono(300001)
+  f.rollbackWall(3600000); f.advanceMono(30 * 60000 + 1)
+  assert.equal((await f.post('/api/status', '{}', 'Bearer ' + token)).status, 401)
+  assert.equal(f.calls, 0)
+})
+
+test('background status polling does not extend the thirty minute inactivity timeout', async t => {
+  const f = await fixture(t), token = await f.session()
+  f.advance(29 * 60000)
+  assert.equal((await f.post('/api/status', '{}', 'Bearer ' + token)).status, 200)
+  f.advance(60001)
+  assert.equal((await f.post('/api/status', '{}', 'Bearer ' + token)).status, 401)
+  assert.equal(f.calls, 1)
+})
+
+test('explicit use extends the controls session, with an absolute eight hour limit', async t => {
+  const f = await fixture(t), token = await f.session()
+  for (let i = 0; i < 16; i++) {
+    f.advance(29 * 60000)
+    assert.equal((await f.post('/api/status', '{}', 'Bearer ' + token, { 'X-Kithmoot-Activity': 'user' })).status, 200)
+  }
+  f.advance(16 * 60000 + 1)
+  assert.equal((await f.post('/api/status', '{}', 'Bearer ' + token, { 'X-Kithmoot-Activity': 'user' })).status, 401)
+})
+
+test('signing out revokes that controls token without stopping the node', async t => {
+  const f = await fixture(t), token = await f.session()
+  assert.equal((await f.post('/api/sign-out', '{}', 'Bearer ' + token)).status, 200)
   assert.equal((await f.post('/api/status', '{}', 'Bearer ' + token)).status, 401)
   assert.equal(f.calls, 0)
 })

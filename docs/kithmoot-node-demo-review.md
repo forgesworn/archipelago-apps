@@ -32,6 +32,20 @@ The public certificate covers `demo.forgesworn.dev` and
 External callers receive only the room node's explicit API and authenticated
 TURN transports. Existing Spry ports and app data are retained.
 
+## Controls sessions
+
+The controls sign out after 30 minutes without user activity, with an absolute
+eight-hour limit. Tokens stay in this tab’s memory. Automatic status polling
+does not extend the timeout; explicit use does. Signing out revokes the controls
+token. Session expiry and sign-out do not stop rooms or calls. TURN logins retain
+their separate maximum five-minute lifetime. The session policy passes 17
+controller/control-socket checks, including clock rollback and the hard limit.
+
+The status label is **Devices with access**. It includes offline devices and
+counts a device separately in each room. It is not a live people count. The
+KithMoot room shows current participants. Temporary test-browser permissions
+remain until the room manager removes them or closes the test room.
+
 ## Devices and connections
 
 “Your KithMoot account” replaces “keeper device” in the controls. Open the

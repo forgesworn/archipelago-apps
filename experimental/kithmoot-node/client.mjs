@@ -4,10 +4,11 @@ import { bytesToHex } from '@noble/hashes/utils.js'
 const content = document.querySelector('#content'), notice = document.querySelector('#notice')
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char])
 let token, status, busy = false, view = 'status', pairing, expiryTimer, polling = false
+let activityPending = false
 if (window.parent !== window) document.documentElement.classList.add('embedded')
 const messages = {
   'host-identity-required': 'Choose an identity belonging to this Archy node.',
-  'sign-in-required': 'Your session ended. Sign in again to continue.',
+  'sign-in-required': 'Your controls session ended. Sign in again to manage the node. Rooms and calls are unaffected.',
   'invalid-proof': 'The sign-in proof expired or did not match this node. Please sign in again.',
   'close-rooms-first': 'Close every hosted room in KithMoot first. Wait for the node to confirm that its rooms, devices and pending requests are empty.',
   'node-not-ready': 'The node is not ready to pair. Check its status and try again.',
@@ -22,19 +23,20 @@ function inform(message, error = false) { notice.textContent = message; notice.h
 const managementConnectionError = 'Cannot reach the Archy controls. Check your private connection to Archy, then refresh these controls.'
 function errorMessage(error) { return error instanceof Error && !['TypeError', 'TimeoutError', 'AbortError'].includes(error.name) ? error.message : managementConnectionError }
 function clearPairing() { pairing = undefined; clearTimeout(expiryTimer) }
-async function api(action, value = {}) {
-  const response = await fetch('/api/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+async function api(action, value = {}, activity = true) {
+  const response = await fetch('/api/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token, ...(activity ? { 'X-Kithmoot-Activity': 'user' } : {}) },
     body: JSON.stringify(value), credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(65000) })
   const reply = await response.json()
   if (!response.ok) {
     if (response.status === 401) { token = undefined; clearPairing(); renderSignIn() }
     throw Error(messages[reply.error] ?? 'The request could not finish. Try again.')
   }
+  if (activity) activityPending = false
   return reply.result
 }
 function mount(html) { content.innerHTML = html; content.setAttribute('aria-busy', 'false'); content.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => run(button.dataset.action))) }
 function renderSignIn() {
-  mount('<h2>Sign in to manage your node</h2><p>Use an identity belonging to this Archy node. Pairing with KithMoot is a separate step.</p><div class="actions"><button class="primary" data-action="sign-in">Choose identity and sign in</button></div>')
+  mount('<h2>Sign in to manage your node</h2><p>Use an identity belonging to this Archy node. Pairing with KithMoot is a separate step.</p><p class="muted">These controls sign out after 30 minutes without use, or after eight hours. This does not stop your rooms or calls.</p><div class="actions"><button class="primary" data-action="sign-in">Choose identity and sign in</button></div>')
 }
 async function signIn() {
   if (location.protocol !== 'https:') throw Error('Open this screen through Archy’s HTTPS address to manage the node.')
@@ -73,7 +75,8 @@ function renderStatus() {
   const label = status.deleting ? 'Prepared for deletion' : status.ready ? 'Ready' : status.running ? 'Needs attention' : 'Paused'
   mount(`<span class="badge ${status.ready ? 'ready' : ''}">${label}</span><h2 class="host">${escape(status.host)}</h2>
     <p>${status.deleting ? 'New rooms and requests are blocked. Return to Archy to delete the app and its data, or cancel below.' : status.ready ? 'Your rooms and calls can use this node.' : status.running ? 'The node is running, but its local checks have not passed. Refresh its status before pairing.' : 'Start the node to make hosted rooms and calls available again.'}</p>
-    <div class="facts"><div class="fact"><strong>${status.rooms ?? '—'}</strong><span>Hosted rooms</span></div><div class="fact"><strong>${status.devices ?? '—'}</strong><span>Admitted devices</span></div><div class="fact"><strong>${status.pending ?? '—'}</strong><span>Pending requests</span></div><div class="fact"><strong>${status.paired ? 'Paired' : 'Unpaired'}</strong><span>Your KithMoot account</span></div></div>
+    <div class="facts"><div class="fact"><strong>${status.rooms ?? '—'}</strong><span>Hosted rooms</span></div><div class="fact"><strong>${status.devices ?? '—'}</strong><span>Devices with access</span></div><div class="fact"><strong>${status.pending ?? '—'}</strong><span>Pending requests</span></div><div class="fact"><strong>${status.paired ? 'Paired' : 'Unpaired'}</strong><span>Your KithMoot account</span></div></div>
+    <p class="muted">Access includes offline devices. A device in two rooms is counted twice. Open a room in KithMoot to see who is there now.</p>
     <div class="actions">${status.deleting ? '<button class="primary" data-action="cancel-delete">Cancel deletion</button>' : status.running ? `<button class="primary" data-action="pair" ${status.ready ? '' : 'disabled'}>${status.paired ? 'Pair KithMoot on another device' : 'Pair with KithMoot'}</button><button data-action="pause">Pause node</button>` : '<button class="primary" data-action="start">Start node</button>'}<button data-action="refresh">Refresh status</button></div>
     <hr><p class="muted">Kicking someone and closing a room happen in KithMoot. Pausing this node keeps its saved data.</p><div class="actions"><button class="danger" data-action="delete" ${!status.deleting ? '' : 'disabled'}>Delete everything…</button><button data-action="sign-out">Sign out</button></div>`)
 }
@@ -85,14 +88,14 @@ function renderPairing() {
   content.querySelector('img').src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(pairing.qr)
   content.querySelector('#open-pair').href = pairing.link
 }
-async function refresh() { status = await api('status'); if (view === 'status') renderStatus() }
-async function run(action) {
+async function refresh(activity = true) { status = await api('status', {}, activity); if (view === 'status') renderStatus() }
+async function run(action, activity = true) {
   if (busy) return
   busy = true; inform(''); content.setAttribute('aria-busy', 'true')
   content.querySelectorAll('button').forEach(button => { button.disabled = true })
   try {
     if (action === 'sign-in') await signIn()
-    else if (action === 'sign-out') { token = undefined; clearPairing(); renderSignIn() }
+    else if (action === 'sign-out') { try { await api('sign-out') } finally { token = undefined; clearPairing(); renderSignIn() } }
     else if (action === 'delete') { view = 'delete'; renderDelete() }
     else if (action === 'back') { clearPairing(); view = 'status'; await refresh() }
     else if (action === 'copy-pair') { await navigator.clipboard.writeText(pairing.link); inform('Pairing link copied. Keep it private.') }
@@ -106,7 +109,7 @@ async function run(action) {
       await api('setup', value); view = 'status'; await refresh(); inform('Node setup saved.')
     } else {
       if (action !== 'refresh') await api(action)
-      view = 'status'; await refresh()
+      view = 'status'; await refresh(activity)
       if (action === 'prepare-delete') inform('Prepared for deletion. Return to Archy and choose Delete app and data.')
     }
   } catch (error) { inform(errorMessage(error), true) }
@@ -119,13 +122,14 @@ async function run(action) {
     else if (!token) renderSignIn()
   }
 }
-window.addEventListener('online', () => { if (token && !busy) void run('refresh') })
+for (const name of ['pointerdown', 'keydown']) document.addEventListener(name, event => { if (event.isTrusted) activityPending = true }, { passive: true })
+window.addEventListener('online', () => { if (token && !busy) void run('refresh', false) })
 window.addEventListener('offline', () => inform('You are offline. Reconnect to manage the node.', true))
 window.archipelagoNostr?.onIdentitySelected(() => { token = undefined; clearPairing(); if (!busy) renderSignIn() })
 setInterval(async () => {
   if (!token || busy || polling || view !== 'status' || !status?.configured || document.hidden) return
   polling = true
-  try { await refresh(); if (notice.textContent === managementConnectionError) inform('Connection to the Archy controls restored.') }
+  try { await refresh(activityPending); if (notice.textContent === managementConnectionError) inform('Connection to the Archy controls restored.') }
   catch (error) { inform(errorMessage(error), true) } finally { polling = false }
 }, 10000)
 renderSignIn()

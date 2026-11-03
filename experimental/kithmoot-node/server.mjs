@@ -11,6 +11,8 @@ import QRCode from 'qrcode'
 const KEY = /^[a-f0-9]{64}$/
 const STATE = '/var/lib/kithmoot-node'
 const BASE = '/opt/kithmoot-node/current'
+const SESSION_IDLE_MS = 30 * 60 * 1000
+const SESSION_MAX_MS = 8 * 60 * 60 * 1000
 const hash = value => createHash('sha256').update(value).digest('hex')
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 class Refused extends Error { constructor(status, code) { super(code); this.status = status } }
@@ -262,6 +264,10 @@ export function createController({ owners, hosts, node, publicDirectory, now = (
     const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(request.headers.authorization ?? '')
     const value = match && sessions.get(match[1])
     if (!value || value.wall <= now() || value.mono <= monotonic() || !owners.has(value.owner)) throw new Refused(401, 'sign-in-required')
+    if (request.headers['x-kithmoot-activity'] === 'user') {
+      value.wall = Math.min(now() + SESSION_IDLE_MS, value.maxWall)
+      value.mono = Math.min(monotonic() + SESSION_IDLE_MS, value.maxMono)
+    }
     return value
   }
   async function handle(request, response) {
@@ -281,7 +287,7 @@ export function createController({ owners, hosts, node, publicDirectory, now = (
       const [name, type] = files[path]
       response.writeHead(200, { 'Content-Type': type }); response.end(readFileSync(join(publicDirectory, name))); return
     }
-    if (request.method !== 'POST' || !['/api/session', '/api/status', '/api/setup', '/api/start', '/api/pause', '/api/pair', '/api/prepare-delete', '/api/cancel-delete'].includes(path)) throw new Refused(404, 'not-found')
+    if (request.method !== 'POST' || !['/api/session', '/api/sign-out', '/api/status', '/api/setup', '/api/start', '/api/pause', '/api/pair', '/api/prepare-delete', '/api/cancel-delete'].includes(path)) throw new Refused(404, 'not-found')
     if (request.headers['content-type'] !== 'application/json') throw new Refused(415, 'json-required')
     const chunks = []; let length = 0
     for await (const chunk of request) { length += chunk.length; if (length > 4096) throw new Refused(413, 'too-large'); chunks.push(chunk) }
@@ -294,11 +300,16 @@ export function createController({ owners, hosts, node, publicDirectory, now = (
       for (const [key, value] of sessions) if (value.wall <= now() || value.mono <= monotonic()) sessions.delete(key)
       if (sessions.size >= 32) throw new Refused(429, 'busy')
       const token = randomBytes(32).toString('base64url')
-      sessions.set(token, { owner, wall: now() + 300000, mono: monotonic() + 300000 })
-      return json(response, 200, { v: 1, token, expiresAt: Math.floor(now() / 1000) + 300 })
+      sessions.set(token, { owner, wall: now() + SESSION_IDLE_MS, mono: monotonic() + SESSION_IDLE_MS,
+        maxWall: now() + SESSION_MAX_MS, maxMono: monotonic() + SESSION_MAX_MS })
+      return json(response, 200, { v: 1, token, expiresAt: Math.floor((now() + SESSION_IDLE_MS) / 1000) })
     }
     session(request)
     if (path !== '/api/setup' && Object.keys(value).length) throw new Refused(400, 'invalid-input')
+    if (path === '/api/sign-out') {
+      sessions.delete(request.headers.authorization.slice(7))
+      return json(response, 200, { v: 1, result: { signedOut: true } })
+    }
     const actions = { '/api/status': () => node.status(), '/api/setup': () => node.setup(choices(value)), '/api/start': () => node.start(),
       '/api/pause': () => node.stop(), '/api/pair': () => node.pair(), '/api/prepare-delete': () => node.prepareDelete(), '/api/cancel-delete': () => node.cancelDelete() }
     const result = await actions[path]()
