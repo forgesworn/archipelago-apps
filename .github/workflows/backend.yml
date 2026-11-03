@@ -154,7 +154,7 @@ jobs:
           check signer_login::tests:: 49
           check api::rpc::signer_login::tests:: 3
           check api::rpc::signer_login_tests:: 17
-          check appgate::identity::tests:: 13
+          check appgate::identity::tests:: 14
           check container::spry_network::tests:: 1
           check auth::tests:: 21
           check public_host 7
