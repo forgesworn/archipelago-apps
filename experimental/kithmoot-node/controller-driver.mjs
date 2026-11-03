@@ -23,6 +23,7 @@ const event = finalizeEvent({ kind: 27235, created_at: Math.floor(Date.now() / 1
 const login = await post('session', {}, 'Nostr ' + Buffer.from(JSON.stringify(event)).toString('base64'))
 assert.equal(login.status, 200); const token = login.body.token
 const api = async (action, value = {}) => { const reply = await post(action, value, 'Bearer ' + token); assert.equal(reply.status, 200, JSON.stringify(reply.body)); return reply.body.result }
+const setupChoices = { hostedAwayFromHome: true, maxRooms: 8, aggregateBytesPerSecond: 1000000, maxBytes: 268435456, minFreeBytes: 1073741824 }
 const ready = async () => {
   let result
   for (let attempt = 0; attempt < 30; attempt++) {
@@ -33,9 +34,18 @@ const ready = async () => {
   assert.fail('Controller not ready: ' + JSON.stringify(result))
 }
 switch (process.argv[2]) {
+  case 'cancel-empty-delete': {
+    const status = await api('status')
+    assert.equal(status.configured, false); assert.equal(status.deleting, true)
+    const refused = await post('setup', setupChoices, 'Bearer ' + token)
+    assert.equal(refused.status, 409); assert.equal(refused.body.error, 'deletion-prepared')
+    assert.deepEqual(await api('cancel-delete'), { deleteReady: false })
+    assert.equal((await api('status')).deleting, false)
+    break
+  }
   case 'setup': {
     assert.equal((await api('status')).configured, false)
-    await api('setup', { hostedAwayFromHome: true, maxRooms: 8, aggregateBytesPerSecond: 1000000, maxBytes: 268435456, minFreeBytes: 1073741824 })
+    await api('setup', setupChoices)
     break
   }
   case 'pair-restart': {

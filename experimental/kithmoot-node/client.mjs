@@ -14,6 +14,7 @@ const messages = {
   'configuration-review-required': 'The saved hostname or address changed. Keep the saved data and review the host configuration before restarting.',
   'setup-incomplete': 'Setup did not finish. Retry the saved setup to continue safely.',
   'retry-saved-setup': 'Retry with the saved setup choices.',
+  'deletion-prepared': 'Deletion is prepared. Cancel deletion before setting up or starting the node.',
   'node-unavailable': 'The node could not complete that request. Check its status and try again.',
   'busy': 'The node is busy. Wait a moment and try again.'
 }
@@ -61,17 +62,18 @@ function renderSetup() {
     ${select('maxBytes', 'Message storage limit', [[268435456, '256 MiB'], [1073741824, '1 GiB'], [4294967296, '4 GiB']], 1073741824)}
     ${select('minFreeBytes', 'Leave free on this host', [[1073741824, 'At least 1 GiB'], [2147483648, 'At least 2 GiB']], 2147483648)}
     <label class="check"><input name="away" type="checkbox" required><span>This node is hosted away from my home connection.</span></label>
-    <div class="actions"><button class="primary" type="submit">${saved ? 'Retry saved setup' : 'Set up node'}</button><button type="button" data-action="sign-out">Sign out</button></div></form>`)
+    <div class="actions"><button class="primary" type="submit">${saved ? 'Retry saved setup' : 'Set up node'}</button><button type="button" data-action="sign-out">Sign out</button><button type="button" class="danger" data-action="delete">Delete everything…</button></div></form>`)
   content.querySelector('form').addEventListener('submit', event => { event.preventDefault(); void run('setup') })
 }
 function renderStatus() {
+  if (!status.configured && status.deleting) return mount('<span class="badge">Prepared for deletion</span><h2>Return to Archy to finish</h2><p>Setup is blocked. Use Archy’s <strong>Delete app and data</strong> action, or cancel deletion below to return to setup.</p><div class="actions"><button class="primary" data-action="cancel-delete">Cancel deletion</button><button data-action="sign-out">Sign out</button></div>')
   if (!status.configured) return renderSetup()
   const label = status.deleting ? 'Prepared for deletion' : status.ready ? 'Ready' : status.running ? 'Needs attention' : 'Paused'
   mount(`<span class="badge ${status.ready ? 'ready' : ''}">${label}</span><h2 class="host">${escape(status.host)}</h2>
     <p>${status.deleting ? 'New rooms and requests are blocked. Return to Archy to delete the app and its data, or cancel below.' : status.ready ? 'Your rooms and calls can use this node.' : status.running ? 'The node is running, but its local checks have not passed. Refresh its status before pairing.' : 'Start the node to make hosted rooms and calls available again.'}</p>
     <div class="facts"><div class="fact"><strong>${status.rooms ?? '—'}</strong><span>Hosted rooms</span></div><div class="fact"><strong>${status.devices ?? '—'}</strong><span>Admitted devices</span></div><div class="fact"><strong>${status.pending ?? '—'}</strong><span>Pending requests</span></div><div class="fact"><strong>${status.paired ? 'Paired' : 'Unpaired'}</strong><span>Keeper’s KithMoot app</span></div></div>
     <div class="actions">${status.deleting ? '<button class="primary" data-action="cancel-delete">Cancel deletion</button>' : status.running ? `<button class="primary" data-action="pair" ${status.ready ? '' : 'disabled'}>${status.paired ? 'Pair another keeper device' : 'Pair with KithMoot'}</button><button data-action="pause">Pause node</button>` : '<button class="primary" data-action="start">Start node</button>'}<button data-action="refresh">Refresh status</button></div>
-    <hr><p class="muted">Kicking someone and closing a room happen in KithMoot. Pausing this node keeps its saved data.</p><div class="actions"><button class="danger" data-action="delete" ${status.running && !status.deleting ? '' : 'disabled'}>Delete everything…</button><button data-action="sign-out">Sign out</button></div>`)
+    <hr><p class="muted">Kicking someone and closing a room happen in KithMoot. Pausing this node keeps its saved data.</p><div class="actions"><button class="danger" data-action="delete" ${!status.deleting ? '' : 'disabled'}>Delete everything…</button><button data-action="sign-out">Sign out</button></div>`)
 }
 function renderDelete() {
   mount('<h2>Delete this node and its data</h2><p>First close every hosted room in KithMoot. Closing revokes access, ends calls, purges the room’s messages and sends the devices their self-destruct instruction.</p><p>Prepare deletion below once all rooms, devices and pending requests are gone. Then use Archy’s <strong>Delete app and data</strong> action. This screen cannot close rooms for you.</p><div class="actions"><button class="danger" data-action="prepare-delete">Check rooms and prepare deletion</button><button data-action="back">Keep node</button></div>')

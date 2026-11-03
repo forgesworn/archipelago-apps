@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { createHash, randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { existsSync, lstatSync, fstatSync, chmodSync, openSync, closeSync, readFileSync, writeFileSync, renameSync, fsyncSync, constants, rmSync } from 'node:fs'
+import { existsSync, lstatSync, fstatSync, chmodSync, openSync, closeSync, readFileSync, writeFileSync, renameSync, fsyncSync, constants, rmSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { connect } from 'node:net'
@@ -46,6 +46,12 @@ function savePrivate(path, value) {
   try { renameSync(temporary, path) } finally { rmSync(temporary, { force: true }) }
   const parent = openSync(dirname(path), constants.O_RDONLY); try { fsyncSync(parent) } finally { closeSync(parent) }
 }
+function deletionPrepared(state) {
+  let value
+  try { value = readPrivate(join(state, 'ui-delete-prepared')) } catch (error) { if (error.code === 'ENOENT') return false; throw error }
+  if (!value || value.v !== 1 || Object.keys(value).length !== 1) throw Error('Invalid saved deletion state')
+  return true
+}
 
 function configuration(facts, limits) {
   return { v: 1, host: facts.host, hosting: 'archy', relayIp: facts.address,
@@ -68,6 +74,16 @@ export class NodeProcess {
     chmodSync(state, 0o700)
   }
   #serial(work) { const result = this.#queue.then(work); this.#queue = result.catch(() => {}); return result }
+  #neverRan() {
+    if (this.#child) return false
+    const allowed = new Set(['node.json', 'initialising', 'service.key', 'turn.secret', 'state.salt', 'ui-configuration.json', 'ui-paused', 'ui-delete-prepared', 'operator.sock'])
+    return readdirSync(this.state).every(name => {
+      if (!allowed.has(name) && !/^(?:ui-configuration\.json|ui-paused|ui-delete-prepared)\.new-[a-f0-9]{16}$/.test(name)) return false
+      const info = lstatSync(join(this.state, name))
+      return info.uid === process.getuid() && !(info.mode & 0o077) && info.nlink === 1
+        && (name === 'operator.sock' ? info.isSocket() : info.isFile() && info.size <= 65536)
+    })
+  }
   async #command(op, extra = [], timeout = 20000) {
     return new Promise((resolve, reject) => {
       const child = spawn(BASE + '/kithmoot-node', [op, '--state', this.state, ...extra], {
@@ -80,10 +96,12 @@ export class NodeProcess {
     })
   }
   async boot() {
+    if (deletionPrepared(this.state)) return
     if (existsSync(join(this.state, 'node.json')) && !existsSync(join(this.state, 'initialising')) && !existsSync(join(this.state, 'ui-paused'))) await this.start()
   }
   start() {
     return this.#serial(async () => {
+      if (deletionPrepared(this.state)) throw new Refused(409, 'deletion-prepared')
       if (this.#child && this.#child.exitCode === null) return
       if (!existsSync(join(this.state, 'node.json'))) throw new Refused(409, 'setup-required')
       const saved = readPrivate(join(this.state, 'node.json'))
@@ -102,7 +120,9 @@ export class NodeProcess {
   }
   setup(value) {
     return this.#serial(async () => {
+      if (deletionPrepared(this.state)) throw new Refused(409, 'deletion-prepared')
       if (existsSync(join(this.state, 'node.json')) && !existsSync(join(this.state, 'initialising'))) throw new Refused(409, 'already-configured')
+      if (!this.#neverRan()) throw new Refused(409, 'configuration-review-required')
       const limits = choices(value), path = join(this.state, 'ui-configuration.json')
       const proposed = configuration(this.facts, limits)
       if (existsSync(path) && JSON.stringify(readPrivate(path)) !== JSON.stringify(proposed)) throw new Refused(409, 'retry-saved-setup')
@@ -116,7 +136,7 @@ export class NodeProcess {
   async status() {
     const configured = existsSync(join(this.state, 'node.json')) && !existsSync(join(this.state, 'initialising'))
     const setupPending = existsSync(join(this.state, 'ui-configuration.json')) && !configured
-    const base = { v: 1, host: this.facts.host, configured, setupPending, running: !!this.#child,
+    const base = { v: 1, host: this.facts.host, configured, setupPending, running: !!this.#child, deleting: deletionPrepared(this.state),
       ...(configured || setupPending ? { limits: (() => { const value = readPrivate(join(this.state, configured ? 'node.json' : 'ui-configuration.json')); return {
         maxRooms: value.maxRooms, maxBytes: value.maxBytes, minFreeBytes: value.minFreeBytes, aggregateBytesPerSecond: value.aggregateBytesPerSecond } })() } : {}) }
     if (!configured || !this.#child) return { ...base, ready: false }
@@ -154,6 +174,15 @@ export class NodeProcess {
   }
   async prepareDelete() {
     return this.#serial(async () => {
+      // Before the first runtime start there can be no admitted room. Freeze
+      // setup on the same serial queue, including across controller restarts.
+      // Any runtime database, unknown file or changed ownership refuses this
+      // path; a previously started node must answer its normal durable check.
+      if (!this.#child) {
+        if (!this.#neverRan()) throw new Refused(409, 'close-rooms-first')
+        savePrivate(join(this.state, 'ui-delete-prepared'), { v: 1 })
+        return { deleteReady: true }
+      }
       const reply = await this.#command('prepare-delete'); let value
       try { value = JSON.parse(reply.output) } catch {}
       if (reply.code !== 0 || value?.ok !== true || value.result?.deleteReady !== true) throw new Refused(409, 'close-rooms-first')
@@ -163,6 +192,11 @@ export class NodeProcess {
   }
   async cancelDelete() {
     return this.#serial(async () => {
+      if (deletionPrepared(this.state)) {
+        if (!this.#neverRan()) throw new Refused(409, 'configuration-review-required')
+        rmSync(join(this.state, 'ui-delete-prepared'))
+        return { deleteReady: false }
+      }
       const reply = await this.#command('cancel-delete'); let value
       try { value = JSON.parse(reply.output) } catch {}
       if (reply.code !== 0 || value?.ok !== true || value.result?.deleteReady !== false) throw new Refused(503, 'node-unavailable')

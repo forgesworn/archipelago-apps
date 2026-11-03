@@ -62,6 +62,12 @@ try {
   await page.getByRole('button', { name: 'Choose identity and sign in' }).click()
   await page.getByRole('heading', { name: 'Set up your node' }).waitFor()
   await capture('02-setup-390'); await capture('03-setup-320', 320, 740); await axe('setup')
+  await page.getByRole('button', { name: 'Delete everything…' }).click()
+  await page.getByRole('button', { name: 'Check rooms and prepare deletion' }).click()
+  await page.getByRole('heading', { name: 'Return to Archy to finish' }).waitFor()
+  await capture('00-delete-before-setup'); await axe('unconfigured-deletion')
+  await page.getByRole('button', { name: 'Cancel deletion' }).click()
+  await page.getByRole('heading', { name: 'Set up your node' }).waitFor()
   await page.getByRole('button', { name: 'Set up node', exact: true }).click()
   assert.equal(setupCalls, 0)
   await page.getByRole('checkbox').check(); await page.getByRole('button', { name: 'Set up node', exact: true }).click()
@@ -87,7 +93,7 @@ try {
   assert.deepEqual(errors, [])
   await writeFile(join(directory, 'component-review.json'), JSON.stringify({ schema: 'kithmoot-node-ui-component/1', passed: true, actualController: true,
     fixtureSigner: true, fixtureNodeAdapter: true, actualHostGate: false, actualTurn: false, uiMaintainerApproval: false, zat: 'pending', screenshots, accessibility, pageErrors: errors }, null, 2) + '\n')
-  console.log('Browser component journey passed; 13 captures, five accessibility scans, ZAT pending.')
+  console.log('Browser component journey passed; 14 captures, six accessibility scans, ZAT pending.')
 } finally {
   await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); key.fill(0)
 }

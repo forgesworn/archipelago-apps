@@ -12,6 +12,7 @@
     "01-sign-in-390.png",
     "02-setup-390.png",
     "03-setup-320.png",
+    "00-delete-before-setup.png",
     "04-status-390.png",
     "05-status-768.png",
     "06-status-1440.png",
@@ -30,6 +31,10 @@
     },
     {
       "name": "setup",
+      "violations": []
+    },
+    {
+      "name": "unconfigured-deletion",
       "violations": []
     },
     {

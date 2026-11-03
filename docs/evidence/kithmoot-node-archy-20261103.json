@@ -4,11 +4,11 @@
   "distribution": "private-candidate",
   "uiReview": "ZAT pending",
   "uiMaintainerApproval": false,
-  "hostSource": "bc67b2437257d2740bc3b671299d912e9e2cdbdf",
-  "hostQualificationSource": "7696669",
+  "hostSource": "fa356d36c3910867dbea17c7494c90a984aa10c6",
+  "hostQualificationSource": "fa356d36c3910867dbea17c7494c90a984aa10c6",
   "bundleSha256": "3e7f78635f9c69e7e281fb943e707328857c492038f6e1c87b2995215dd54a65",
   "image": {
-    "schema": "kithmoot-node-archy-image/1",
+    "schema": "kithmoot-node-archy-image/2",
     "passed": true,
     "uid": 1000,
     "gid": 1000,
@@ -16,13 +16,16 @@
     "readOnlyRoot": true,
     "noCapabilities": true,
     "noNewPrivileges": true,
-    "cookieAloneRefused": true,
-    "actualController": true,
+    "cookieOnlyRefused": true,
+    "unconfiguredHostCommand": true,
+    "deletionFreezeAcrossContainerRestart": true,
     "actualNodeConfigured": false,
     "network": "none",
     "memoryLimitBytes": 268435456,
-    "name": "localhost/kithmoot-node:0.1.0-rc.1-1628c6815b41",
-    "id": "sha256:4b169964c14a2fea9076e5967be01b06b87eee2a543adedcccdee0e9f2d506d2"
+    "cleanup": "own container and volume removed in finally",
+    "name": "localhost/kithmoot-node:0.1.0-rc.1-f6c9c23f04d3",
+    "id": "sha256:afcbfec16663a90bf079689a304e278ef380f3c7069d54a2e676f06a05670e55",
+    "actualController": true
   },
   "controller": {
     "actualProductionSupervisor": true,
@@ -33,14 +36,19 @@
     "pauseRestart": true,
     "prepareCancelDeletion": true,
     "cookieOnlyRefused": true,
-    "securityTests": 7,
-    "privatePackagingTests": 5
+    "securityTests": 14,
+    "privatePackagingTests": 5,
+    "unconfiguredDeletionFreezeSurvivesRestart": true,
+    "partialInitDeletionAndSecretPreservingResume": true
   },
   "componentReview": "kithmoot-node-archy-20261103/component-review.json",
   "hostIntegration": {
     "schema": "archy-node-ingress/1",
     "result": "passed",
     "offline": true,
+    "actualPrivateController": true,
+    "unconfiguredDeletionFreezeSurvivesRestart": true,
+    "partialInitDeletionAndSecretPreservingResume": true,
     "actualNginx": true,
     "actualGateTlsSource": true,
     "actualNativeRelaySource": true,
@@ -122,7 +130,7 @@
   "assets": [
     {
       "path": "controller.mjs",
-      "sha256": "588d45f15079464fc5b3f13b1a260c5cf06f073bb4cf6d964023334a81b687b1"
+      "sha256": "9a17fad3e6f99c1a543c7445a18d0c08acc3c0e00ff80313ca01553ad11ae281"
     },
     {
       "path": "public/index.html",
@@ -130,7 +138,7 @@
     },
     {
       "path": "public/client.js",
-      "sha256": "8cdeb0a67fb93f5ed4530a220b1288adf6051cff732978f1ba1bdae7021a4f28"
+      "sha256": "7c3c9d7e7a42e8d5dcedd40c6becc29edf33a2fb15601f06dcb8e624c1b1c215"
     },
     {
       "path": "public/style.css",
@@ -144,7 +152,7 @@
   "sourceFiles": [
     {
       "path": "experimental/kithmoot-node/browser-review.mjs",
-      "sha256": "c2963b6c1bbb5b766b5b494904d5ae896d01bd3741b84cea79e6fa9b6de43d3e"
+      "sha256": "da0acb94ed04772187be8bc188f4445d8cd5b1aff557c6ab87a6315338becaf2"
     },
     {
       "path": "experimental/kithmoot-node/build.mjs",
@@ -152,41 +160,57 @@
     },
     {
       "path": "experimental/kithmoot-node/client.mjs",
-      "sha256": "50ab089279c8a453f62952e65908e1dee52ffba7bb273035d49b7a8bdd2cdad7"
+      "sha256": "eb8cf1cfaafba3a5e75d2713c5599a3761de3d5caca5fa23f963f583afb7cc54"
     },
     {
       "path": "experimental/kithmoot-node/controller-driver.mjs",
-      "sha256": "cdac8344931db73987e2cee2e8ec363cd52590de920af2094c61e9675a153980"
+      "sha256": "a3a251dc0965ab2ea6534bf95edd0ce59194dee18a1caa4da5a76e9c4157fe35"
     },
     {
       "path": "experimental/kithmoot-node/entrypoint.mjs",
-      "sha256": "1d23dfc81371bcb0c96a202a703b229b540d371ef87cbbe17128a45ac08a7a4c"
+      "sha256": "94c8b4340108be1e258e9a978d586f552098bd67a784fb671a4e43472df61a99"
+    },
+    {
+      "path": "experimental/kithmoot-node/local-control.mjs",
+      "sha256": "9b59d41aa7b6a209763c9da3e24396ba558627a7f90b7e79484609acbeb9edfd"
+    },
+    {
+      "path": "experimental/kithmoot-node/local-control.test.mjs",
+      "sha256": "6039ed450c8451044bb9cbf981dc5d4a6ed6b5a031af628aa1cce1896f2be37e"
+    },
+    {
+      "path": "experimental/kithmoot-node/package.json",
+      "sha256": "ea2f02d48aff9fed3227568b4bb0021882efebbb8d3e8eb1af11de843f6d5c41"
     },
     {
       "path": "experimental/kithmoot-node/server.mjs",
-      "sha256": "d3bc426c1bddcbda998013e453194e88ccec00e39bc5224fc50cba34ca65427c"
+      "sha256": "d4b33ae1d296dac5fbef47314dca9fd554b15b70f56198c9c13cb4bc1fb1e1a8"
     },
     {
       "path": "experimental/kithmoot-node/server.test.mjs",
-      "sha256": "4cc6553730c0a4649e66b30f6fc0de4b59b5ddd05fb0b5881cf761444647f486"
+      "sha256": "58e353af5721906c7a71ecf58a19ea29648ea459293c41616c73a029a9bb954e"
     }
   ],
   "logs": [
     {
-      "name": "kithmoot-node-archy-controller-proof-20261103.log",
-      "sha256": "bda3cf936795ff20b02be40c05c84fbb6b7661985bc383185ff7f1e3e4721ac1"
+      "name": "kithmoot-node-archy-controller-deletion-proof-20261103.log",
+      "sha256": "067a331cb3b38de78270f671c1f062638217bbd929c63ba6694717436a4d2351"
     },
     {
-      "name": "kithmoot-node-archy-manifest-20261103.log",
-      "sha256": "c2e8030caaa25a158bef10f4e64fec01640c6b4ad4783b4886997b2c272340ec"
+      "name": "kithmoot-node-archy-manifest-delete-20261103.log",
+      "sha256": "70d49a73edf723b1c7d3e9327b4046e73034942da1bde3d63a2db4ac121c9660"
     },
     {
-      "name": "kithmoot-node-archy-manifest-shell-20261103.log",
-      "sha256": "846f7ba0527a099f76dfa0188d833d30a2855b25797ef21912b338e6bb71eb32"
+      "name": "kithmoot-node-archy-manifest-delete-shell-20261103.log",
+      "sha256": "77d3536cfd566bcfe5fa7d794a22d1d31ac40d62b8cb9d436573ff3b678962db"
     },
     {
-      "name": "kithmoot-node-archy-browser-proof-20261103.log",
-      "sha256": "f0589747dcffa7233b24bbb1452487fb2bc0d34d355dd7bc781f4db489251a18"
+      "name": "kithmoot-node-archy-browser-deletion-proof-20261103.log",
+      "sha256": "c981163002e3df842c79fd7c760723bb7778a5c36799761fee64de21dbfdb8d7"
+    },
+    {
+      "name": "kithmoot-node-archy-control-tests-20261103.log",
+      "sha256": "f3ec3689cebe413b4200505e9defd6b9748a07b425dfc6e1abc01974a840d48c"
     }
   ],
   "limits": [
@@ -196,7 +220,8 @@
     "No public CA or separate-network reachability proof",
     "No physical GrapheneOS acceptance",
     "No public signed node or Shelter release; no Shelter source publication",
-    "No live node deployment or UI approval"
+    "No live node deployment or UI approval",
+    "Final full-daemon local cargo check exceeded the 3 GiB build container memory limit; final hosted backend CI required"
   ],
   "cleanup": {
     "offlineHostFixtureRemoved": true,

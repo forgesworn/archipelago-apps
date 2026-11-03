@@ -2,8 +2,16 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isIP } from 'node:net'
 import { NodeProcess, createController, ownerKeys } from './server.mjs'
+import { startControllerControl, requestControllerDeletion } from './local-control.mjs'
 
 if (process.platform !== 'linux' || process.getuid() !== 1000) throw Error('Run the private node image as its declared user')
+if (process.argv.length > 2) {
+  if (process.argv.length !== 3 || process.argv[2] !== 'prepare-delete') throw Error('Unknown controller command')
+  try { console.log(JSON.stringify(await requestControllerDeletion('/var/lib/kithmoot-node'))) }
+  catch { console.log(JSON.stringify({ ok: false, error: 'close-rooms-first' })); process.exitCode = 1 }
+} else await serve()
+
+async function serve() {
 const host = process.env.PUBLIC_HOST?.toLowerCase()
 if (!host || host.length > 253 || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(host) || isIP(host)) throw Error('A public node hostname is required')
 const address = process.env.HOST_IP
@@ -22,14 +30,21 @@ const owners = ownerKeys(process.env.NODE_IDENTITY_PUBKEYS)
 const hosts = [host, address, process.env.HOST_MDNS, process.env.MESH_HOST].filter(Boolean)
 const node = new NodeProcess({ host, address }, secrets)
 const server = createController({ owners, hosts, node, publicDirectory: join(dirname(fileURLToPath(import.meta.url)), 'public') })
-// An unavailable relay must leave its local recovery screen reachable.
-try { await node.boot() } catch { console.error('Saved node could not start; use its status screen to retry.') }
-server.listen(3753, '127.0.0.1')
-let stopping = false
-for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => {
+let control, stopping = false
+async function stop() {
   if (stopping) return
   stopping = true
-  server.closeAllConnections(); server.close()
-  await node.stop(false)
-  process.exit(0)
-})
+  server.closeAllConnections(); await new Promise(resolve => server.close(() => resolve()))
+  await control?.close(); await node.stop(false)
+}
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => { await stop(); process.exit(0) })
+try {
+  // Claim management listeners before launching any detached node process.
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(3753, '127.0.0.1', resolve) })
+  control = await startControllerControl('/var/lib/kithmoot-node', node)
+  // An unavailable relay must leave its local recovery screen reachable.
+  try { await node.boot() } catch { console.error('Saved node could not start; use its status screen to retry.') }
+} catch {
+  await stop(); throw Error('The private node management listeners could not start')
+}
+}

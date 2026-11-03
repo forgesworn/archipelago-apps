@@ -75,8 +75,11 @@ hostnames or binaries. Resource limits are bounded choices.
 Pausing preserves saved rooms and data. Closing rooms and removing devices
 happen in KithMoot. **Delete everything** checks the supervisor's durable empty
 room/device/request state and freezes new admission, then hands back to Archy's
-normal **Delete app and data** action. The host repeats that check before
-teardown. A busy node refuses deletion; cancelling the preparation unfreezes it.
+normal **Delete app and data** action. The host repeats that check through the controller's owned, private Unix
+socket before teardown. An unused or partially initialised node can also prepare
+deletion. Its durable freeze survives a controller/container restart; unknown
+runtime data refuses deletion. A paused node with saved runtime state must be
+started so the supervisor can check and close its rooms. A busy node refuses deletion; cancelling the preparation unfreezes it.
 The controller never attempts to sign keeper closures or delete files itself.
 
 The host app-gate override applies to gate-fronted ports. Forcing that override

@@ -115,3 +115,35 @@ test('data directory ownership is enforced and pausing preserves saved state pri
   assert.equal(readFileSync(join(directory, 'saved-room'), 'utf8'), 'preserved')
   assert.equal(statSync(join(directory, 'ui-paused')).mode & 0o777, 0o600)
 })
+
+test('deletion before setup freezes setup durably and can be cancelled after restart', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'node-companion-unconfigured-'))
+  t.after(() => rmSync(directory, { recursive: true }))
+  const facts = { host: 'node.example', address: '1.2.3.4' }, node = new NodeProcess(facts, {}, directory)
+  assert.deepEqual(await node.prepareDelete(), { deleteReady: true })
+  const restarted = new NodeProcess(facts, {}, directory)
+  assert.equal((await restarted.status()).deleting, true)
+  await assert.rejects(restarted.setup({ hostedAwayFromHome: true, maxRooms: 4, maxBytes: 268435456, minFreeBytes: 1073741824, aggregateBytesPerSecond: 1000000 }), /deletion-prepared/)
+  assert.deepEqual(await restarted.cancelDelete(), { deleteReady: false })
+  assert.equal((await restarted.status()).deleting, false)
+})
+
+test('a partial first setup can be prepared for deletion without starting any backend', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'node-companion-partial-delete-'))
+  t.after(() => rmSync(directory, { recursive: true }))
+  writeFileSync(join(directory, 'node.json'), '{partial', { mode: 0o600 })
+  writeFileSync(join(directory, 'initialising'), '', { mode: 0o600 })
+  const node = new NodeProcess({ host: 'node.example', address: '1.2.3.4' }, {}, directory)
+  assert.deepEqual(await node.prepareDelete(), { deleteReady: true })
+  await assert.rejects(node.start(), /deletion-prepared/)
+})
+
+test('unknown room data cannot be declared empty merely because configuration is absent', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'node-companion-lost-config-'))
+  t.after(() => rmSync(directory, { recursive: true }))
+  writeFileSync(join(directory, 'ledger.sqlite'), 'preserve unknown room data', { mode: 0o600 })
+  const node = new NodeProcess({}, {}, directory)
+  await assert.rejects(node.prepareDelete())
+  assert.equal(readFileSync(join(directory, 'ledger.sqlite'), 'utf8'), 'preserve unknown room data')
+  assert.equal(statSync(join(directory, 'ledger.sqlite')).mode & 0o777, 0o600)
+})
