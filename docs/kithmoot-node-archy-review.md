@@ -113,10 +113,17 @@ publication is authorised by these checks.
 
 The web node screens shipped in KithMoot
 [PR 675](https://github.com/forgesworn/kithmoot/pull/675), with browser media
-recovery in [PR 686](https://github.com/forgesworn/kithmoot/pull/685). The live
+recovery in [PR 686](https://github.com/forgesworn/kithmoot/pull/686) and scoped recovery in
+[PR 688](https://github.com/forgesworn/kithmoot/pull/688). The live
 release and controlled TLS443 call results are in the demo review pack.
 The packaged desktop release and Android node UI
 [PR 392](https://github.com/forgesworn/kithmoot-android/pull/392) remain separate;
 no new native UI release is claimed. The Android candidate's local matrix
 passed 4,014 tests with one opt-in skip. Official Archy UI acceptance remains
 pending for this review revision.
+
+The current web release is `20261103T221208Z` (`d7ce79ef`): the demo review
+pack records the 459-second controlled TLS443 VPN/outage/renewal run, native
+healthy-participant regression and separate 24-second production smoke. It also
+records an unresolved intermittent initial-join timeout. Archy controller and
+host image revisions are unchanged by this documentation update.

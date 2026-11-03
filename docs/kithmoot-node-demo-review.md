@@ -107,22 +107,34 @@ before merging or approval. ZAT pending.** No maintainer message has been sent.
 
 Web pairing was first verified from merge `2c1977dacad883d730bd7ec6cfc9c66dbfe99486`
 in release `20261103T101924Z`. The current web deployment is
-`3de4f219d9e319fdd46fa751846448b573dc7299`, release `20261103T165540Z`, with
-public index and main script byte comparisons passed. It includes authenticated
-socket probes, bounded subscription recovery and fixed media slots for node
-rooms. Explicit opt-out and negotiation with older clients remain supported.
-The strict two-browser test passed 479 seconds of matched-pair audio/video over
-TURN TLS443, including VPN on/off, a 12-second outage and credential renewal.
-It continued for 314 seconds after the final recovery. Recovery took 42 seconds
-on VPN, 11 seconds off VPN and 15 seconds after the outage. There were no browser
-errors or subscription overflows. The test used candidate source `599467de`
-against the real public node; the deployment has the same main script bytes.
-A separate fresh production-browser smoke passed 28 seconds of paired media.
+`d7ce79ef8e32443f28810e5218aa5424c14d1a8d`, release `20261103T221208Z`.
+Its public index, entry script and main script match the qualified local build
+byte for byte. It includes authenticated socket probes, bounded subscription
+recovery, fixed media slots and fresh TURN allocations. An established remote
+participant's route failure now rebuilds only that pair; healthy participants
+keep their native connections. The original global credential rotation remains
+in force. A real three-browser native regression verifies healthy audio/video
+keeps advancing during another pair's recovery; the prior source fails it.
+
+The [scoped recovery receipt](https://github.com/forgesworn/kithmoot/blob/01b154eec2e650e3ee83889faaa9f59935be8f25/docs/evidence/kithmoot-node-scoped-recovery-tls443-20261103.json)
+records 459 seconds of matched-pair audio/video over TURN TLS443, including
+VPN on/off, a 12-second outage and credential renewal. It continued 312 seconds
+after final recovery across the prior login expiry. Recovery took 13 seconds
+on VPN, 36 seconds off VPN and 8 seconds after the outage. The 25-second steady
+media-gap limit remained in force; there were no browser errors or subscription
+overflows (peak 13). Candidate source `44a923c9` ran against the real public node
+under production headers; the deployment has identical main script bytes.
+A separate 24-second direct production-browser smoke received 420/443 decoded
+frames and 1,240/1,332 audio packets without candidate interception or manual
+retry. One earlier repeated startup timed out before joining; its cause is not
+established and is recorded separately. No claim that every initial join or
+network transition is seamless follows from these tests.
 
 The earlier 503-second run counted aggregate room media, which could hide a
-frozen pair. The previous production and rotation-grace builds failed the
-stricter gate; the fresh-allocation change supersedes them. Independent VPNs,
-physical mobile handoff, GrapheneOS and capacity remain separate gates.
+frozen pair. The previous production and rotation-grace builds failed that
+stricter renewal gate. A later cached-login-only candidate failed VPN-off
+recovery and was replaced with fresh per-peer logins before merge. Independent
+VPNs, physical mobile handoff, GrapheneOS and capacity remain separate gates.
 
 Open KithMoot and accept **Update now** if an older
 installed web app is still running. Refreshing alone can retain the previous

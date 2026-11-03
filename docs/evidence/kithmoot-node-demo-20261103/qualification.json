@@ -90,25 +90,37 @@
     "ownerConfirmationSource": "Owner reply in this task on 3 November 2026",
     "cachedClientRecovery": "Owner used Update now, after which pairing screen opened and pairing/status succeeded.",
     "currentDeployment": {
-      "source": "3de4f219d9e319fdd46fa751846448b573dc7299",
-      "release": "20261103T165540Z",
+      "source": "d7ce79ef8e32443f28810e5218aa5424c14d1a8d",
+      "release": "20261103T221208Z",
       "publicIndexMatches": true,
+      "publicEntryMatches": true,
       "publicMainMatches": true,
-      "mainSha256": "93bd107c7a20d7b0b4ee37f05060a7e9fe7f748f9848a4b85f19f60803b44e31",
+      "mainSha256": "57a1391e03c04fabed2636201e3ae8cccefbc8474b31147cd6fbcd10f323be0f",
       "diagnosticHookAbsent": true,
-      "pr": 686,
-      "relayRecoveryPR": 684,
-      "relayFocusedTestsPassed": 161,
-      "profileTestsPassed": 46,
-      "profileTestsSkipped": 2,
+      "pr": 688,
+      "focusedTestsPassed": 125,
+      "focusedTestsSkipped": 5,
       "appBackendJourneyPassed": true,
-      "appBackendJourneySeconds": 57.1,
+      "appBackendJourneySeconds": 43.0,
+      "healthyParticipantIsolationPassed": true,
+      "healthyParticipantIsolationSeconds": 34.3,
       "nodeCallProfileDefault": 2,
       "explicitOffAndLegacyPeerFallback": true,
-      "focusedTestsPassed": 118,
-      "focusedTestsSkipped": 5,
       "freshNativeAllocationOnCredentialRenewal": true,
-      "productionPairSmokeSeconds": 28
+      "freshLoginForFailedParticipant": true,
+      "healthyAllocationDeadlinePreserved": true,
+      "productionPairSmokeSeconds": 24,
+      "startupObservation": {
+        "oneRepeatedProductionStartupTimedOut": true,
+        "failedGuestReachedCallStage": false,
+        "subsequentDeviceSignedAccessActiveMilliseconds": [
+          408,
+          457
+        ],
+        "subsequentProductionSmokePassedWithoutManualRetry": true,
+        "causeEstablished": false,
+        "allInitialJoinsQualified": false
+      }
     },
     "deploymentHistory": [
       {
@@ -139,6 +151,27 @@
         "appBackendJourneySeconds": 42.3,
         "nodeCallProfileDefault": 2,
         "explicitOffAndLegacyPeerFallback": true
+      },
+      {
+        "source": "3de4f219d9e319fdd46fa751846448b573dc7299",
+        "release": "20261103T165540Z",
+        "publicIndexMatches": true,
+        "publicMainMatches": true,
+        "mainSha256": "93bd107c7a20d7b0b4ee37f05060a7e9fe7f748f9848a4b85f19f60803b44e31",
+        "diagnosticHookAbsent": true,
+        "pr": 686,
+        "relayRecoveryPR": 684,
+        "relayFocusedTestsPassed": 161,
+        "profileTestsPassed": 46,
+        "profileTestsSkipped": 2,
+        "appBackendJourneyPassed": true,
+        "appBackendJourneySeconds": 57.1,
+        "nodeCallProfileDefault": 2,
+        "explicitOffAndLegacyPeerFallback": true,
+        "focusedTestsPassed": 118,
+        "focusedTestsSkipped": 5,
+        "freshNativeAllocationOnCredentialRenewal": true,
+        "productionPairSmokeSeconds": 28
       }
     ]
   },
@@ -160,29 +193,79 @@
     ],
     "applicationVPNQualification": {
       "passed": true,
-      "candidateCodeSource": "599467deab502c99a42465b94c5b44f929bdc398",
-      "mediaSeconds": 479,
-      "afterFinalRecoverySeconds": 314,
+      "candidateCodeSource": "44a923c9dcc0693ce51a637335c7d8f80f66eb06",
+      "mediaSeconds": 459,
+      "afterFinalRecoverySeconds": 312,
       "matchedGuestPairOnly": true,
       "mutualDtlsFingerprintMatching": true,
-      "vpnOnRecoverySeconds": 42,
-      "vpnOffRecoverySeconds": 11,
+      "vpnOnRecoverySeconds": 13,
+      "vpnOffRecoverySeconds": 36,
       "outageSeconds": 12,
-      "outageRecoverySeconds": 15,
-      "credentialRenewalSeconds": [
-        394,
-        395
-      ],
+      "outageRecoverySeconds": 8,
       "credentialLifetimeSeconds": 300,
-      "peakSubscriptions": 12,
+      "steadyMediaGapLimitSeconds": 25,
+      "peakSubscriptions": 13,
       "subscriptionOverflows": 0,
       "pageErrors": 0,
       "candidateRendererUnderProductionHeaders": true,
       "productionByteReadbackPassed": true,
-      "productionPairSmokeSeconds": 28,
-      "proof": "https://github.com/forgesworn/kithmoot/blob/488bcfcd03b3f708db2709742fc347cf576ddb79/docs/evidence/kithmoot-node-matched-pair-tls443-20261103.json",
-      "limits": "Controlled node-route WireGuard with private SSH carrier; synthetic Chromium camera/microphone. Not independent mobile, commercial VPN or physical GrapheneOS acceptance."
-    }
+      "productionPairSmoke": {
+        "seconds": 24,
+        "firstMovingSampleSeconds": 0,
+        "productionRenderer": true,
+        "candidateInterception": false,
+        "matchedPairByMutualDtlsFingerprint": true,
+        "nodeTls443Selected": true,
+        "decodedVideoFrames": [
+          420,
+          443
+        ],
+        "audioPackets": [
+          1240,
+          1332
+        ],
+        "pageErrors": [],
+        "renewalQualification": false,
+        "samplesWithoutSelectedPairStats": [
+          2,
+          1
+        ]
+      },
+      "proof": "https://github.com/forgesworn/kithmoot/blob/01b154eec2e650e3ee83889faaa9f59935be8f25/docs/evidence/kithmoot-node-scoped-recovery-tls443-20261103.json",
+      "limits": [
+        "Controlled node-route WireGuard with private SSH carrier; not an independent commercial VPN or mobile carrier",
+        "Synthetic camera and microphone; two Chromium processes on one container",
+        "Candidate renderer served under production headers against the real public node",
+        "No capacity, physical GrapheneOS or packaged-client release claim"
+      ]
+    },
+    "applicationVPNQualificationHistory": [
+      {
+        "passed": true,
+        "candidateCodeSource": "599467deab502c99a42465b94c5b44f929bdc398",
+        "mediaSeconds": 479,
+        "afterFinalRecoverySeconds": 314,
+        "matchedGuestPairOnly": true,
+        "mutualDtlsFingerprintMatching": true,
+        "vpnOnRecoverySeconds": 42,
+        "vpnOffRecoverySeconds": 11,
+        "outageSeconds": 12,
+        "outageRecoverySeconds": 15,
+        "credentialRenewalSeconds": [
+          394,
+          395
+        ],
+        "credentialLifetimeSeconds": 300,
+        "peakSubscriptions": 12,
+        "subscriptionOverflows": 0,
+        "pageErrors": 0,
+        "candidateRendererUnderProductionHeaders": true,
+        "productionByteReadbackPassed": true,
+        "productionPairSmokeSeconds": 28,
+        "proof": "https://github.com/forgesworn/kithmoot/blob/488bcfcd03b3f708db2709742fc347cf576ddb79/docs/evidence/kithmoot-node-matched-pair-tls443-20261103.json",
+        "limits": "Controlled node-route WireGuard with private SSH carrier; synthetic Chromium camera/microphone. Not independent mobile, commercial VPN or physical GrapheneOS acceptance."
+      }
+    ]
   },
   "maintenance": {
     "ingressJournalRetained": true,
@@ -204,7 +287,7 @@
   },
   "limits": [
     "No public signed node release or private Shelter source publication",
-    "Independent mobile networks, commercial VPNs, physical GrapheneOS and capacity remain open; this controlled run recovered within 42 seconds.",
+    "Independent mobile networks, commercial VPNs, physical GrapheneOS and capacity remain open; this controlled run recovered within 36 seconds, with one separate initial-join timeout of unknown cause.",
     "No private room key, live pairing code, authentication proof or dashboard password recorded"
   ],
   "controls": {
