@@ -61,7 +61,9 @@ jobs:
       - name: Node ingress managed nginx renderer tests
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy
-        run: python3 -m unittest discover -s scripts/tests -p test_kithmoot_node_ingress.py -v
+        run: |
+          python3 -m unittest discover -s scripts/tests -p test_kithmoot_node_ingress.py -v
+          python3 -m unittest discover -s scripts/tests -p test_dashboard_public_guard.py -v
       # Plain cargo test (default features, as the harness uses): several tests
       # read the real apps/*/manifest.yml through CARGO_MANIFEST_DIR, which the
       # harness does not set. --exact makes each --skip match one full test path.
