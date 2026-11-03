@@ -109,7 +109,10 @@ and the browser were stopped after the checks.
 
 Real Archy install/launch/signing/app-gate UX and deletion UX remain maintainer
 review work. The final full-daemon local cargo check exceeded the 3 GiB
-build-container memory limit; final hosted backend CI is required. The offline host harness does not run the complete Archy daemon,
+build-container memory limit. The same final patched source at `66f7573a`
+passed hosted backend run `41578160185`, including full daemon build and
+Docker host checks; all 13 qualifying checks passed, with three deliberate
+image/publication skips. The offline host harness does not run the complete Archy daemon,
 perform a real reboot or qualify FIPS. Public certificate trust, another-network
 reachability, physical GrapheneOS and cross-client sustained media remain
 separate acceptance gates. No public signed node/Shelter release or source

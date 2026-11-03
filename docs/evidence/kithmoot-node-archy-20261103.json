@@ -220,13 +220,25 @@
     "No public CA or separate-network reachability proof",
     "No physical GrapheneOS acceptance",
     "No public signed node or Shelter release; no Shelter source publication",
-    "No live node deployment or UI approval",
-    "Final full-daemon local cargo check exceeded the 3 GiB build container memory limit; final hosted backend CI required"
+    "No live node deployment or UI approval"
   ],
   "cleanup": {
     "offlineHostFixtureRemoved": true,
     "imageFixtureRemoved": true,
     "browserStopped": true,
-    "taskServersLeftRunning": false
-  }
+    "taskServersLeftRunning": false,
+    "supersededPrivateBuildContextsRemoved": true,
+    "supersededPrivateImagesRemoved": true
+  },
+  "hostedCi": {
+    "sourceCommit": "66f7573ae8ae0e95409450c3d2451b5af1950002",
+    "backendRun": 41578160185,
+    "passed": 13,
+    "intentionallySkipped": 3,
+    "backend": "success",
+    "frontend": "success",
+    "manifests": "success",
+    "privateImagePublished": false
+  },
+  "localBuildLimit": "Final local full-daemon cargo check exceeded its3GiB container limit; same patched source passed final hosted backend CI"
 }
