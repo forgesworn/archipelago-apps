@@ -66,9 +66,13 @@ separate when diagnosing VPN changes.
 - Operator UI/controller source: `bd7d0c8f5077d1ceef6b26f4c768052a5ffe5066`.
 - Patched host source: `f389e68b904e21dbd54343d4b71a61bac78efd11`, patches
   0035–0045, backend patch level 10.
-- Native private image: `localhost/kithmoot-node:0.1.0-rc.1-d31b2a3ed1e9`.
+- Native private image: `localhost/kithmoot-node:0.1.0-rc.1-8961b322e310`.
 - Bundle inventory SHA-256:
-  `65b951512c9dc1df845cbcf7183bc1685585500a934d1096a90217d629a8de47`.
+  `75de99269b2526de412487826ae0f33c42e2fc1630cc2c8a8ab16a7d3ad63bc4`.
+- Spry source: `b5ce969030230965badf6940b610b1f834471857` (PR35).
+  Its independent TCP/TLS handshake limit is 64; relay allocations stay at
+  32, eight per username. Controller, host and other bundle bytes are unchanged.
+  The prior `d31b2a3ed1e9` image is retained for rollback.
 - The existing dashboard frontend is retained. The real host supplies its
   session gate, identity picker and Nostr signer.
 
@@ -107,7 +111,7 @@ before merging or approval. ZAT pending.** No maintainer message has been sent.
 
 Web pairing was first verified from merge `2c1977dacad883d730bd7ec6cfc9c66dbfe99486`
 in release `20261103T101924Z`. The current web deployment is
-`ecf73feabf51425b2676743de8d58d04ac0668dc`, release `20261104T013619Z`.
+`0102c468d663ec80aa8da3260bbb1d4295e18f1d`, release `20261104T061508Z`.
 Its public index, entry script and main script match the qualified local build
 byte for byte. It includes authenticated socket probes, bounded subscription
 recovery, fixed media slots and fresh TURN allocations. An established remote
@@ -137,7 +141,7 @@ stricter renewal gate. A later cached-login-only candidate failed VPN-off
 recovery and was replaced with fresh per-peer logins before merge. Independent
 VPNs, physical mobile handoff, GrapheneOS and capacity remain separate gates.
 
-The current [startup and allocation receipt](https://github.com/forgesworn/kithmoot/blob/a6783526290538ef5d631353cdd8df5ca213e1ff/docs/evidence/kithmoot-node-startup-allocation-20261103.json)
+The earlier [startup and allocation receipt](https://github.com/forgesworn/kithmoot/blob/a6783526290538ef5d631353cdd8df5ca213e1ff/docs/evidence/kithmoot-node-startup-allocation-20261103.json)
 records bounded startup retries and `max-bundle` allocation gathering without
 raising the node quota. Eighty-nine focused tests pass (two skip), three native
 journeys pass, and all five applicable hosted checks pass. The deployed renderer
@@ -148,13 +152,36 @@ used; the renderer is loaded directly from production without interception.
 This is not a run against the owner's public node. Public asset readback uses
 normal certificate validation; the private fixture accepts its self-signed TLS.
 
-The stricter public twenty-second VPN recovery and 310-second post-recovery
-media soak have **not run** for this release: fresh test admissions could not be
-completed while the owner's Mac was locked. No owner keys were accessed and
-admission was not bypassed. A direct/VPN/direct HTTPS probe is not media proof.
-No physical phone was available. The historical 36-second VPN-off result does
-not pass the tighter gate. Archy controller, host and image revisions are
-unchanged by this documentation update.
+The [4 November public recovery receipt](https://github.com/forgesworn/kithmoot/blob/e83e51f07721b672ccd13fc5017bf9853c0f7e9b/docs/evidence/kithmoot-node-public-vpn-recovery-20261104.json)
+qualifies the tighter gate for web `9e8d547a`: 430 seconds of actual production
+media, including 310 seconds after final recovery. VPN-on/off and outage
+recovery take 13.162/10.860/8.447 seconds, all below twenty seconds. A sampled
+seven-second pause during routine login renewal prompted the later handover fix.
+
+PR694 retains one connected media generation until its replacement connects
+plus one second, with a twenty-second bound. Mute/audience changes affect both;
+closing a peer or withdrawing access still closes retained transports. Its
+candidate passes 429 seconds, 311 after recovery, with zero received or visible
+media stalls in 133 checked steady samples per guest. Both logins renew and
+the previous expiries are crossed. The later actual production run of `074dbb8f` failed VPN-on recovery: writes
+reconnected before the persistent room readers. PR695 fixes that reader
+cooldown; PR696 also fixes delayed legacy answers and early redial timers.
+The five applicable hosted checks, 174 focused tests (three skips), typecheck,
+build and three real Spry/Shelter browser journeys pass. No new admission is
+created. No owner keys are accessed or admission bypassed. Physical phones,
+commercial VPNs, GrapheneOS and capacity remain separate checks.
+
+The [final production proof](https://github.com/forgesworn/kithmoot/blob/4fbb03f5a049efb8328c63cb1b998278bee054a2/docs/evidence/kithmoot-node-renewal-continuity-20261104.json)
+records 442 seconds of actual deployed browser audio/video, including 310
+seconds after final confirmed recovery. VPN-on, VPN-off and outage recovery
+take 18.006/16.736/2.100 seconds. Both browsers renew logins and continue beyond
+the previous expiry. All 132 steady samples per guest advance received
+audio/video and displayed frames, without page errors, authentication refusals
+or subscription overflow (peak 13). All five applicable source PR checks pass;
+Node24 passes 8,861 tests with eight skips. This qualifies the controlled
+Chromium case at roughly two-second sampling, not physical Wi-Fi/cellular,
+commercial VPNs, GrapheneOS or capacity. Test networking fixtures have been
+removed; the private demo and owner management connection remain running.
 
 Open KithMoot and accept **Update now** if an older
 installed web app is still running. Refreshing alone can retain the previous

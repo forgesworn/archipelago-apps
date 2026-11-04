@@ -51,7 +51,7 @@ real dashboard signer/app gate.
 | Launch/sign-in | Launch from Archy; choose a host identity. Repeat in standalone HTTPS and embedded dashboard views; test a denied identity and signer cancellation. | Host gate and signed app login both apply. No cookie alone grants management access. Errors leave a working sign-in/retry path. Embedded view adds no second dashboard navigation or wallpaper. |
 | Setup | Leave the away-from-home checkbox clear and try setup; then confirm it and choose limits. Interrupt and retry a partial setup using its saved choices. | Confirmation is required. Only bounded limits are accepted. Private/local relay addresses are refused by the supervisor. Partial state remains recoverable and is not replaced with a fresh identity. |
 | Status | Check ready, unpaired, paired, paused, failed-start, offline and expired-session states; refresh and retry. | Counts only; no room identifiers or keys. Start/pause works without deleting saved rooms. Pairing stays disabled until local readiness checks pass. An expired session requires a new signed login. |
-| Pairing hand-off | Create a code, scan it on a keeper device, open the link on the same device, and copy it. Wait six minutes or reload. | Local QR, private one-use pairing link, explicit keeper-device instructions and expiry. No pairing link in logs or persistent browser storage. A reload requires signing in again. |
+| Pairing hand-off | Create a code, scan it on a phone, open the link in a browser signed in to the KithMoot account, and copy it. Wait six minutes or reload. | Local QR, private one-use pairing link, explicit KithMoot-account instructions and expiry. No pairing link in logs or persistent browser storage. A reload requires signing in again. |
 | Delete-everything | Before setup, prepare deletion, restart the container, confirm setup is frozen, then cancel. Repeat after interrupting first setup. With a live room, try preparing deletion. Close rooms in KithMoot, wait for completion, then prepare again. Cancel once; prepare again and use Archy's normal Delete app and data action. | Unused and partially initialised nodes can prepare deletion without starting a backend; unknown runtime files refuse deletion. Active rooms/devices/requests block deletion. Empty-state preparation durably blocks setup and new admission across restart. Cancel restores admission. The host repeats the deletion check before teardown and restores its original routing. The controller signs no room closure. |
 
 Also review keyboard focus, touch targets, scrolling, safe areas and legibility
@@ -122,12 +122,13 @@ no new native UI release is claimed. The Android candidate's local matrix
 passed 4,014 tests with one opt-in skip. Official Archy UI acceptance remains
 pending for this review revision.
 
-The current web release is `20261104T013619Z` (`ecf73fea`), with bounded
-startup retry and reduced TURN allocation pressure. The demo pack records
-public byte equality and a sixty-second deployed-renderer room journey with
-isolated real Spry/Shelter. The historical 459-second public TLS443 run and
-24-second public smoke retain their original `d7ce79ef` deployment provenance.
-The stricter current twenty-second VPN media gate has not run because fresh
-test admissions could not be completed while the owner's Mac was locked.
-Physical mobile remains unavailable. Archy controller and host image revisions
-are unchanged; official maintainer acceptance remains pending.
+The current web release is `20261104T061508Z` (`0102c468`), including bounded
+media handover, prompt room-reader restoration and protection against delayed
+legacy answers after replacement. A redial timer that wakes before its shared
+retry deadline stays pending until the deadline arrives. Normal public TLS
+readback matches its index, entry and main scripts. The demo pack preserves
+historical results separately from the final production qualification.
+The private image is `8961b322e310`, with Spry TCP/TLS handshake headroom
+raised to 64 while the 32-allocation quota stays unchanged. Controller `bd7d0c8f`
+and host `f389e68b` bytes are unchanged. Physical mobile remains unavailable;
+official maintainer acceptance remains pending.
