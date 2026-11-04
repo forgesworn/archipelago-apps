@@ -107,7 +107,7 @@ before merging or approval. ZAT pending.** No maintainer message has been sent.
 
 Web pairing was first verified from merge `2c1977dacad883d730bd7ec6cfc9c66dbfe99486`
 in release `20261103T101924Z`. The current web deployment is
-`d7ce79ef8e32443f28810e5218aa5424c14d1a8d`, release `20261103T221208Z`.
+`ecf73feabf51425b2676743de8d58d04ac0668dc`, release `20261104T013619Z`.
 Its public index, entry script and main script match the qualified local build
 byte for byte. It includes authenticated socket probes, bounded subscription
 recovery, fixed media slots and fresh TURN allocations. An established remote
@@ -117,13 +117,14 @@ in force. A real three-browser native regression verifies healthy audio/video
 keeps advancing during another pair's recovery; the prior source fails it.
 
 The [scoped recovery receipt](https://github.com/forgesworn/kithmoot/blob/01b154eec2e650e3ee83889faaa9f59935be8f25/docs/evidence/kithmoot-node-scoped-recovery-tls443-20261103.json)
-records 459 seconds of matched-pair audio/video over TURN TLS443, including
+records the historical 459-second matched-pair audio/video run over TURN TLS443, including
 VPN on/off, a 12-second outage and credential renewal. It continued 312 seconds
 after final recovery across the prior login expiry. Recovery took 13 seconds
 on VPN, 36 seconds off VPN and 8 seconds after the outage. The 25-second steady
 media-gap limit remained in force; there were no browser errors or subscription
 overflows (peak 13). Candidate source `44a923c9` ran against the real public node
-under production headers; the deployment has identical main script bytes.
+under production headers; historical release `20261103T221208Z` (`d7ce79ef`)
+has identical main script bytes.
 A separate 24-second direct production-browser smoke received 420/443 decoded
 frames and 1,240/1,332 audio packets without candidate interception or manual
 retry. One earlier repeated startup timed out before joining; its cause is not
@@ -135,6 +136,25 @@ frozen pair. The previous production and rotation-grace builds failed that
 stricter renewal gate. A later cached-login-only candidate failed VPN-off
 recovery and was replaced with fresh per-peer logins before merge. Independent
 VPNs, physical mobile handoff, GrapheneOS and capacity remain separate gates.
+
+The current [startup and allocation receipt](https://github.com/forgesworn/kithmoot/blob/a6783526290538ef5d631353cdd8df5ca213e1ff/docs/evidence/kithmoot-node-startup-allocation-20261103.json)
+records bounded startup retries and `max-bundle` allocation gathering without
+raising the node quota. Eighty-nine focused tests pass (two skip), three native
+journeys pass, and all five applicable hosted checks pass. The deployed renderer
+passes a separate sixty-second room lifecycle with real isolated Spry/Shelter,
+including initial HTTP503 recovery, moving audio/video, signalling recovery,
+removal and purge. Private fixture HTTP forwarding and WebSocket bridges are
+used; the renderer is loaded directly from production without interception.
+This is not a run against the owner's public node. Public asset readback uses
+normal certificate validation; the private fixture accepts its self-signed TLS.
+
+The stricter public twenty-second VPN recovery and 310-second post-recovery
+media soak have **not run** for this release: fresh test admissions could not be
+completed while the owner's Mac was locked. No owner keys were accessed and
+admission was not bypassed. A direct/VPN/direct HTTPS probe is not media proof.
+No physical phone was available. The historical 36-second VPN-off result does
+not pass the tighter gate. Archy controller, host and image revisions are
+unchanged by this documentation update.
 
 Open KithMoot and accept **Update now** if an older
 installed web app is still running. Refreshing alone can retain the previous

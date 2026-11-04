@@ -90,37 +90,38 @@
     "ownerConfirmationSource": "Owner reply in this task on 3 November 2026",
     "cachedClientRecovery": "Owner used Update now, after which pairing screen opened and pairing/status succeeded.",
     "currentDeployment": {
-      "source": "d7ce79ef8e32443f28810e5218aa5424c14d1a8d",
-      "release": "20261103T221208Z",
+      "source": "ecf73feabf51425b2676743de8d58d04ac0668dc",
+      "release": "20261104T013619Z",
       "publicIndexMatches": true,
       "publicEntryMatches": true,
       "publicMainMatches": true,
-      "mainSha256": "57a1391e03c04fabed2636201e3ae8cccefbc8474b31147cd6fbcd10f323be0f",
+      "mainSha256": "b25a7587f7586e3347147f405535f2f5a22350c7c51fa7200f0881882dff3ce2",
       "diagnosticHookAbsent": true,
-      "pr": 688,
-      "focusedTestsPassed": 125,
-      "focusedTestsSkipped": 5,
-      "appBackendJourneyPassed": true,
-      "appBackendJourneySeconds": 43.0,
-      "healthyParticipantIsolationPassed": true,
-      "healthyParticipantIsolationSeconds": 34.3,
-      "nodeCallProfileDefault": 2,
-      "explicitOffAndLegacyPeerFallback": true,
-      "freshNativeAllocationOnCredentialRenewal": true,
-      "freshLoginForFailedParticipant": true,
-      "healthyAllocationDeadlinePreserved": true,
-      "productionPairSmokeSeconds": 24,
-      "startupObservation": {
-        "oneRepeatedProductionStartupTimedOut": true,
-        "failedGuestReachedCallStage": false,
-        "subsequentDeviceSignedAccessActiveMilliseconds": [
-          408,
-          457
-        ],
-        "subsequentProductionSmokePassedWithoutManualRetry": true,
-        "causeEstablished": false,
-        "allInitialJoinsQualified": false
-      }
+      "normalPublicTls": true,
+      "pr": 690,
+      "focusedTestsPassed": 89,
+      "focusedTestsSkipped": 2,
+      "nativeJourneysPassed": 3,
+      "applicableHostedChecksPassed": 5,
+      "boundedInitialStartupAttempts": 3,
+      "maxBundle": true,
+      "allocationPressureRegressionPassed": true,
+      "productionRendererIsolatedNodeJourney": {
+        "passed": true,
+        "seconds": 60.0,
+        "rendererInterception": false,
+        "realSpryShelterProcesses": true,
+        "movingVideoAndSyntheticMicrophoneAudio": true,
+        "privateFixtureHTTPAndWebSocketBridges": true,
+        "selfSignedTLSAcceptedForPrivateFixtureOnly": true,
+        "removalAndPurge": true,
+        "ownerPublicNode": false
+      },
+      "publicVPNMediaForThisRevision": "not run: fresh test admissions unavailable while owner Mac locked; no owner keys accessed or admission bypass",
+      "requiredRouteRecoveryDeadlineSeconds": 20,
+      "requiredPostRecoverySoakSeconds": 310,
+      "physicalPhoneAvailable": false,
+      "proof": "https://github.com/forgesworn/kithmoot/blob/a6783526290538ef5d631353cdd8df5ca213e1ff/docs/evidence/kithmoot-node-startup-allocation-20261103.json"
     },
     "deploymentHistory": [
       {
@@ -172,6 +173,39 @@
         "focusedTestsSkipped": 5,
         "freshNativeAllocationOnCredentialRenewal": true,
         "productionPairSmokeSeconds": 28
+      },
+      {
+        "source": "d7ce79ef8e32443f28810e5218aa5424c14d1a8d",
+        "release": "20261103T221208Z",
+        "publicIndexMatches": true,
+        "publicEntryMatches": true,
+        "publicMainMatches": true,
+        "mainSha256": "57a1391e03c04fabed2636201e3ae8cccefbc8474b31147cd6fbcd10f323be0f",
+        "diagnosticHookAbsent": true,
+        "pr": 688,
+        "focusedTestsPassed": 125,
+        "focusedTestsSkipped": 5,
+        "appBackendJourneyPassed": true,
+        "appBackendJourneySeconds": 43.0,
+        "healthyParticipantIsolationPassed": true,
+        "healthyParticipantIsolationSeconds": 34.3,
+        "nodeCallProfileDefault": 2,
+        "explicitOffAndLegacyPeerFallback": true,
+        "freshNativeAllocationOnCredentialRenewal": true,
+        "freshLoginForFailedParticipant": true,
+        "healthyAllocationDeadlinePreserved": true,
+        "productionPairSmokeSeconds": 24,
+        "startupObservation": {
+          "oneRepeatedProductionStartupTimedOut": true,
+          "failedGuestReachedCallStage": false,
+          "subsequentDeviceSignedAccessActiveMilliseconds": [
+            408,
+            457
+          ],
+          "subsequentProductionSmokePassedWithoutManualRetry": true,
+          "causeEstablished": false,
+          "allInitialJoinsQualified": false
+        }
       }
     ]
   },
@@ -237,7 +271,10 @@
         "Synthetic camera and microphone; two Chromium processes on one container",
         "Candidate renderer served under production headers against the real public node",
         "No capacity, physical GrapheneOS or packaged-client release claim"
-      ]
+      ],
+      "deployedAsSource": "d7ce79ef8e32443f28810e5218aa5424c14d1a8d",
+      "deployedAsRelease": "20261103T221208Z",
+      "qualifiesCurrentRevision": false
     },
     "applicationVPNQualificationHistory": [
       {
@@ -287,7 +324,7 @@
   },
   "limits": [
     "No public signed node release or private Shelter source publication",
-    "Independent mobile networks, commercial VPNs, physical GrapheneOS and capacity remain open; this controlled run recovered within 36 seconds, with one separate initial-join timeout of unknown cause.",
+    "Independent mobile networks, commercial VPNs, physical GrapheneOS and capacity remain open. Historical d7ce79ef controlled VPN recovery reached 36 seconds; the current release has not run the stricter public twenty-second VPN media gate. Earlier initial-timeout cause remains unknown.",
     "No private room key, live pairing code, authentication proof or dashboard password recorded"
   ],
   "controls": {

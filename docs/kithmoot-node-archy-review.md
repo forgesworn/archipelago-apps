@@ -122,8 +122,12 @@ no new native UI release is claimed. The Android candidate's local matrix
 passed 4,014 tests with one opt-in skip. Official Archy UI acceptance remains
 pending for this review revision.
 
-The current web release is `20261103T221208Z` (`d7ce79ef`): the demo review
-pack records the 459-second controlled TLS443 VPN/outage/renewal run, native
-healthy-participant regression and separate 24-second production smoke. It also
-records an unresolved intermittent initial-join timeout. Archy controller and
-host image revisions are unchanged by this documentation update.
+The current web release is `20261104T013619Z` (`ecf73fea`), with bounded
+startup retry and reduced TURN allocation pressure. The demo pack records
+public byte equality and a sixty-second deployed-renderer room journey with
+isolated real Spry/Shelter. The historical 459-second public TLS443 run and
+24-second public smoke retain their original `d7ce79ef` deployment provenance.
+The stricter current twenty-second VPN media gate has not run because fresh
+test admissions could not be completed while the owner's Mac was locked.
+Physical mobile remains unavailable. Archy controller and host image revisions
+are unchanged; official maintainer acceptance remains pending.
