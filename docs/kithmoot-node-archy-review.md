@@ -3,9 +3,8 @@
 The 5 November dashboard expansion is ready for component review at source
 `3d10482dd04bd163d44ff230bdb6ea71f61070c4`. Its new screens, exact assets,
 captures, setup and expected results are in the
-[dashboard review pack](kithmoot-node-dashboard-review.md). The live demo still
-runs the earlier controller identified below; the expanded dashboard has not
-been deployed or merged.
+[dashboard review pack](kithmoot-node-dashboard-review.md). The expanded dashboard is now on the authorised private demo with actual
+linked-signer and live-metric evidence. It remains unmerged pending ZAT.
 
 **Maintainer must review and approve UI work on the Archy install, launch,
 pairing hand-off, delete-everything, Overview, Connections, Usage, Settings and
@@ -15,7 +14,10 @@ ship instructions and automated checks do not satisfy this gate.
 
 ## Exact candidate
 
-- Previously deployed UI/controller source: `bd7d0c8f5077d1ceef6b26f4c768052a5ffe5066`.
+- Earlier UI/controller source: `bd7d0c8f5077d1ceef6b26f4c768052a5ffe5066`.
+- Current dashboard source: `3d10482dd04bd163d44ff230bdb6ea71f61070c4`;
+  see the [live review pack](kithmoot-node-dashboard-review.md) for the exact
+  private image, browser captures and retained host accessibility finding.
 - Draft [PR 53](https://github.com/forgesworn/archipelago-apps/pull/53).
 - Live Linux x64 candidate: see the [demo review pack](kithmoot-node-demo-review.md)
   for the installed image, patched host revision, private access and rollback.

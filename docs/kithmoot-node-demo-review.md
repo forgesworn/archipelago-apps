@@ -1,9 +1,18 @@
 # KithMoot Node review on demo
 
-The private Linux x64 review candidate is installed. The real linked signer,
-setup, pairing hand-off, pause/start and deletion preparation/cancellation
-have passed. [Deployment evidence and captures](evidence/kithmoot-node-demo-20261103/qualification.json)
-identify the tested revisions. The owner confirmed web pairing and status as “Paired and ready”.
+The expanded private node dashboard was deployed on 5 November 2026. Overview,
+Connections, Usage, saved Settings and Diagnostics now work through the real
+Archy session gate and linked signer, with live backend/resource observations.
+The [dashboard review pack](kithmoot-node-dashboard-review.md) and
+[live receipt](evidence/kithmoot-node-dashboard-live-20261105/deployment.json)
+identify the current image, test steps, captures, limits and pending ZAT.
+
+The earlier setup, pairing hand-off, pause/start and deletion
+preparation/cancellation checks remain historical baseline evidence in the
+[3 November receipt](evidence/kithmoot-node-demo-20261103/qualification.json).
+The owner confirmed that baseline as “Paired and ready”. This dashboard update
+preserved the paired account and saved room; it did not exercise destructive
+room controls again.
 
 The owner authorised this private installation on 3 November 2026. It is a
 review candidate, outside the published app catalogue. No Shelter source,
@@ -63,23 +72,26 @@ separate when diagnosing VPN changes.
 
 ## Revision
 
-- Operator UI/controller source: `bd7d0c8f5077d1ceef6b26f4c768052a5ffe5066`.
+- Operator UI/controller source: `3d10482dd04bd163d44ff230bdb6ea71f61070c4`.
 - Patched host source: `f389e68b904e21dbd54343d4b71a61bac78efd11`, patches
   0035–0045, backend patch level 10.
-- Native private image: `localhost/kithmoot-node:0.1.0-rc.1-8961b322e310`.
+- Native private image: `localhost/kithmoot-node:0.1.0-rc.1-dashboard-2cf9031abeb4`.
+  Its image ID is `cae02bafcc5aa2720b637330ba0d9fdd7e7c372d30dac2a733d1abab948fbb9c`.
+  This is an app-only layer over the exact `8961b322e310` image; existing
+  supervisor, Spry, Shelter and bundle inventory bytes are unchanged.
 - Bundle inventory SHA-256:
   `75de99269b2526de412487826ae0f33c42e2fc1630cc2c8a8ab16a7d3ad63bc4`.
 - Spry source: `b5ce969030230965badf6940b610b1f834471857` (PR35).
   Its independent TCP/TLS handshake limit is 64; relay allocations stay at
   32, eight per username. Controller, host and other bundle bytes are unchanged.
-  The prior `d31b2a3ed1e9` image is retained for rollback.
+  The immediate prior `8961b322e310` image is retained for rollback.
 - The existing dashboard frontend is retained. The real host supplies its
   session gate, identity picker and Nostr signer.
 
 The native daemon uses release-built dependencies with the daemon crate at
 opt-level 0 and 256 codegen units to fit the review host. Normal full-release
 builds run separately in CI. This candidate establishes functionality, with no
-capacity or performance claim. The current UI/controller includes the account wording, access-count explanation, private connection errors and longer controls sessions described above.
+capacity or performance claim. The current UI/controller adds the five-view operational dashboard; the account wording, access-count explanation, private connection errors and controls session policy remain in place.
 
 ## Review
 
@@ -240,3 +252,37 @@ expanded certificate; neither needs to be destroyed for rollback.
 Controlled public TLS443 media and route recovery are recorded separately from
 UI acceptance. Independent networks, capacity and physical GrapheneOS remain
 separate acceptance gates.
+
+## 5 November guarded dashboard update
+
+The update changed only the app image reference in its two manifest copies and
+Quadlet. Host binary/nginx hashes and the other five container identities were
+verified unchanged. There were no active node TURN relay sockets before the
+switch. The account, saved room, settings and secrets were preserved. The
+[receipt](evidence/kithmoot-node-dashboard-live-20261105/deployment.json) records
+exact image IDs and runtime/static-asset verification.
+
+Container inspection must run through the delegated Archy user service, for
+example `systemd-run --user --pipe --wait --collect` around `podman exec` under
+that user. Direct `runuser` from a root SSH cgroup lacks the required delegated
+cgroup access. The node runtime is
+`/opt/kithmoot-node/current/runtime/bin/node`, not `/usr/bin/node`. No persistent
+cgroup, user-session or host configuration change was required.
+
+The first live SQLite backup attempt waited on an exclusive runtime lock. It
+was stopped before changing services. A complete cold copy was then taken
+while the node was stopped for the guarded switch. The root-only rollback
+folder is `/root/kithmoot-node-dashboard-20261105/`; it retains the old manifest
+copies, full data backup, parent image ID, before/after receipts and
+`rollback.py`. That guarded rollback script refuses a newer image or active
+node relay sockets and restores only the prior image references. It does not
+overwrite current room databases. Do not restore the cold data copy over newer
+messages as part of a normal UI rollback.
+
+The actual embedded journey passed all five views at 1440px and 390px, live
+metrics, exact assets, scrolling to footer actions, and standalone sign-in.
+It retained 21 captures and no page errors. Each of five live accessibility
+scans reported the host's pre-existing viewport zoom restriction, with no
+reported node-frame violation. Physical mobile browsers, Companion WebViews
+and new outside-network media are separate gates. No new room, grant, pairing
+code, pause or deletion was issued by this live UI journey.

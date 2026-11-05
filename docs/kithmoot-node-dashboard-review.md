@@ -20,11 +20,18 @@ draft PR remains held; no maintainer has been contacted.
   records that source revision, source and compiled-asset SHA256 values,
   captures and accessibility results. Fixtures supply the signer, backend and
   host canvas; HTTP authentication uses the real controller.
-- This revision is **not deployed**. The existing private demo at
-  `https://demo.forgesworn.dev:3753/` still uses controller `bd7d0c8f5077d1ceef6b26f4c768052a5ffe5066`
-  and image `localhost/kithmoot-node:0.1.0-rc.1-8961b322e310`.
-  Its [access instructions](kithmoot-node-demo-review.md) are for that baseline.
-  A running old demo is not acceptance of these new screens.
+- Deployed on the authorised private demo on 5 November as
+  `localhost/kithmoot-node:0.1.0-rc.1-dashboard-2cf9031abeb4`, image ID
+  `cae02bafcc5aa2720b637330ba0d9fdd7e7c372d30dac2a733d1abab948fbb9c`.
+- Open `https://demo.forgesworn.dev/dashboard` through the existing private
+  connection and launch **KithMoot Node**. Refresh the app to load the new
+  screens; approve its HTTP sign-in proof with the existing linked identity.
+  Direct access is `https://demo.forgesworn.dev:3753/` behind the same app gate.
+- [Live deployment receipt](evidence/kithmoot-node-dashboard-live-20261105/deployment.json),
+  [actual browser journey](evidence/kithmoot-node-dashboard-live-20261105/browser.json)
+  and [live status snapshot](evidence/kithmoot-node-dashboard-live-20261105/status.json)
+  identify the exact image, preserved data and measured scope. The earlier
+  `8961b322e310` image remains available for rollback.
 
 ## Reproduce the component build
 
@@ -99,12 +106,38 @@ page errors. Viewports include 320/390/768/1440px, landscape, enlarged text,
 reduced motion, standalone, actual iframe and no-blur states. Source hashes in
 the receipt bind those results to the build; these are component observations.
 
-No new image has been deployed, no live node restarted and no infrastructure
-changed. Real container observation on the demo, real host-gate integration
-of this revision, Companion WebView, physical devices and outside-network
-media remain separate checks. The private-host inspection confirmed the old
-image remains running; its container-exec probe was unavailable, so no new
-live statistics or runtime acceptance are claimed.
+The guarded private update verified the existing room and account custody,
+saved settings and secrets, unchanged supervisor/Spry/Shelter bytes, unchanged
+host binary/nginx, and the same five unrelated containers. No node relay
+sockets were active before the switch. A cold backup and the prior image are
+retained privately for rollback; the live database was not migrated or reset.
+
+The real dashboard session, existing linked signer and authenticated embedded
+views passed at 1440px and 390px, including scrolling to footer actions. All
+five served static files matched the recorded build hashes. Actual controller
+status reported all four services responding, nine local checks passed, CPU
+and memory, message storage, filesystem free space and trusted certificate
+expiry. The [live browser receipt](evidence/kithmoot-node-dashboard-live-20261105/browser.json)
+records 21 captures and no page errors.
+
+Five scans of the actual composed host each reported its existing
+`meta-viewport` zoom restriction. No violation was reported inside the node
+iframe. This host finding is retained, not suppressed or represented as a clean
+whole-host accessibility result. The 17 clean fixture scans above remain
+component evidence. New media-call, physical-phone, commercial-VPN and
+Companion WebView acceptance are not claimed by this dashboard update.
+
+Live captures for the maintainer:
+
+- [Overview, desktop](evidence/kithmoot-node-dashboard-live-20261105/overview-1440.png)
+- [Usage, phone width](evidence/kithmoot-node-dashboard-live-20261105/usage-390.png)
+- [Usage footer reached by scrolling](evidence/kithmoot-node-dashboard-live-20261105/usage-390-bottom.png)
+- [Connections, desktop](evidence/kithmoot-node-dashboard-live-20261105/connections-1440.png)
+- [Diagnostics, phone width](evidence/kithmoot-node-dashboard-live-20261105/diagnostics-390.png)
+
+The phone-sized run uses desktop Chromium at a narrow viewport. It is not a
+physical mobile browser result. Maintainer approval of this exact revision
+remains pending; the PR is still draft and unmerged.
 
 Live bandwidth, allocation counters, history, client call-quality diagnostics
 and editing limits after setup remain future backend/UI work. This revision

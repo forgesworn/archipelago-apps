@@ -1,0 +1,50 @@
+{
+  "v": 1,
+  "version": "0.1.0-rc.1",
+  "localReady": true,
+  "checks": [
+    {
+      "name": "HTTPS-profile-and-identity",
+      "ok": true
+    },
+    {
+      "name": "local-DNS",
+      "ok": true
+    },
+    {
+      "name": "local-supervisor",
+      "ok": true
+    },
+    {
+      "name": "storage-reserve",
+      "ok": true
+    },
+    {
+      "name": "STUN-TCP-34790",
+      "ok": true
+    },
+    {
+      "name": "STUN-TLS-443",
+      "ok": true
+    },
+    {
+      "name": "STUN-TLS-53499",
+      "ok": true
+    },
+    {
+      "name": "STUN-UDP-34790",
+      "ok": true
+    },
+    {
+      "name": "WSS-authentication-challenge",
+      "ok": true
+    }
+  ],
+  "externalPending": [
+    "Independent DNS and public certificate trust",
+    "UDP/TCP/TLS reachability from another network",
+    "Authenticated TURN allocations and media over TLS443",
+    "Mobile-data and physical GrapheneOS call acceptance"
+  ],
+  "note": "Local STUN and TLS checks do not qualify outside TURN media. No mapped address or participant data is recorded."
+}
