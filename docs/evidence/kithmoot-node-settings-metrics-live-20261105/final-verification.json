@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "configurationRestoredSemantically": true,
+  "savedSecretsUnchanged": true,
+  "ownerAndRoomSetPreserved": true,
+  "ready": true,
+  "rooms": 1,
+  "devicesWithAccess": 10,
+  "pending": 0,
+  "otherFiveContainersUnchanged": true,
+  "hostBinaryAndNginxUnchanged": true,
+  "taskBuildAndContextRemoved": true,
+  "rootOnlyColdBackupRetained": true,
+  "priorImageRetained": true,
+  "taskBuildContainerStopped": true
+}
