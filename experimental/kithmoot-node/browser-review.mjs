@@ -22,18 +22,18 @@ const fingerprints = async names => Promise.all(names.map(async path => ({ path,
 const sourceFiles = await fingerprints(sourceNames), builtFiles = await fingerprints(['dist/controller.mjs', 'dist/public/client.js', 'dist/public/style.css', 'dist/public/index.html', 'dist/public/nostr-provider.js'])
 const sourceRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fileURLToPath(new URL('.', import.meta.url)), encoding: 'utf8' }).trim()
 const key = generateSecretKey(), pubkey = getPublicKey(key)
-let configured = false, running = false, deleting = false, rooms = 0, setupCalls = 0, loseNextStatus = false, degraded = false, unknown = false, clockOffset = 0
+let configured = false, running = false, deleting = false, rooms = 0, devices = 0, pending = 0, setupCalls = 0, loseNextStatus = false, degraded = false, unknown = false, clockOffset = 0
 let limits = { maxRooms: 4, aggregateBytesPerSecond: 2000000, maxBytes: 1073741824, minFreeBytes: 2147483648 }
 const link = 'https://kithmoot.app/j/#kithmoot-node=component-review-only'
 const node = {
   status: async () => dashboardSnapshot({ base: { v: 1, host: 'node.example', configured, running, deleting, limits, paused: !running },
-    state: running ? { rooms, devices: 5, pending: 1, paired: false, ready: !deleting && !degraded } : undefined,
+    state: running ? { rooms, devices, pending, paired: false, ready: !deleting && !degraded } : undefined,
     doctor: running ? healthReport({ v: 1, version: '0.1.0-rc.1', localReady: !degraded, checks: checkNames.map(name => ({ name, ok: !(degraded && name === 'STUN-TLS-443') })) }, degraded ? 1 : 0, Date.now()) : undefined,
     resources: unknown ? { sampledAt: Date.now() } : { sampledAt: Date.now(), memoryBytes: 103300000, memoryLimitBytes: 268435456, cpuPercent: 1.2, cpuLimitCores: 2, freeBytes: 4000000000 },
     shelter: running && !unknown ? { responding: true, storeBytes: 65536 } : undefined, certificate: { validUntil: 1800000000000 }, problem: degraded ? 'local-checks-incomplete' : undefined }),
-  setup: async value => { configured = running = true; setupCalls++; limits = value }, start: async () => { running = true }, stop: async () => { running = false },
+  setup: async value => { configured = running = true; rooms = 2; devices = 5; pending = 1; setupCalls++; limits = value }, start: async () => { running = true }, stop: async () => { running = false },
   pair: async () => ({ link, expiresAt: Math.floor(Date.now() / 1000) + 360, qr: await QRCode.toString(link, { type: 'svg' }) }),
-  prepareDelete: async () => { deleting = true; return { deleteReady: true } }, cancelDelete: async () => { deleting = false; return { deleteReady: false } }
+  prepareDelete: async () => { assert.equal(rooms + devices + pending, 0); deleting = true; return { deleteReady: true } }, cancelDelete: async () => { deleting = false; return { deleteReady: false } }
 }
 const server = createController({ owners: new Set([pubkey]), hosts: ['node.example'], node, publicDirectory: fileURLToPath(new URL('./dist/public/', import.meta.url)), now: () => Date.now() + clockOffset, monotonic: () => performance.now() + clockOffset })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -136,6 +136,8 @@ try {
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await page.getByRole('button', { name: 'Delete everything…' }).click()
   await capture('10-delete-390'); await axe('delete')
+  // Model the owner closing the two rooms in KithMoot before preparation.
+  rooms = devices = pending = 0
   await page.getByRole('button', { name: 'Check rooms and prepare deletion' }).click()
   await page.getByRole('button', { name: 'Cancel deletion' }).waitFor(); await capture('11-delete-prepared-390')
   await page.getByRole('button', { name: 'Cancel deletion' }).click()
