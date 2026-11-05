@@ -97,15 +97,22 @@ The signed status API now powers Overview, Connections, Usage, Settings and
 Diagnostics. It exposes only a fixed summary: aggregate room/access/operation
 counts, four service observations, the nine allowlisted local doctor checks,
 saved limits, local certificate expiry, container resources, filesystem free
-space and Shelter's encrypted-message storage total. Detailed supervisor or
+space, Shelter's encrypted-message storage total and private aggregate relay metrics. Detailed supervisor or
 socket replies, keys, identities, room identifiers and participant addresses
 are never forwarded. Support copying is explicit and sends nothing itself.
 
 `pending` means unfinished supervisor operations, not waiting guests. Access
 counts can include offline devices and count one device in multiple rooms.
 Local STUN responses and a trusted local TLS connection do not qualify outside
-media calls. External tests, live bandwidth, allocation counts, historical
-charts and client video-quality measurements are not collected by this version.
+media calls. Outside-network tests, historical charts and client video-quality
+measurements are not collected by this version. UDP and TCP/TLS allocation
+gauges, payload totals, rates, drops and stream errors come from the existing
+paired-authority Spry status request. No room grant is created for observation.
+Payload includes both directions and queued stream output, excluding protocol
+headers; it is not verified delivery or billable network usage. TCP and TLS
+share one stream bucket. Errors are relay stream failures, not failed calls
+or failures in the host TLS terminator. Stale/malformed samples are unknown;
+rates need two increasing samples and reset after restart or outage.
 
 CPU and memory use the private cgroup v2 root, only when the process reports
 `0::/`. Other cgroup layouts and platforms show unavailable counters. CPU is a
@@ -122,10 +129,15 @@ The fixed status command is limited to eight seconds, doctor to 45 seconds and
 the new socket/TLS observations to two seconds each. Backend failure leaves the
 configured limits and recovery controls visible. Polling does not extend sign-in.
 
-Settings displays the existing bounded setup choices. Post-setup limit editing
-is not implemented. Pause ends calls and preserves saved data; this version does
-not introduce a drain action. Destructive deletion still uses the existing
-supervisor freeze and the host's private deletion handshake.
+Settings edits the same four bounded limits after an explicit pause. Saving
+or restoring previous limits keeps the node paused; Start on Overview applies
+them. A stale configuration revision, active child, deletion freeze, unfinished
+operation, unsupported ledger schema, unsafe storage or insufficient capacity
+refuses the change. Only limits change, never authority, paths or keys. The
+owner-only atomic backup precedes the configuration commit. Manual restoration
+revalidates present usage and never rewinds room data. Pause ends calls and
+preserves saved data; there is no drain action. Destructive deletion retains
+the existing supervisor freeze and host deletion handshake.
 
 See the [5 November dashboard review pack](../../docs/kithmoot-node-dashboard-review.md)
 for exact source, component evidence, deliberate style choices and pending gates.

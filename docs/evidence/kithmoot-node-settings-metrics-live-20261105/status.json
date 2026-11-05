@@ -1,0 +1,181 @@
+{
+  "v": 1,
+  "host": "demo.forgesworn.dev",
+  "configured": true,
+  "setupPending": false,
+  "running": true,
+  "paused": false,
+  "deleting": false,
+  "limits": {
+    "maxRooms": 4,
+    "aggregateBytesPerSecond": 2000000,
+    "maxBytes": 1073741824,
+    "minFreeBytes": 2147483648
+  },
+  "settings": {
+    "revision": "dc280516975a58e522405f94f08d6cc017ec96d9fc597da3cffae6637526804e",
+    "editable": false,
+    "previous": null
+  },
+  "ready": true,
+  "rooms": 1,
+  "devices": 10,
+  "pending": 0,
+  "paired": true,
+  "observedAt": 1793871705338,
+  "services": [
+    {
+      "id": "controller",
+      "label": "Archy controls",
+      "state": "responding",
+      "version": "0.1.0-rc.1",
+      "uptimeSeconds": 331,
+      "detail": "Private sign-in, setup and node controls."
+    },
+    {
+      "id": "supervisor",
+      "label": "Room supervisor",
+      "state": "responding",
+      "detail": "Admitted-device access and backend reconciliation.",
+      "version": "0.1.0-rc.1",
+      "uptimeSeconds": 29
+    },
+    {
+      "id": "spry",
+      "label": "Spry call relay",
+      "state": "responding",
+      "detail": "Local STUN responses. This does not prove an authenticated call can connect."
+    },
+    {
+      "id": "shelter",
+      "label": "Shelter message relay",
+      "state": "responding",
+      "detail": "Private relay control response. Room messages remain encrypted."
+    }
+  ],
+  "connections": {
+    "controlsPort": 3753,
+    "httpsPort": 443,
+    "turnUdpTcpPort": 34790,
+    "turnTlsPort": 53499,
+    "turnTls443Port": 443,
+    "checkedAt": 1793871695620,
+    "checks": [
+      {
+        "name": "local-supervisor",
+        "state": "passed"
+      },
+      {
+        "name": "HTTPS-profile-and-identity",
+        "state": "passed"
+      },
+      {
+        "name": "WSS-authentication-challenge",
+        "state": "passed"
+      },
+      {
+        "name": "local-DNS",
+        "state": "passed"
+      },
+      {
+        "name": "storage-reserve",
+        "state": "passed"
+      },
+      {
+        "name": "STUN-UDP-34790",
+        "state": "passed"
+      },
+      {
+        "name": "STUN-TCP-34790",
+        "state": "passed"
+      },
+      {
+        "name": "STUN-TLS-53499",
+        "state": "passed"
+      },
+      {
+        "name": "STUN-TLS-443",
+        "state": "passed"
+      }
+    ],
+    "certificateValidUntil": 1801465455000,
+    "external": "not-measured"
+  },
+  "usage": {
+    "sampledAt": 1793871699828,
+    "memoryBytes": 87375872,
+    "memoryLimitBytes": 268435456,
+    "cpuPercent": 4.6,
+    "cpuLimitCores": 2,
+    "freeBytes": 19578138624,
+    "storeBytes": 2085064,
+    "bandwidthBytesPerSecond": 0,
+    "allocations": 0,
+    "relay": {
+      "sampledAt": 1793871699802,
+      "uptimeSeconds": 24,
+      "allocations": 0,
+      "streamConnections": 0,
+      "forwardedBytes": 0,
+      "bytesPerSecond": 0,
+      "intervalSeconds": 11.755,
+      "udp": {
+        "allocations": 0,
+        "forwardedBytes": 0,
+        "bytesPerSecond": 0
+      },
+      "stream": {
+        "allocations": 0,
+        "forwardedBytes": 0,
+        "bytesPerSecond": 0
+      },
+      "forwardedPackets": 0,
+      "droppedPackets": 0,
+      "streamErrors": 0,
+      "refusedStreams": 0
+    }
+  },
+  "diagnostics": {
+    "problem": null,
+    "checkedAt": 1793871695620,
+    "checks": [
+      {
+        "name": "local-supervisor",
+        "state": "passed"
+      },
+      {
+        "name": "HTTPS-profile-and-identity",
+        "state": "passed"
+      },
+      {
+        "name": "WSS-authentication-challenge",
+        "state": "passed"
+      },
+      {
+        "name": "local-DNS",
+        "state": "passed"
+      },
+      {
+        "name": "storage-reserve",
+        "state": "passed"
+      },
+      {
+        "name": "STUN-UDP-34790",
+        "state": "passed"
+      },
+      {
+        "name": "STUN-TCP-34790",
+        "state": "passed"
+      },
+      {
+        "name": "STUN-TLS-53499",
+        "state": "passed"
+      },
+      {
+        "name": "STUN-TLS-443",
+        "state": "passed"
+      }
+    ],
+    "external": "not-measured"
+  }
+}

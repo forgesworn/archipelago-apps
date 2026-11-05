@@ -1,10 +1,11 @@
 # KithMoot Node review on demo
 
-The expanded private node dashboard was deployed on 5 November 2026. Overview,
-Connections, Usage, saved Settings and Diagnostics now work through the real
-Archy session gate and linked signer, with live backend/resource observations.
-The [dashboard review pack](kithmoot-node-dashboard-review.md) and
-[live receipt](evidence/kithmoot-node-dashboard-live-20261105/deployment.json)
+The private dashboard was updated on 5 November 2026 with editable paused-node
+limits and real aggregate UDP/TCP-TLS relay statistics. The actual dashboard
+gate and linked signer passed save/start/restore/start checks: settings returned
+to their original values and the node is running and ready. The
+[dashboard review pack](kithmoot-node-dashboard-review.md) and
+[live deployment receipt](evidence/kithmoot-node-settings-metrics-live-20261105/deployment.json)
 identify the current image, test steps, captures, limits and pending ZAT.
 
 The earlier setup, pairing hand-off, pause/start and deletion
@@ -72,19 +73,22 @@ separate when diagnosing VPN changes.
 
 ## Revision
 
-- Operator UI/controller source: `3d10482dd04bd163d44ff230bdb6ea71f61070c4`.
+- Operator UI/controller source: `6c27156de8f4744c08cf7fefde76b41763c0910d`.
 - Patched host source: `f389e68b904e21dbd54343d4b71a61bac78efd11`, patches
   0035–0045, backend patch level 10.
-- Native private image: `localhost/kithmoot-node:0.1.0-rc.1-dashboard-2cf9031abeb4`.
-  Its image ID is `cae02bafcc5aa2720b637330ba0d9fdd7e7c372d30dac2a733d1abab948fbb9c`.
-  This is an app-only layer over the exact `8961b322e310` image; existing
-  supervisor, Spry, Shelter and bundle inventory bytes are unchanged.
+- Native private image: `localhost/kithmoot-node:0.1.0-rc.1-settings-a4d0e41dc7de`.
+  Its image ID is `cd49d84d9ad930e9915047f6c1f1ca73632ec1253b02c92048077104edf381ac`.
+  This private app layer adds the Spry metrics binary over the exact
+  `2cf9031abeb4` dashboard image. Supervisor and Shelter bytes are unchanged;
+  the Spry binary and its bundle inventory are updated together.
 - Bundle inventory SHA-256:
-  `75de99269b2526de412487826ae0f33c42e2fc1630cc2c8a8ab16a7d3ad63bc4`.
-- Spry source: `b5ce969030230965badf6940b610b1f834471857` (PR35).
+  `de55d4eee000afde00e8c4f5f38619d52d0c8016797fb51a975473f1787d4da0`.
+- Spry source: `aa366bb8f175fdc74c74ef6302ca0f6563b91b6a` (PR36, merged
+  as `80d2846c42320d363478cb24f532ad42dd481a35` with an identical source tree).
   Its independent TCP/TLS handshake limit is 64; relay allocations stay at
-  32, eight per username. Controller, host and other bundle bytes are unchanged.
-  The immediate prior `8961b322e310` image is retained for rollback.
+  32, eight per username. Controller and private metrics are updated; host
+  and other bundle bytes are unchanged. The immediate prior `2cf9031abeb4`
+  dashboard image is retained for rollback.
 - The existing dashboard frontend is retained. The real host supplies its
   session gate, identity picker and Nostr signer.
 

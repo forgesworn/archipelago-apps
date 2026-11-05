@@ -1,0 +1,230 @@
+{
+  "schema": "kithmoot-node-ui-component/1",
+  "passed": true,
+  "actualController": true,
+  "sourceRevision": "6c27156de8f4744c08cf7fefde76b41763c0910d",
+  "sourceFiles": [
+    {
+      "path": "client.mjs",
+      "sha256": "482a9d659c4af2d33be5596706b509420d147d38a64d60ebb09a07ea76a82963"
+    },
+    {
+      "path": "dashboard.mjs",
+      "sha256": "1e0476926260414c4a35f874644d27469a531c82ed3728130d4d6607ad1364b3"
+    },
+    {
+      "path": "server.mjs",
+      "sha256": "9d145b425d21aefcf56491ca2d69c01eb76838c95040a566ebf763cffee5dfd3"
+    },
+    {
+      "path": "observability.mjs",
+      "sha256": "b29b1ca8a17618c869b36b2f8a37095e3d75bc28524d1f1d4ceecf0cd478eabc"
+    },
+    {
+      "path": "settings.mjs",
+      "sha256": "167aac100a4540125092fa1427f84932c0b2606ec32b5cedfe007e4da4850b16"
+    },
+    {
+      "path": "private-state.mjs",
+      "sha256": "94dc1d529a3454eac82fb92b30d730c61de070d52a5ea630eaca95acfdd616ab"
+    },
+    {
+      "path": "limits.mjs",
+      "sha256": "44a10c8ef5e00b10131efeba4a9d14470483365a08ce6ab9ee615dfef0e0a67c"
+    },
+    {
+      "path": "relay-metrics.mjs",
+      "sha256": "f35844b0f86752b5021e493a68c4934b03b2fc309cb55993a8a393eed1fa364e"
+    },
+    {
+      "path": "build.mjs",
+      "sha256": "d1ca84f38967dd659e520c845759f262d53e98a529efb8b96ca52a10d87a1458"
+    },
+    {
+      "path": "browser-review.mjs",
+      "sha256": "52f0108045f02295da8b1856ac1e25e4de0683cc213aee5ea695d1f3f9e6d411"
+    },
+    {
+      "path": "package.json",
+      "sha256": "22885a6c1edcd004bcb0ea28bdc3d13a282bbf16436913312080ff541cf40a3e"
+    },
+    {
+      "path": "public/style.css",
+      "sha256": "f17bc4487d49fbcd8f596cd43ae9b248163671a42488fe930bf47b7963e5a8b0"
+    },
+    {
+      "path": "public/index.html",
+      "sha256": "c9a550158f8fe11c3596246312a34f32ff97e8872b4e53145bce7a5908585abf"
+    }
+  ],
+  "builtFiles": [
+    {
+      "path": "dist/controller.mjs",
+      "sha256": "1b3468d5168be392699603a8e36c5e9ab8bf8ab24db4f7d82e65c40935e38d94"
+    },
+    {
+      "path": "dist/public/client.js",
+      "sha256": "77e009c8766ed7a0b19266c629e3d2fce7228c96491e43879f330dc33c548ba0"
+    },
+    {
+      "path": "dist/public/style.css",
+      "sha256": "f17bc4487d49fbcd8f596cd43ae9b248163671a42488fe930bf47b7963e5a8b0"
+    },
+    {
+      "path": "dist/public/index.html",
+      "sha256": "c9a550158f8fe11c3596246312a34f32ff97e8872b4e53145bce7a5908585abf"
+    },
+    {
+      "path": "dist/public/nostr-provider.js",
+      "sha256": "2e54e883c6840bddaa631f1a0aab974a4f2511be855fef0e645414f3095210aa"
+    }
+  ],
+  "fixtureSigner": true,
+  "fixtureNodeAdapter": true,
+  "embeddedHostFixture": true,
+  "actualHostGate": false,
+  "actualTurn": false,
+  "uiMaintainerApproval": false,
+  "zat": "pending",
+  "screenshots": [
+    "01-sign-in-390.png",
+    "02-setup-390.png",
+    "03-setup-320.png",
+    "00-delete-before-setup.png",
+    "04-status-390.png",
+    "05-status-768.png",
+    "06-status-1440.png",
+    "07-status-large-text.png",
+    "14-controls-connection-lost-390.png",
+    "dashboard-connections-320.png",
+    "dashboard-connections-390.png",
+    "dashboard-connections-768.png",
+    "dashboard-connections-1440.png",
+    "dashboard-connections-844.png",
+    "dashboard-connections-large-text.png",
+    "dashboard-usage-320.png",
+    "dashboard-usage-390.png",
+    "dashboard-usage-768.png",
+    "dashboard-usage-1440.png",
+    "dashboard-usage-844.png",
+    "dashboard-usage-large-text.png",
+    "dashboard-settings-320.png",
+    "dashboard-settings-390.png",
+    "dashboard-settings-768.png",
+    "dashboard-settings-1440.png",
+    "dashboard-settings-844.png",
+    "dashboard-settings-large-text.png",
+    "dashboard-diagnostics-320.png",
+    "dashboard-diagnostics-390.png",
+    "dashboard-diagnostics-768.png",
+    "dashboard-diagnostics-1440.png",
+    "dashboard-diagnostics-844.png",
+    "dashboard-diagnostics-large-text.png",
+    "dashboard-diagnostics-failed-443.png",
+    "dashboard-usage-unavailable.png",
+    "08-pairing-390.png",
+    "09-paused-390.png",
+    "settings-editor-320.png",
+    "settings-editor-390.png",
+    "settings-editor-768.png",
+    "settings-editor-1440.png",
+    "settings-editor-844.png",
+    "settings-editor-large-text.png",
+    "settings-editor-room-rejected.png",
+    "settings-editor-conflict.png",
+    "settings-saved-paused.png",
+    "10-delete-390.png",
+    "11-delete-prepared-390.png",
+    "13-landscape.png",
+    "dashboard-diagnostics-no-blur.png",
+    "dashboard-session-expired.png",
+    "dashboard-overview-embedded-390.png",
+    "dashboard-connections-embedded-390.png",
+    "dashboard-usage-embedded-390.png",
+    "dashboard-settings-embedded-390.png",
+    "dashboard-diagnostics-embedded-390.png"
+  ],
+  "accessibility": [
+    {
+      "name": "sign-in",
+      "violations": []
+    },
+    {
+      "name": "setup",
+      "violations": []
+    },
+    {
+      "name": "unconfigured-deletion",
+      "violations": []
+    },
+    {
+      "name": "status",
+      "violations": []
+    },
+    {
+      "name": "connections",
+      "violations": []
+    },
+    {
+      "name": "usage",
+      "violations": []
+    },
+    {
+      "name": "settings",
+      "violations": []
+    },
+    {
+      "name": "diagnostics",
+      "violations": []
+    },
+    {
+      "name": "failed-check",
+      "violations": []
+    },
+    {
+      "name": "pairing",
+      "violations": []
+    },
+    {
+      "name": "settings-editor",
+      "violations": []
+    },
+    {
+      "name": "settings-editor-rejection",
+      "violations": []
+    },
+    {
+      "name": "settings-saved-rollback",
+      "violations": []
+    },
+    {
+      "name": "delete",
+      "violations": []
+    },
+    {
+      "name": "standalone-no-blur",
+      "violations": []
+    },
+    {
+      "name": "embedded-overview",
+      "violations": []
+    },
+    {
+      "name": "embedded-connections",
+      "violations": []
+    },
+    {
+      "name": "embedded-usage",
+      "violations": []
+    },
+    {
+      "name": "embedded-settings",
+      "violations": []
+    },
+    {
+      "name": "embedded-diagnostics",
+      "violations": []
+    }
+  ],
+  "pageErrors": []
+}

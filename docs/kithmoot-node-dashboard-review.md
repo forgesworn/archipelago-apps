@@ -1,145 +1,132 @@
 # KithMoot Node dashboard review, 5 November 2026
 
-The node controls now explain what is running, which limits are saved, what
-each local connection check established and which measurements are unavailable.
-The previous single status view hid the saved settings and discarded the
-doctor's individual results. Pending operations are now labelled accurately;
-access grants remain distinct from people online and TURN allocations.
+The private demo now adds editable paused-node limits and actual aggregate
+relay statistics to Overview, Connections, Usage, Settings and Diagnostics.
+Settings never edit authority, endpoints or keys. Usage separates access grants,
+active TURN allocations and stream connections; none is a count of people.
 
 **Maintainer must review and approve UI work on the Archy KithMoot Node
-Overview, Connections, Usage, Settings, Diagnostics, pairing hand-off and
-delete-everything screens before merging or approval. ZAT pending.**
-No maintainer decision or reviewed-revision approval is recorded. The existing
-draft PR remains held; no maintainer has been contacted.
+Overview, Connections, Usage, Settings and Change node limits, Diagnostics,
+pairing hand-off and delete-everything screens before merging or approval.
+ZAT pending.** No reviewed-revision approval is recorded. PR53 remains draft;
+no maintainer has been contacted.
 
-## Exact revision and access
+## Exact build and access
 
-- Dashboard source: `3d10482dd04bd163d44ff230bdb6ea71f61070c4`.
-- Draft [PR 53](https://github.com/forgesworn/archipelago-apps/pull/53).
-- [Component receipt](evidence/kithmoot-node-dashboard-20261105/component-review.json)
-  records that source revision, source and compiled-asset SHA256 values,
-  captures and accessibility results. Fixtures supply the signer, backend and
-  host canvas; HTTP authentication uses the real controller.
-- Deployed on the authorised private demo on 5 November as
-  `localhost/kithmoot-node:0.1.0-rc.1-dashboard-2cf9031abeb4`, image ID
-  `cae02bafcc5aa2720b637330ba0d9fdd7e7c372d30dac2a733d1abab948fbb9c`.
-- Open `https://demo.forgesworn.dev/dashboard` through the existing private
-  connection and launch **KithMoot Node**. Refresh the app to load the new
-  screens; approve its HTTP sign-in proof with the existing linked identity.
-  Direct access is `https://demo.forgesworn.dev:3753/` behind the same app gate.
-- [Live deployment receipt](evidence/kithmoot-node-dashboard-live-20261105/deployment.json),
-  [actual browser journey](evidence/kithmoot-node-dashboard-live-20261105/browser.json)
-  and [live status snapshot](evidence/kithmoot-node-dashboard-live-20261105/status.json)
-  identify the exact image, preserved data and measured scope. The earlier
-  `8961b322e310` image remains available for rollback.
+- Controller source: `6c27156de8f4744c08cf7fefde76b41763c0910d`.
+- Spry source: `aa366bb8f175fdc74c74ef6302ca0f6563b91b6a`,
+  [backend PR36](https://github.com/forgesworn/spry-turn/pull/36).
+- Draft [app PR53](https://github.com/forgesworn/archipelago-apps/pull/53).
+- Private image: `localhost/kithmoot-node:0.1.0-rc.1-settings-a4d0e41dc7de`;
+  image ID `cd49d84d9ad930e9915047f6c1f1ca73632ec1253b02c92048077104edf381ac`.
+- Open <https://demo.forgesworn.dev/dashboard> through the existing private
+  connection and launch **KithMoot Node**. Refresh the app, choose the existing
+  identity and approve its HTTP sign-in proof on the linked signer.
+  Direct access is <https://demo.forgesworn.dev:3753/> behind the same app gate.
+- Keep the [management tunnel](../scripts/node-management-tunnel.sh) running;
+  see the [demo access instructions](kithmoot-node-demo-review.md).
 
-## Reproduce the component build
+## Review steps and expected results
 
-Use Node 24, check out the source revision above and install the pinned tools:
+Use an idle node for pause/settings checks. Pausing ends calls and makes rooms
+unavailable while preserving saved rooms and messages.
+
+| Screen | Steps | Expected result |
+| --- | --- | --- |
+| Overview | Sign in, inspect services, room/access/pending counts; use keyboard navigation. | Named observations and explicit unknown states. Offline access grants are not people online. Private controls expiry does not stop calls. |
+| Connections | Check both public hostnames, certificate expiry and all nine local checks, including TLS443. | Local evidence is distinguished from an outside-network call. Certificate verification stays enabled. No host certificate key is mounted. |
+| Usage | Observe two refresh samples; inspect UDP and TCP/TLS cards, gauges, payload totals, rate, drops and errors. Pause and inspect again. | Real aggregate observations, no participant addresses or room content. First/restarted/stale samples have unavailable rates. Zero remains zero. Paused relay counters are unavailable. |
+| Settings | While running, inspect saved limits and disabled Change limits. Pause on Overview, return and open Change limits. | The four setup limits are editable only when explicitly paused. Paths, endpoints, identities and room policy are fixed. |
+| Change node limits | Change Hosted rooms from4 to8 and Save settings. Inspect previous limits. Start explicitly from Overview. Pause and Restore previous limits, then Start explicitly. | Save and restore keep paused. Each start uses the saved values. Previous limits restore4 without changing room data or keys. |
+| Change node limits rejection | Try a room cap below saved rooms or storage below message-file footprint. Keep a second stale tab and save from the first. Switch the network with an unsaved form. | Unsafe reductions fail without deleting data. A stale tab cannot overwrite newer settings. Errors and connection changes preserve the draft; Cancel/refresh reloads current values. |
+| Diagnostics | Inspect checks, copy support report, exercise unavailable backend fixture. | Fixed aggregate summary excludes secrets, identities, room IDs and participant addresses. No automatic upload, history or external-call pass. |
+| Pairing/deletion | Open pairing and return. Prepare/cancel deletion only with an empty test node. | Single-use pairing expiry and existing durable deletion freeze remain. Never delete the occupied demo room. |
+
+## Measurement meanings
+
+Forwarded bytes are accepted relay payload in both directions, excluding
+STUN/TURN/TLS headers. Stream output counts when queued and does not prove
+remote delivery or billable WAN usage. TCP and TLS share one bucket, including
+host-terminated TLS; individual listener ports cannot be inferred. Stream
+errors cover fatal relay framing, queue and socket errors; ordinary EOF and
+revocation are excluded. These are not a count of failed calls or host TLS
+handshake failures. Refused streams are connection-capacity refusals.
+
+The controller signs only the fixed read-only loopback status request using
+its existing service identity/pairing. New detailed metrics are not exposed by
+the public status route. Samples contain an internal per-start epoch and
+monotonic age; the browser gets only projected aggregates. No history is stored.
+Rates reset on outage/restart/counter rollback; unknown is never fabricated zero.
+
+## Component verification
+
+[Component receipt](evidence/kithmoot-node-settings-metrics-20261105/component-review.json):
+32 controller/control-socket/observation/settings tests; five private packaging
+tests; production build;
+56 browser captures;20 WCAG A/AA scans with no reported violations or page
+errors. Captures cover320/390/768/1440px, landscape,200% text, reduced motion,
+no-blur, actual fixture iframe, settings rejection/conflict and manual restore.
+The receipt binds source and compiled assets to SHA256 values. Fixture signer,
+backend and host observations are distinguished from the real private demo.
+
+Reproduce with Node24 and pinned dependencies:
 
 ```sh
-npm ci --prefix tests/smoke --ignore-scripts --no-audit --no-fund
 npm ci --prefix experimental/kithmoot-node --ignore-scripts --no-audit --no-fund
-cd experimental/kithmoot-node
-npm test
-npm run build
-E2E_KITHMOOT_NODE_UI=component-review node browser-review.mjs
+npm ci --prefix tests/smoke --ignore-scripts --no-audit --no-fund
+npm --prefix experimental/kithmoot-node test
+npm --prefix experimental/kithmoot-node run build
+E2E_KITHMOOT_NODE_UI=component-review node experimental/kithmoot-node/browser-review.mjs
 ```
 
-The browser runner uses loopback HTTP behind intercepted fixture HTTPS URLs;
-it does not bypass the production HTTPS requirement, access the real signer,
-start real backends or create room grants. It closes its browser and HTTP
-listener even on failure. Playwright Chromium must be installed locally; the
-existing pinned `playwright-core` install command can supply it if absent.
-The private image preparation instructions remain in the
-[package README](../experimental/kithmoot-node/README.md). This update neither
-publishes Shelter nor changes the node's network routes or privileges.
+Review captures:
 
-## Screens and expected results
+- [Settings editor, narrow](evidence/kithmoot-node-settings-metrics-20261105/settings-editor-390.png)
+- [Settings editor, enlarged text](evidence/kithmoot-node-settings-metrics-20261105/settings-editor-large-text.png)
+- [Unsafe reduction](evidence/kithmoot-node-settings-metrics-20261105/settings-editor-room-rejected.png)
+- [Stale revision](evidence/kithmoot-node-settings-metrics-20261105/settings-editor-conflict.png)
+- [Saved, paused and previous limits](evidence/kithmoot-node-settings-metrics-20261105/settings-saved-paused.png)
+- [Transport stats](evidence/kithmoot-node-settings-metrics-20261105/dashboard-usage-390.png)
 
-| Screen | Review steps | Expected result |
-| --- | --- | --- |
-| Overview | Sign in, inspect the four services and access summary. Switch views using only Tab and Enter. Pause/start. | Controls, room supervisor, Spry and Shelter have named evidence and explicit unknown states. Only reported versions and uptimes appear. Five access grants do not mean five people online. Pause warns that it ends calls, while preserving data. Background refresh retains keyboard focus. |
-| Connections | Inspect private controls, public room service, both hostnames and certificate expiry. Examine all nine local checks, especially TLS 443. | Private management loss is distinct from room/call failure. Results and timestamps describe local observations. No outside-network call is marked passed automatically. Certificate trust remains enabled; no host key is mounted. |
-| Usage | Read container memory/CPU, message storage, free disk and saved caps. Repeat with unknown counters and a stopped node. | CPU uses 100% per core and needs two samples. Unknown data remains unavailable; zero remains zero. Room storage has its separate configured cap. Bandwidth and allocation counts are explicitly unmeasured/unreported. No participant addresses or call content appear. |
-| Settings | Compare the four saved limits with setup. Read the call-route, file and hosting explanations. | Actual saved values are visible after setup. This revision does not edit live limits or offer an unimplemented action. Pairing points to Overview; room closure and removal remain in KithMoot. |
-| Diagnostics | Fail the TLS 443 check, refresh, then copy the report. Inspect it before sharing. | The failed check is named. Local success is not public media acceptance. Export contains the declared aggregate summary, no keys, pairing link, identity, room ID or token. Nothing is uploaded automatically. |
-| Pairing | Pair from Overview, open/copy the private link, then choose Done. | Existing one-use link flow is retained. Returning restores focus to Pair. The code expires within six minutes and is not included in diagnostics. |
-| Deletion | Open deletion from Settings. Keep the node once; prepare deletion, then cancel. | Keep restores focus to Delete. Preparation returns to Overview where Cancel deletion is immediately visible. Existing room/operation freeze and host teardown checks still govern destructive deletion. |
-| Controls recovery | Drop one status fetch and retry. Expire the controls session. | A private-controls connection message appears and is cleared by a successful refresh. An expired session returns to sign-in and does not stop the node. |
+The app retains its existing semantic Archy tokens, dark/glass/orange baseline,
+4px layout,48px controls, visible focus and transparent embedded canvas with
+local readable surfaces. No host shell, fonts, wallpaper or UI kit is added.
+The current official Archy design skill/contract and local maintainer feedback
+were checked. The composed host still has its pre-existing viewport zoom
+restriction; do not describe fixture accessibility results as whole-host proof.
 
-## Captures and design decisions
+## Private delivery and remaining gates
 
-- [Overview, 390px](evidence/kithmoot-node-dashboard-20261105/04-status-390.png)
-- [Connections, 390px](evidence/kithmoot-node-dashboard-20261105/dashboard-connections-390.png)
-- [Usage, 390px](evidence/kithmoot-node-dashboard-20261105/dashboard-usage-390.png)
-- [Settings, 390px](evidence/kithmoot-node-dashboard-20261105/dashboard-settings-390.png)
-- [Diagnostics, 390px](evidence/kithmoot-node-dashboard-20261105/dashboard-diagnostics-390.png)
-- [Failed TLS 443 check](evidence/kithmoot-node-dashboard-20261105/dashboard-diagnostics-failed-443.png)
-- [Unavailable counters](evidence/kithmoot-node-dashboard-20261105/dashboard-usage-unavailable.png)
-- [Usage at enlarged text](evidence/kithmoot-node-dashboard-20261105/dashboard-usage-large-text.png)
-- [Actual iframe, Overview](evidence/kithmoot-node-dashboard-20261105/dashboard-overview-embedded-390.png)
-- [Actual iframe, Diagnostics without blur](evidence/kithmoot-node-dashboard-20261105/dashboard-diagnostics-embedded-390.png)
-- [Expired controls session](evidence/kithmoot-node-dashboard-20261105/dashboard-session-expired.png)
+The guarded image update preserved room/account custody, settings/secrets,
+Shelter/supervisor bytes, host binary/nginx and the other five containers.
+The Spry binary and its bundle inventory changed together. No active node relay
+sockets existed before switching. The previous image and a root-only cold data
+backup are retained; rollback restores image references without overwriting
+new room data. No source, private image or installer was published for Shelter.
 
-The closest reference is this app's existing setup/status card and local
-buttons. The small vanilla-JavaScript candidate reuses those controls and
-semantic `--archy-*` tokens; it does not import dashboard CSS, a new UI kit,
-fonts, wallpaper or outer navigation. The current upstream Archipelago design
-skill and contract were read on 5 November. New navigation uses real buttons,
-`aria-current`, 48px targets, visible focus and a wrapping 4px layout rhythm.
+[Live deployment](evidence/kithmoot-node-settings-metrics-live-20261105/deployment.json),
+[browser receipt](evidence/kithmoot-node-settings-metrics-live-20261105/browser.json),
+[settings transaction](evidence/kithmoot-node-settings-metrics-live-20261105/settings.json)
+and [actual status](evidence/kithmoot-node-settings-metrics-live-20261105/status.json)
+record the real dashboard gate, linked signer,24 captures and exact static
+asset readback. Saving4 to8 rooms kept paused, Start applied8, manual Restore
+kept paused and a final explicit Start returned to4. Room and access counts
+were preserved. Live relay payload/rate were zero while idle, rather than a
+synthetic call result. Gauges and counters were present; socket regressions
+separately verify nonzero UDP/stream forwarding, drops and errors.
 
-Embedded text needs a readable surface over host wallpaper. The existing
-content surface uses a stronger dark scrim, with matching local header/footer
-surfaces; the surrounding canvas remains transparent. Standalone and no-blur
-fallbacks retain the existing dark baseline. This deliberate local treatment
-needs maintainer review. The component test uses a real same-origin iframe
-against a simulated dark host, rather than treating a CSS class on a standalone
-page as a complete embedded test.
+Five actual composed-host scans retain only the existing viewport zoom
+restriction; no violation was reported inside the node iframe. There were no
+page errors. Actual narrow captures are desktop Chromium, not a physical phone.
 
-## Verification and remaining gates
+Live maintainer captures:
 
-The revision passes 23 controller, local-control and observation tests, the
-production bundle build and five private packaging tests. The browser journey
-passes 47 captures, 17 WCAG A/AA scans with zero reported violations and zero
-page errors. Viewports include 320/390/768/1440px, landscape, enlarged text,
-reduced motion, standalone, actual iframe and no-blur states. Source hashes in
-the receipt bind those results to the build; these are component observations.
+- [Editor](evidence/kithmoot-node-settings-metrics-live-20261105/settings-editor-390.png)
+- [Saved and paused](evidence/kithmoot-node-settings-metrics-live-20261105/settings-saved-paused-390.png)
+- [Restored and paused](evidence/kithmoot-node-settings-metrics-live-20261105/settings-restored-paused-390.png)
+- [Actual relay stats](evidence/kithmoot-node-settings-metrics-live-20261105/usage-390.png)
 
-The guarded private update verified the existing room and account custody,
-saved settings and secrets, unchanged supervisor/Spry/Shelter bytes, unchanged
-host binary/nginx, and the same five unrelated containers. No node relay
-sockets were active before the switch. A cold backup and the prior image are
-retained privately for rollback; the live database was not migrated or reset.
-
-The real dashboard session, existing linked signer and authenticated embedded
-views passed at 1440px and 390px, including scrolling to footer actions. All
-five served static files matched the recorded build hashes. Actual controller
-status reported all four services responding, nine local checks passed, CPU
-and memory, message storage, filesystem free space and trusted certificate
-expiry. The [live browser receipt](evidence/kithmoot-node-dashboard-live-20261105/browser.json)
-records 21 captures and no page errors.
-
-Five scans of the actual composed host each reported its existing
-`meta-viewport` zoom restriction. No violation was reported inside the node
-iframe. This host finding is retained, not suppressed or represented as a clean
-whole-host accessibility result. The 17 clean fixture scans above remain
-component evidence. New media-call, physical-phone, commercial-VPN and
-Companion WebView acceptance are not claimed by this dashboard update.
-
-Live captures for the maintainer:
-
-- [Overview, desktop](evidence/kithmoot-node-dashboard-live-20261105/overview-1440.png)
-- [Usage, phone width](evidence/kithmoot-node-dashboard-live-20261105/usage-390.png)
-- [Usage footer reached by scrolling](evidence/kithmoot-node-dashboard-live-20261105/usage-390-bottom.png)
-- [Connections, desktop](evidence/kithmoot-node-dashboard-live-20261105/connections-1440.png)
-- [Diagnostics, phone width](evidence/kithmoot-node-dashboard-live-20261105/diagnostics-390.png)
-
-The phone-sized run uses desktop Chromium at a narrow viewport. It is not a
-physical mobile browser result. Maintainer approval of this exact revision
-remains pending; the PR is still draft and unmerged.
-
-Live bandwidth, allocation counters, history, client call-quality diagnostics
-and editing limits after setup remain future backend/UI work. This revision
-shows those limits honestly and does not expose arbitrary configuration,
-commands, host paths, logs or container administration to the browser.
+Actual dashboard, linked-signer, metrics and save/start/restore/start evidence
+is separate from component results. Physical-phone, commercial-VPN,
+new outside-network media and Companion WebView acceptance remain unclaimed.
+Maintainer review of this material UI revision remains pending.
