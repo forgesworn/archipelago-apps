@@ -14,11 +14,11 @@ no maintainer has been contacted.
 ## Exact build and access
 
 - Controller source: `6c27156de8f4744c08cf7fefde76b41763c0910d`.
-- Spry source: `61b6398da372898dcd684acecde12deb32cea621`,
-  [backend PR37](https://github.com/forgesworn/spry-turn/pull/37).
+- Spry source: `31c728f947fda91b8500748edf5ff913452aec38`,
+  [backend PR38](https://github.com/forgesworn/spry-turn/pull/38).
 - Draft [app PR53](https://github.com/forgesworn/archipelago-apps/pull/53).
-- Private image: `localhost/kithmoot-node:0.1.0-rc.1-leases-282bce1f6b2d`;
-  image ID `f3ceaf005904fcbd0e207cddec09dda7d2701d734f9cbd33b343e21ded2b16cc`.
+- Private image: `localhost/kithmoot-node:0.1.0-rc.1-capacity-8b815bbabe06`;
+  image ID `2ccdc2b17784f9df107080279c112e565a5a1615f85336e92d6842c1ecf08ef5`.
 - Open <https://demo.forgesworn.dev/dashboard> through the existing private
   connection and launch **KithMoot Node**. Refresh the app, choose the existing
   identity and approve its HTTP sign-in proof on the linked signer.
@@ -26,14 +26,15 @@ no maintainer has been contacted.
 - Keep the [management tunnel](../scripts/node-management-tunnel.sh) running;
   see the [demo access instructions](kithmoot-node-demo-review.md).
 
-The controller and all UI/static assets are unchanged. This backend-only layer
-shortens renewable TURN allocation leases to 30 seconds; the separate login
-still lasts at most five minutes. Orphaned VPN/NAT routes can release relay
-ports before that login expires. The allocation and stream limits are unchanged.
-The [guarded deployment receipt](evidence/kithmoot-node-short-leases-live-20261105/deployment.json)
-binds the current binary and bundle inventory. Earlier captures below identify
-the unchanged UI source; their image receipts remain historical. Sustained
-media qualification is recorded below.
+The controller and all UI/static assets are unchanged. The backend retains
+30-second renewable allocation leases and five-minute logins. It also reclaims
+already-expired capacity before a new Allocate and exposes separate private
+aggregate refusal counters. These additional counters do not add dashboard
+fields: the existing projection and UI remain unchanged. The limits stay at
+32 total allocations, eight per username and 64 streams.
+The [guarded deployment receipt](evidence/kithmoot-node-recovery-live-20261105/deployment.json)
+binds the current binary and inventory. Earlier captures identify the same UI
+source; their image receipts remain historical.
 
 ## Review steps and expected results
 
@@ -142,7 +143,7 @@ Companion WebView acceptance remain unclaimed. Maintainer review of this
 material UI revision remains pending.
 
 
-## Sustained browser continuity on the current backend
+## Earlier short-lease continuity qualification
 
 The [actual browser record](evidence/kithmoot-node-short-leases-live-20261105/sustained-media.json)
 passes 736 seconds with 611 seconds after final confirmed recovery. VPN-on,
@@ -167,3 +168,36 @@ force; short leases bound abandoned occupancy rather than remove the ceiling.
 confirms the task's VPN, carrier, observer, build source/target and temporary
 context were removed, with the node ready and unrelated apps unchanged.
 Maintainer ZAT of the named screens and exact current candidate remains pending.
+
+
+## Current client and backend qualification
+
+[Public release readback](evidence/kithmoot-node-recovery-live-20261105/public-web-assets.json)
+records release `20261105T143709Z`, source `6b5147d7`, merged through
+[KithMoot PR709](https://github.com/forgesworn/kithmoot/pull/709). The web app
+now defers a generic native ICE restart and its offer until node credential
+recovery can rebuild or resume that connection. The website and signed native
+update feeds are unchanged; this is not a new desktop or Android package.
+
+The [comparison record](evidence/kithmoot-node-recovery-live-20261105/sustained-media.json)
+retains the backend-only run, isolated client candidate and unmodified public
+run. The final public run passes 749 seconds, including 610 seconds after final
+recovery, with advancing audio/video and displayed frames at 269 checked
+steady samples per guest. VPN on/off and outage recover in
+16.556/16.894/2.088 seconds. Both guests renew beyond old login expiry and
+expose no TURN486/508 events. No new whole-server allocation refusals occur;
+28 node-wide per-login refusals remain unattributed. Requests are not failed
+calls. Limits are unchanged and wider capacity remains unqualified.
+
+The owner reported updating the managing room tab before this run. Participant
+activity outside the controlled pair is not fixed, so aggregate differences
+are not a causal capacity comparison. Synthetic capture, a shared controlled
+WireGuard/NAT carrier and browser UDP restrictions do not qualify physical
+phones, independent NATs, commercial VPNs or perceptual smoothness. Maintainer
+ZAT of the named screens and exact current UI remains pending.
+
+[Final cleanup readback](evidence/kithmoot-node-recovery-live-20261105/cleanup.json)
+records the test browsers, networking fixtures, carrier, observers and SSH11080
+closed, with saved settings/keys and the other five apps unchanged. The node
+remains paired and ready. Original admitted visitor files and owner1080 were
+untouched; the previous private image and cold backup remain for rollback.

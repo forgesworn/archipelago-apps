@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "ownRemoteVpnContainerRemoved": true,
+  "ownRemoteVpnImageRemoved": true,
+  "ownCarrierStopped": true,
+  "ownObserversStopped": [],
+  "taskWireGuardKeyFilesRemoved": true,
+  "ownBackendSourceAndTargetRemoved": true,
+  "ownRootlessBuildContextRemoved": true,
+  "settingsAndSecretsUnchanged": true,
+  "otherFiveContainersUnchanged": true,
+  "currentImageRetained": true,
+  "rollbackImageAndColdBackupRetained": true,
+  "status": {
+    "ready": true,
+    "paired": true,
+    "rooms": 1,
+    "devices": 10,
+    "pending": 0
+  },
+  "localNetworkingFixtureRemoved": true,
+  "ssh11080Stopped": true,
+  "owner1080Untouched": true,
+  "testBrowsersClosedByHarness": true,
+  "observersExitedAfterBoundedSampling": true,
+  "originalAdmittedVisitorFilesUntouched": true
+}

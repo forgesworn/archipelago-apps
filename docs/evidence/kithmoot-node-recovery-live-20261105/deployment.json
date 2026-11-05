@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "sourceRevision": "6c27156de8f4744c08cf7fefde76b41763c0910d",
+  "image": "localhost/kithmoot-node:0.1.0-rc.1-capacity-8b815bbabe06",
+  "imageId": "2ccdc2b17784f9df107080279c112e565a5a1615f85336e92d6842c1ecf08ef5",
+  "parentImage": "localhost/kithmoot-node:0.1.0-rc.1-leases-282bce1f6b2d",
+  "parentId": "f3ceaf005904fcbd0e207cddec09dda7d2701d734f9cbd33b343e21ded2b16cc",
+  "activeRelaySocketsBeforeSwitch": 0,
+  "ownerPreserved": true,
+  "savedRoomsPreserved": true,
+  "settingsAndSecretsUnchanged": true,
+  "otherFiveContainersUnchanged": true,
+  "hostBinaryAndNginxUnchanged": true,
+  "supervisorAndShelterUnchanged": true,
+  "sprySourceRevision": "31c728f947fda91b8500748edf5ff913452aec38",
+  "spryBinaryExact": true,
+  "bundleInventoryExact": true,
+  "runtimeAssetsExact": true,
+  "status": {
+    "ready": true,
+    "rooms": 1,
+    "devices": 10,
+    "pending": 0,
+    "paired": true
+  },
+  "rollbackImageRetained": true,
+  "zat": "pending",
+  "spryMergedRevision": "937e4c28497776db7bc8e81bb56a68fe05e2921d",
+  "spryBinarySha256": "8b815bbabe06f51ee41e9fd8e8d3831a1c08264980b479ff3b44de4628a7ffd8",
+  "bundleInventorySha256": "3179056798a0bfc5c280fb240982afb3668a297df60cf6ece08fd2cbef1a365e",
+  "controllerSourceRevision": "6c27156de8f4744c08cf7fefde76b41763c0910d",
+  "admittedDeviceCountIsPeople": false
+}

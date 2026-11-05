@@ -1,7 +1,7 @@
 # KithMoot Node: Archy maintainer review
 
-The 5 November dashboard expansion is ready for component review at source
-`3d10482dd04bd163d44ff230bdb6ea71f61070c4`. Its new screens, exact assets,
+The 5 November dashboard and limit controls are ready for review at UI/controller
+source `6c27156de8f4744c08cf7fefde76b41763c0910d`. Its new screens, exact assets,
 captures, setup and expected results are in the
 [dashboard review pack](kithmoot-node-dashboard-review.md). The expanded dashboard is now on the authorised private demo with actual
 linked-signer and live-metric evidence. It remains unmerged pending ZAT.
@@ -15,7 +15,8 @@ ship instructions and automated checks do not satisfy this gate.
 ## Exact candidate
 
 - Earlier UI/controller source: `bd7d0c8f5077d1ceef6b26f4c768052a5ffe5066`.
-- Current dashboard source: `3d10482dd04bd163d44ff230bdb6ea71f61070c4`;
+- Earlier dashboard source: `3d10482dd04bd163d44ff230bdb6ea71f61070c4`.
+- Current UI/controller source: `6c27156de8f4744c08cf7fefde76b41763c0910d`;
   see the [live review pack](kithmoot-node-dashboard-review.md) for the exact
   private image, browser captures and retained host accessibility finding.
 - Draft [PR 53](https://github.com/forgesworn/archipelago-apps/pull/53).
@@ -128,9 +129,11 @@ no new native UI release is claimed. The Android candidate's local matrix
 passed 4,014 tests with one opt-in skip. Official Archy UI acceptance remains
 pending for this review revision.
 
-The current public web release is `20261104T112032Z` (`a49a2ac5`), verified
-against its index, entry and main scripts using normal TLS. The current private
-review image and backend-only short-lease update are identified in the
+The current public web release is `20261105T143709Z` (`6b5147d7`), verified
+against its index, entry, main and service worker with normal TLS on both
+domains. Its 749-second production call qualification and remaining limits are
+recorded in the dashboard pack. The current private image and backend-only
+capacity-reclamation update are identified in the
 [demo review pack](kithmoot-node-demo-review.md). Its controller/UI remains
 `6c27156d` and its host remains `f389e68b`. Historical qualification receipts
 remain separate from this candidate. Physical mobile remains unavailable;

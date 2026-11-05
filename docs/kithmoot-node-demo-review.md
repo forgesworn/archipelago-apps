@@ -7,13 +7,15 @@ to their original values and the node is running and ready. The
 [dashboard review pack](kithmoot-node-dashboard-review.md) and
 [live deployment receipt](evidence/kithmoot-node-settings-metrics-live-20261105/deployment.json)
 identify the UI source, test steps, captures, limits and pending ZAT.
-A later backend-only short-lease image is the current candidate; its
-[guarded deployment](evidence/kithmoot-node-short-leases-live-20261105/deployment.json)
-records unchanged UI/static assets, saved room/admissions and other apps.
-The [sustained browser record](evidence/kithmoot-node-short-leases-live-20261105/sustained-media.json)
-passes a 736-second controlled continuity run, including 611 seconds after
-recovery. Earlier recovery failures, transient quota errors and remaining
-quality/device limits are retained in that record and the dashboard pack.
+A later backend-only capacity-reclamation image is the current candidate. Its
+[guarded deployment](evidence/kithmoot-node-recovery-live-20261105/deployment.json)
+records unchanged UI/static assets, saved rooms/admissions and other apps.
+The [current comparison](evidence/kithmoot-node-recovery-live-20261105/sustained-media.json)
+retains the earlier renderer control and client candidate, then verifies the
+new public renderer for 749 seconds, including 610 seconds after final recovery.
+Browser-exposed allocation errors and whole-server refusals are zero in that
+public case; node-wide per-login refusals and device/quality limits remain
+explicit. The earlier 736-second short-lease result remains historical.
 
 The earlier setup, pairing hand-off, pause/start and deletion
 preparation/cancellation checks remain historical baseline evidence in the
@@ -83,21 +85,21 @@ separate when diagnosing VPN changes.
 - Operator UI/controller source: `6c27156de8f4744c08cf7fefde76b41763c0910d`.
 - Patched host source: `f389e68b904e21dbd54343d4b71a61bac78efd11`, patches
   0035–0045, backend patch level 10.
-- Native private image: `localhost/kithmoot-node:0.1.0-rc.1-leases-282bce1f6b2d`.
-  Its image ID is `f3ceaf005904fcbd0e207cddec09dda7d2701d734f9cbd33b343e21ded2b16cc`.
-  This private app layer adds the short-lease Spry binary over the exact
-  `a4d0e41dc7de` settings/metrics image. Supervisor and Shelter bytes are unchanged;
+- Native private image: `localhost/kithmoot-node:0.1.0-rc.1-capacity-8b815bbabe06`.
+  Its image ID is `2ccdc2b17784f9df107080279c112e565a5a1615f85336e92d6842c1ecf08ef5`.
+  This private app layer adds the capacity-reclamation Spry binary over the
+  exact `f3ceaf005904` short-lease image. Supervisor and Shelter bytes are unchanged;
   the Spry binary and its bundle inventory are updated together.
 - Bundle inventory SHA-256:
-  `b5b20be14a391fd0888afe7e6180212bc73e3ba85ea9348b0f0c9a785ca25abc`.
-- Spry source: `61b6398da372898dcd684acecde12deb32cea621`,
-  [PR37](https://github.com/forgesworn/spry-turn/pull/37), merged as
-  `b7c291beff42ef970d6f536f0fe8ae3df3a76134` with the identical source tree, based on the
-  metrics implementation merged in PR36. Private allocation leases are 30
+  `3179056798a0bfc5c280fb240982afb3668a297df60cf6ece08fd2cbef1a365e`.
+- Spry source: `31c728f947fda91b8500748edf5ff913452aec38`,
+  [PR38](https://github.com/forgesworn/spry-turn/pull/38), merged as
+  `937e4c28497776db7bc8e81bb56a68fe05e2921d`. Compiled source is identical;
+  the later documentation commit clarifies refusal-counter semantics. Private allocation leases are 30
   seconds and refreshable; TURN logins remain bounded at five minutes.
   The independent TCP/TLS handshake limit remains 64 and allocations remain
   32, eight per username. Controller, host and other bundle bytes are unchanged.
-  The prior `a4d0e41dc7de` image and a cold data backup are retained for rollback.
+  The immediate prior `f3ceaf005904` image and a cold data backup are retained for rollback.
 - The existing dashboard frontend is retained. The real host supplies its
   session gate, identity picker and Nostr signer.
 
@@ -136,7 +138,8 @@ before merging or approval. ZAT pending.** No maintainer message has been sent.
 
 Web pairing was first verified from merge `2c1977dacad883d730bd7ec6cfc9c66dbfe99486`
 in release `20261103T101924Z`. The current web deployment is
-`0102c468d663ec80aa8da3260bbb1d4295e18f1d`, release `20261104T061508Z`.
+`6b5147d7f36f830943361e8c94e8f745759cbb35`, release `20261105T143709Z`
+(merged through `41a1fe4731dc6e400b778b57273959119313a13b`).
 Its public index, entry script and main script match the qualified local build
 byte for byte. It includes authenticated socket probes, bounded subscription
 recovery, fixed media slots and fresh TURN allocations. An established remote
@@ -299,3 +302,9 @@ scans reported the host's pre-existing viewport zoom restriction, with no
 reported node-frame violation. Physical mobile browsers, Companion WebViews
 and new outside-network media are separate gates. No new room, grant, pairing
 code, pause or deletion was issued by this live UI journey.
+
+[Final cleanup readback](evidence/kithmoot-node-recovery-live-20261105/cleanup.json)
+records the test browsers, networking fixtures, carrier, observers and SSH11080
+closed, with saved settings/keys and the other five apps unchanged. The node
+remains paired and ready. Original admitted visitor files and owner1080 were
+untouched; the previous private image and cold backup remain for rollback.
