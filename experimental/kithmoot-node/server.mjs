@@ -7,6 +7,7 @@ import { performance } from 'node:perf_hooks'
 import { connect } from 'node:net'
 import { verifyEvent } from 'nostr-tools/pure'
 import QRCode from 'qrcode'
+import { healthReport, resourceSampler, shelterObservation, certificateObservation, dashboardSnapshot } from './observability.mjs'
 
 const KEY = /^[a-f0-9]{64}$/
 const STATE = '/var/lib/kithmoot-node'
@@ -69,11 +70,20 @@ export class NodeProcess {
   #queue = Promise.resolve()
   #status
   #doctor
-  constructor(facts, secrets, state = STATE) {
+  #observations
+  #sample
+  #poll
+  #startedAt
+  #runtime
+  constructor(facts, secrets, state = STATE, runtime = {}) {
     this.facts = facts; this.secrets = secrets; this.state = state
+    // Internal adapters for exercising process/probe failures. HTTP inputs
+    // never select commands, executable paths or observation destinations.
+    this.#runtime = runtime
     const info = lstatSync(state)
     if (!info.isDirectory() || info.uid !== process.getuid() || info.mode & 0o022) throw Error('Node data ownership needs attention')
     chmodSync(state, 0o700)
+    this.#sample = resourceSampler(state)
   }
   #serial(work) { const result = this.#queue.then(work); this.#queue = result.catch(() => {}); return result }
   #neverRan() {
@@ -87,6 +97,7 @@ export class NodeProcess {
     })
   }
   async #command(op, extra = [], timeout = 20000) {
+    if (this.#runtime.command) return this.#runtime.command(op, extra, timeout)
     return new Promise((resolve, reject) => {
       const child = spawn(BASE + '/kithmoot-node', [op, '--state', this.state, ...extra], {
         env: { PATH: '/usr/bin:/bin', ...this.secrets }, detached: true, stdio: ['ignore', 'pipe', 'ignore'] })
@@ -110,14 +121,15 @@ export class NodeProcess {
       if (saved.host !== this.facts.host || saved.relayIp !== this.facts.address || !saved.tlsGate
         || saved.deskPort !== 3750 || saved.spryPort !== 3751 || saved.shelterPort !== 3752) throw new Refused(409, 'configuration-review-required')
       rmSync(join(this.state, 'ui-paused'), { force: true })
-      this.#child = spawn(BASE + '/kithmoot-node', ['run', '--state', this.state], {
+      this.#child = (this.#runtime.launch ?? spawn)(BASE + '/kithmoot-node', ['run', '--state', this.state], {
         env: { PATH: '/usr/bin:/bin', ...this.secrets }, detached: true, stdio: 'ignore' })
       const current = this.#child
+      this.#startedAt = performance.now()
       current.once('error', () => { if (this.#child === current) this.#child = undefined })
       current.once('exit', () => { if (this.#child === current) this.#child = undefined; this.#status = undefined; this.#doctor = undefined })
       await sleep(100)
       if (!this.#child || this.#child.exitCode !== null) throw new Refused(503, 'node-unavailable')
-      this.#status = undefined; this.#doctor = undefined
+      this.#status = undefined; this.#doctor = undefined; this.#observations = undefined
     })
   }
   setup(value) {
@@ -135,28 +147,53 @@ export class NodeProcess {
       return { configured: true }
     }).then(async value => { await this.start(); return value })
   }
-  async status() {
+  status() {
+    // Multiple tabs share one bounded probe; polling never fans out doctors.
+    if (!this.#poll) this.#poll = this.#readStatus().finally(() => { this.#poll = undefined })
+    return this.#poll
+  }
+  async #readStatus() {
     const configured = existsSync(join(this.state, 'node.json')) && !existsSync(join(this.state, 'initialising'))
     const setupPending = existsSync(join(this.state, 'ui-configuration.json')) && !configured
-    const base = { v: 1, host: this.facts.host, configured, setupPending, running: !!this.#child, deleting: deletionPrepared(this.state),
+    const base = { v: 1, host: this.facts.host, configured, setupPending, running: !!this.#child, paused: existsSync(join(this.state, 'ui-paused')), deleting: deletionPrepared(this.state),
       ...(configured || setupPending ? { limits: (() => { const value = readPrivate(join(this.state, configured ? 'node.json' : 'ui-configuration.json')); return {
         maxRooms: value.maxRooms, maxBytes: value.maxBytes, minFreeBytes: value.minFreeBytes, aggregateBytesPerSecond: value.aggregateBytesPerSecond } })() } : {}) }
-    if (!configured || !this.#child) return { ...base, ready: false }
-    if (!this.#status || this.#status.until < performance.now()) {
-      const reply = await this.#command('status'); let result
-      try { result = JSON.parse(reply.output) } catch { throw new Refused(503, 'node-unavailable') }
-      if (result.ok !== true || !result.result || result.result.v !== 1) throw new Refused(503, 'node-unavailable')
-      this.#status = { until: performance.now() + 2000, result: result.result }
+    const current = this.#child
+    let observations = this.#observations
+    if (!observations || observations.until < performance.now()) {
+      const [resources, shelter, certificate] = this.#runtime.observe ? await this.#runtime.observe() : await Promise.all([
+        this.#sample(), configured && current ? shelterObservation(this.state).catch(() => null) : null,
+        configured ? certificateObservation(this.facts) : null
+      ])
+      observations = { until: performance.now() + 10000, resources, shelter, certificate }
+      if (current === this.#child) this.#observations = observations
     }
-    const state = this.#status.result
-    for (const field of ['rooms', 'devices', 'pending']) if (!Number.isSafeInteger(state[field]) || state[field] < 0) throw new Refused(503, 'invalid-node-reply')
-    if (state.ready && (!this.#doctor || this.#doctor.until < performance.now())) {
-      const reply = await this.#command('doctor', [], 45000); let report
-      try { report = JSON.parse(reply.output) } catch { report = undefined }
-      this.#doctor = { until: performance.now() + 15000, ready: reply.code === 0 && report?.localReady === true }
+    if (current !== this.#child) return dashboardSnapshot({ base: { ...base, running: !!this.#child }, resources: observations.resources })
+    let state, problem
+    if (configured && current) {
+      try {
+        if (!this.#status || this.#status.until < performance.now()) {
+          const reply = await this.#command('status', [], 8000), result = JSON.parse(reply.output)
+          if (result.ok !== true || result.result?.v !== 1 || typeof result.result.ready !== 'boolean'
+            || ['rooms', 'devices', 'pending'].some(field => !Number.isSafeInteger(result.result[field]) || result.result[field] < 0)) throw Error('Invalid status')
+          if (current !== this.#child) return dashboardSnapshot({ base: { ...base, running: !!this.#child }, resources: observations.resources })
+          this.#status = { until: performance.now() + 2000, result: result.result }
+        }
+        state = this.#status.result
+      } catch { problem = 'supervisor-unavailable' }
+      if (!this.#doctor || this.#doctor.until < performance.now()) {
+        let report, code = 1
+        try { const reply = await this.#command('doctor', [], 45000); report = JSON.parse(reply.output); code = reply.code } catch {}
+        if (current !== this.#child) return dashboardSnapshot({ base: { ...base, running: !!this.#child }, resources: observations.resources })
+        this.#doctor = { ...healthReport(report, code, Date.now()), until: performance.now() + 15000 }
+      }
+      if (!problem && !this.#doctor.ready) problem = 'local-checks-incomplete'
     }
-    return { ...base, rooms: state.rooms, devices: state.devices, pending: state.pending, paired: state.paired === true,
-      deleting: state.deleting === true, ready: state.ready === true && this.#doctor?.ready === true }
+    // A pause/start while a probe was in flight invalidates all service evidence.
+    if (current !== this.#child) return dashboardSnapshot({ base: { ...base, running: !!this.#child }, resources: observations.resources })
+    return dashboardSnapshot({ base, state, doctor: current ? this.#doctor : undefined,
+      resources: observations.resources, shelter: current ? observations.shelter : undefined,
+      certificate: observations.certificate, startedAt: this.#startedAt, problem })
   }
   async pair() {
     return this.#serial(async () => {
@@ -216,7 +253,7 @@ export class NodeProcess {
         if (child.exitCode === null) { try { process.kill(-child.pid, 'SIGKILL') } catch {} }
         this.#child = undefined
       }
-      this.#status = undefined; this.#doctor = undefined
+      this.#status = undefined; this.#doctor = undefined; this.#observations = undefined
       return { paused: true }
     })
   }

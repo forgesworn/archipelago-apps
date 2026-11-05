@@ -1,10 +1,10 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
+import { dashboard, supportReport, escape } from './dashboard.mjs'
 
 const content = document.querySelector('#content'), notice = document.querySelector('#notice')
-const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char])
 let token, status, busy = false, view = 'status', pairing, expiryTimer, polling = false
-let activityPending = false
+let activityPending = false, dashboardPage = 'overview', returnAction
 if (window.parent !== window) document.documentElement.classList.add('embedded')
 const messages = {
   'host-identity-required': 'Choose an identity belonging to this Archy node.',
@@ -34,7 +34,14 @@ async function api(action, value = {}, activity = true) {
   if (activity) activityPending = false
   return reply.result
 }
-function mount(html) { content.innerHTML = html; content.setAttribute('aria-busy', 'false'); content.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => run(button.dataset.action))) }
+function mount(html) {
+  const active = content.contains(document.activeElement) ? document.activeElement : null
+  const focus = active?.dataset.page ? `[data-page="${active.dataset.page}"]` : active?.dataset.action ? `[data-action="${active.dataset.action}"]` : null
+  content.innerHTML = html; content.setAttribute('aria-busy', 'false')
+  content.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => run(button.dataset.action)))
+  content.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => { if (!busy) { dashboardPage = button.dataset.page; renderStatus() } }))
+  if (focus) content.querySelector(focus)?.focus({ preventScroll: true })
+}
 function renderSignIn() {
   mount('<h2>Sign in to manage your node</h2><p>Use an identity belonging to this Archy node. Pairing with KithMoot is a separate step.</p><p class="muted">These controls sign out after 30 minutes without use, or after eight hours. This does not stop your rooms or calls.</p><div class="actions"><button class="primary" data-action="sign-in">Choose identity and sign in</button></div>')
 }
@@ -53,7 +60,7 @@ async function signIn() {
     credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(10000) })
   const result = await response.json()
   if (!response.ok || !/^[A-Za-z0-9_-]{43}$/.test(result.token ?? '')) throw Error(messages[result.error] ?? 'Sign-in failed. Try again.')
-  token = result.token
+  token = result.token; dashboardPage = 'overview'
   view = 'status'; await refresh()
 }
 function renderSetup() {
@@ -72,13 +79,7 @@ function renderSetup() {
 function renderStatus() {
   if (!status.configured && status.deleting) return mount('<span class="badge">Prepared for deletion</span><h2>Return to Archy to finish</h2><p>Setup is blocked. Use Archy’s <strong>Delete app and data</strong> action, or cancel deletion below to return to setup.</p><div class="actions"><button class="primary" data-action="cancel-delete">Cancel deletion</button><button data-action="sign-out">Sign out</button></div>')
   if (!status.configured) return renderSetup()
-  const label = status.deleting ? 'Prepared for deletion' : status.ready ? 'Ready' : status.running ? 'Needs attention' : 'Paused'
-  mount(`<span class="badge ${status.ready ? 'ready' : ''}">${label}</span><h2 class="host">${escape(status.host)}</h2>
-    <p>${status.deleting ? 'New rooms and requests are blocked. Return to Archy to delete the app and its data, or cancel below.' : status.ready ? 'Your rooms and calls can use this node.' : status.running ? 'The node is running, but its local checks have not passed. Refresh its status before pairing.' : 'Start the node to make hosted rooms and calls available again.'}</p>
-    <div class="facts"><div class="fact"><strong>${status.rooms ?? '—'}</strong><span>Hosted rooms</span></div><div class="fact"><strong>${status.devices ?? '—'}</strong><span>Devices with access</span></div><div class="fact"><strong>${status.pending ?? '—'}</strong><span>Pending requests</span></div><div class="fact"><strong>${status.paired ? 'Paired' : 'Unpaired'}</strong><span>Your KithMoot account</span></div></div>
-    <p class="muted">Access includes offline devices. A device in two rooms is counted twice. Open a room in KithMoot to see who is there now.</p>
-    <div class="actions">${status.deleting ? '<button class="primary" data-action="cancel-delete">Cancel deletion</button>' : status.running ? `<button class="primary" data-action="pair" ${status.ready ? '' : 'disabled'}>${status.paired ? 'Pair KithMoot on another device' : 'Pair with KithMoot'}</button><button data-action="pause">Pause node</button>` : '<button class="primary" data-action="start">Start node</button>'}<button data-action="refresh">Refresh status</button></div>
-    <hr><p class="muted">Kicking someone and closing a room happen in KithMoot. Pausing this node keeps its saved data.</p><div class="actions"><button class="danger" data-action="delete" ${!status.deleting ? '' : 'disabled'}>Delete everything…</button><button data-action="sign-out">Sign out</button></div>`)
+  mount(dashboard(status, dashboardPage))
 }
 function renderDelete() {
   mount('<h2>Delete this node and its data</h2><p>First close every hosted room in KithMoot. Closing revokes access, ends calls, purges the room’s messages and sends the devices their self-destruct instruction.</p><p>Prepare deletion below once all rooms, devices and pending requests are gone. Then use Archy’s <strong>Delete app and data</strong> action. This screen cannot close rooms for you.</p><div class="actions"><button class="danger" data-action="prepare-delete">Check rooms and prepare deletion</button><button data-action="back">Keep node</button></div>')
@@ -91,15 +92,18 @@ function renderPairing() {
 async function refresh(activity = true) { status = await api('status', {}, activity); if (view === 'status') renderStatus() }
 async function run(action, activity = true) {
   if (busy) return
+  const focusAction = action === 'back' ? returnAction : action === 'sign-out' ? 'sign-in' : action
   busy = true; inform(''); content.setAttribute('aria-busy', 'true')
   content.querySelectorAll('button').forEach(button => { button.disabled = true })
   try {
     if (action === 'sign-in') await signIn()
     else if (action === 'sign-out') { try { await api('sign-out') } finally { token = undefined; clearPairing(); renderSignIn() } }
-    else if (action === 'delete') { view = 'delete'; renderDelete() }
+    else if (action === 'delete') { returnAction = 'delete'; view = 'delete'; renderDelete() }
     else if (action === 'back') { clearPairing(); view = 'status'; await refresh() }
+    else if (action === 'copy-diagnostics') { await navigator.clipboard.writeText(supportReport(status)); inform('Diagnostics copied. Review the report before sharing it.') }
     else if (action === 'copy-pair') { await navigator.clipboard.writeText(pairing.link); inform('Pairing link copied. Keep it private.') }
     else if (action === 'pair') {
+      returnAction = 'pair'
       pairing = await api('pair'); view = 'pair'; renderPairing()
       clearTimeout(expiryTimer)
       expiryTimer = setTimeout(() => { clearPairing(); view = 'status'; renderStatus(); inform('That pairing code expired. Create a fresh code to continue.') }, Math.max(0, Math.min(360000, pairing.expiresAt * 1000 - Date.now())))
@@ -109,6 +113,7 @@ async function run(action, activity = true) {
       await api('setup', value); view = 'status'; await refresh(); inform('Node setup saved.')
     } else {
       if (action !== 'refresh') await api(action)
+      if (['prepare-delete', 'cancel-delete'].includes(action)) dashboardPage = 'overview'
       view = 'status'; await refresh(activity)
       if (action === 'prepare-delete') inform('Prepared for deletion. Return to Archy and choose Delete app and data.')
     }
@@ -120,6 +125,9 @@ async function run(action, activity = true) {
     else if (token && view === 'delete') renderDelete()
     else if (token && view === 'pair' && pairing) renderPairing()
     else if (!token) renderSignIn()
+    const target = content.querySelector(`[data-action="${focusAction}"]:not(:disabled)`)
+    if (target) target.focus({ preventScroll: true })
+    else if (['pair', 'delete', 'prepare-delete', 'cancel-delete'].includes(action)) { const heading = content.querySelector('h2'); if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }) } }
   }
 }
 for (const name of ['pointerdown', 'keydown']) document.addEventListener(name, event => { if (event.isTrusted) activityPending = true }, { passive: true })
