@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "ownedVpnAndCarrierRemoved": true,
+  "ownedObserverStopped": true,
+  "ephemeralRemoteKeysDeleted": true,
+  "ownBuildSourceTargetAndContextRemoved": true,
+  "otherFiveProductionContainersUnchanged": true,
+  "currentNodeImageExact": true,
+  "runtimeBackendInventoryExact": true,
+  "settingsAndSecretsUnchanged": true,
+  "hostAndNginxUnchanged": true,
+  "nodeReady": true,
+  "rooms": 1,
+  "devicesWithAccess": 10,
+  "pending": 0,
+  "hostFirewallChanged": false,
+  "rollbackImageAndColdBackupRetained": true
+}

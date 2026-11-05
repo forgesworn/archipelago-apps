@@ -128,13 +128,10 @@ no new native UI release is claimed. The Android candidate's local matrix
 passed 4,014 tests with one opt-in skip. Official Archy UI acceptance remains
 pending for this review revision.
 
-The current web release is `20261104T061508Z` (`0102c468`), including bounded
-media handover, prompt room-reader restoration and protection against delayed
-legacy answers after replacement. A redial timer that wakes before its shared
-retry deadline stays pending until the deadline arrives. Normal public TLS
-readback matches its index, entry and main scripts. The demo pack preserves
-historical results separately from the final production qualification.
-The private image is `8961b322e310`, with Spry TCP/TLS handshake headroom
-raised to 64 while the 32-allocation quota stays unchanged. Controller `bd7d0c8f`
-and host `f389e68b` bytes are unchanged. Physical mobile remains unavailable;
+The current public web release is `20261104T112032Z` (`a49a2ac5`), verified
+against its index, entry and main scripts using normal TLS. The current private
+review image and backend-only short-lease update are identified in the
+[demo review pack](kithmoot-node-demo-review.md). Its controller/UI remains
+`6c27156d` and its host remains `f389e68b`. Historical qualification receipts
+remain separate from this candidate. Physical mobile remains unavailable;
 official maintainer acceptance remains pending.

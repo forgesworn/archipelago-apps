@@ -6,7 +6,14 @@ gate and linked signer passed save/start/restore/start checks: settings returned
 to their original values and the node is running and ready. The
 [dashboard review pack](kithmoot-node-dashboard-review.md) and
 [live deployment receipt](evidence/kithmoot-node-settings-metrics-live-20261105/deployment.json)
-identify the current image, test steps, captures, limits and pending ZAT.
+identify the UI source, test steps, captures, limits and pending ZAT.
+A later backend-only short-lease image is the current candidate; its
+[guarded deployment](evidence/kithmoot-node-short-leases-live-20261105/deployment.json)
+records unchanged UI/static assets, saved room/admissions and other apps.
+The [sustained browser record](evidence/kithmoot-node-short-leases-live-20261105/sustained-media.json)
+passes a 736-second controlled continuity run, including 611 seconds after
+recovery. Earlier recovery failures, transient quota errors and remaining
+quality/device limits are retained in that record and the dashboard pack.
 
 The earlier setup, pairing hand-off, pause/start and deletion
 preparation/cancellation checks remain historical baseline evidence in the
@@ -76,19 +83,21 @@ separate when diagnosing VPN changes.
 - Operator UI/controller source: `6c27156de8f4744c08cf7fefde76b41763c0910d`.
 - Patched host source: `f389e68b904e21dbd54343d4b71a61bac78efd11`, patches
   0035–0045, backend patch level 10.
-- Native private image: `localhost/kithmoot-node:0.1.0-rc.1-settings-a4d0e41dc7de`.
-  Its image ID is `cd49d84d9ad930e9915047f6c1f1ca73632ec1253b02c92048077104edf381ac`.
-  This private app layer adds the Spry metrics binary over the exact
-  `2cf9031abeb4` dashboard image. Supervisor and Shelter bytes are unchanged;
+- Native private image: `localhost/kithmoot-node:0.1.0-rc.1-leases-282bce1f6b2d`.
+  Its image ID is `f3ceaf005904fcbd0e207cddec09dda7d2701d734f9cbd33b343e21ded2b16cc`.
+  This private app layer adds the short-lease Spry binary over the exact
+  `a4d0e41dc7de` settings/metrics image. Supervisor and Shelter bytes are unchanged;
   the Spry binary and its bundle inventory are updated together.
 - Bundle inventory SHA-256:
-  `de55d4eee000afde00e8c4f5f38619d52d0c8016797fb51a975473f1787d4da0`.
-- Spry source: `aa366bb8f175fdc74c74ef6302ca0f6563b91b6a` (PR36, merged
-  as `80d2846c42320d363478cb24f532ad42dd481a35` with an identical source tree).
-  Its independent TCP/TLS handshake limit is 64; relay allocations stay at
-  32, eight per username. Controller and private metrics are updated; host
-  and other bundle bytes are unchanged. The immediate prior `2cf9031abeb4`
-  dashboard image is retained for rollback.
+  `b5b20be14a391fd0888afe7e6180212bc73e3ba85ea9348b0f0c9a785ca25abc`.
+- Spry source: `61b6398da372898dcd684acecde12deb32cea621`,
+  [PR37](https://github.com/forgesworn/spry-turn/pull/37), merged as
+  `b7c291beff42ef970d6f536f0fe8ae3df3a76134` with the identical source tree, based on the
+  metrics implementation merged in PR36. Private allocation leases are 30
+  seconds and refreshable; TURN logins remain bounded at five minutes.
+  The independent TCP/TLS handshake limit remains 64 and allocations remain
+  32, eight per username. Controller, host and other bundle bytes are unchanged.
+  The prior `a4d0e41dc7de` image and a cold data backup are retained for rollback.
 - The existing dashboard frontend is retained. The real host supplies its
   session gate, identity picker and Nostr signer.
 
