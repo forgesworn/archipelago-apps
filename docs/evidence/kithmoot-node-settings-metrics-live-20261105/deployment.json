@@ -1,0 +1,52 @@
+{
+  "passed": true,
+  "sourceRevision": "6c27156de8f4744c08cf7fefde76b41763c0910d",
+  "image": "localhost/kithmoot-node:0.1.0-rc.1-settings-a4d0e41dc7de",
+  "imageId": "cd49d84d9ad930e9915047f6c1f1ca73632ec1253b02c92048077104edf381ac",
+  "parentImage": "localhost/kithmoot-node:0.1.0-rc.1-dashboard-2cf9031abeb4",
+  "parentId": "cae02bafcc5aa2720b637330ba0d9fdd7e7c372d30dac2a733d1abab948fbb9c",
+  "activeRelaySocketsBeforeSwitch": 0,
+  "ownerPreserved": true,
+  "savedRoomsPreserved": true,
+  "settingsAndSecretsUnchanged": true,
+  "otherFiveContainersUnchanged": true,
+  "hostBinaryAndNginxUnchanged": true,
+  "supervisorAndShelterUnchanged": true,
+  "sprySourceRevision": "aa366bb8f175fdc74c74ef6302ca0f6563b91b6a",
+  "spryBinaryExact": true,
+  "bundleInventoryExact": true,
+  "runtimeAssetsExact": true,
+  "status": {
+    "ready": true,
+    "rooms": 1,
+    "devices": 10,
+    "pending": 0,
+    "paired": true
+  },
+  "observations": {
+    "resources": {
+      "sampledAt": 1793871376698,
+      "memoryBytes": 79212544,
+      "memoryLimitBytes": 268435456,
+      "cpuPercent": 1.5,
+      "cpuLimitCores": 2,
+      "freeBytes": 19586809856
+    },
+    "shelter": {
+      "responding": true,
+      "leaseActive": true,
+      "storeBytes": 2085064
+    },
+    "certificate": {
+      "validUntil": 1801465455000
+    },
+    "backends": {
+      "lib/kithmoot-node.mjs": "a5b71a9313257e884615a730f60612cf112872756b9e40e6ecacb16e8fd2fbbc",
+      "bin/spry-node": "862de7cdbba2fff0e433be1781e078babf83452dab22bce9ef2cf8fb3eb3bcc2",
+      "bin/bothyd": "0f128560fe9b401977d3853f7c2a2bf0bc9eadf033b94df893809fb8ad6d5dce",
+      "release.json": "de55d4eee000afde00e8c4f5f38619d52d0c8016797fb51a975473f1787d4da0"
+    }
+  },
+  "rollbackImageRetained": true,
+  "zat": "pending"
+}

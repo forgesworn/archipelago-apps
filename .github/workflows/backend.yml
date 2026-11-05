@@ -54,6 +54,16 @@ jobs:
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy
         run: cargo test --manifest-path core/Cargo.toml -p archipelago-container --locked
+      - name: Node ingress production TLS source tests
+        if: steps.plan.outputs.skip != 'true'
+        working-directory: .cache/archy
+        run: ARCHY_TEST_PACKAGE=archipelago-node-ingress-tests scripts/test-backend-isolated.sh
+      - name: Node ingress managed nginx renderer tests
+        if: steps.plan.outputs.skip != 'true'
+        working-directory: .cache/archy
+        run: |
+          python3 -m unittest discover -s scripts/tests -p test_kithmoot_node_ingress.py -v
+          python3 -m unittest discover -s scripts/tests -p test_dashboard_public_guard.py -v
       # Plain cargo test (default features, as the harness uses): several tests
       # read the real apps/*/manifest.yml through CARGO_MANIFEST_DIR, which the
       # harness does not set. --exact makes each --skip match one full test path.
@@ -146,7 +156,7 @@ jobs:
           check signer_login::tests:: 49
           check api::rpc::signer_login::tests:: 3
           check api::rpc::signer_login_tests:: 17
-          check appgate::identity::tests:: 13
+          check appgate::identity::tests:: 14
           check container::spry_network::tests:: 1
           check auth::tests:: 21
           check public_host 7

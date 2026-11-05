@@ -1,0 +1,80 @@
+{
+  "activated": true,
+  "release": "20261105T143709Z",
+  "source": "6b5147d7f36f830943361e8c94e8f745759cbb35",
+  "mergedRevision": "41a1fe4731dc6e400b778b57273959119313a13b",
+  "qualifiedAppExact": true,
+  "fileCount": 598,
+  "websiteAndNativeFeedsUnchanged": true,
+  "caddyAndServicesUnchanged": true,
+  "previousReleaseRetained": true,
+  "publicReadback": "passed",
+  "publicFiles": [
+    {
+      "host": "kithmoot.forgesworn.dev",
+      "path": "/j/",
+      "sha256": "a22cabcb8bec5b0ddce7a121fcf44e99bc299cb82e3be9375e612cec484e279c",
+      "tlsVerified": true,
+      "contentType": "text/html; charset=utf-8",
+      "resolvedUrl": "https://kithmoot.forgesworn.dev/j/"
+    },
+    {
+      "host": "kithmoot.forgesworn.dev",
+      "path": "/j/sw.js",
+      "sha256": "e6a66d4a9b2f0343507b7bc1846b86b95352e93a333609a77f17b77d6a7a764b",
+      "tlsVerified": true,
+      "contentType": "text/javascript; charset=utf-8",
+      "resolvedUrl": "https://kithmoot.forgesworn.dev/j/sw.js"
+    },
+    {
+      "host": "kithmoot.forgesworn.dev",
+      "path": "/j/assets/index-BFavicRN.js",
+      "sha256": "b4a46cd782d9340e12577151ece3602f9c2eba3866694f72cacb687a2a1995c9",
+      "tlsVerified": true,
+      "contentType": "text/javascript; charset=utf-8",
+      "resolvedUrl": "https://kithmoot.forgesworn.dev/j/assets/index-BFavicRN.js"
+    },
+    {
+      "host": "kithmoot.forgesworn.dev",
+      "path": "/j/assets/main-Bwv2QIR3.js",
+      "sha256": "7c882a9375b21439064f1e762d137be18cab963bc15fd5d3de8f8d24d35571ca",
+      "tlsVerified": true,
+      "contentType": "text/javascript; charset=utf-8",
+      "resolvedUrl": "https://kithmoot.forgesworn.dev/j/assets/main-Bwv2QIR3.js"
+    },
+    {
+      "host": "kithmoot.app",
+      "path": "/j/",
+      "sha256": "a22cabcb8bec5b0ddce7a121fcf44e99bc299cb82e3be9375e612cec484e279c",
+      "tlsVerified": true,
+      "contentType": "text/html; charset=utf-8",
+      "resolvedUrl": "https://kithmoot.forgesworn.dev/j/"
+    },
+    {
+      "host": "kithmoot.app",
+      "path": "/j/sw.js",
+      "sha256": "e6a66d4a9b2f0343507b7bc1846b86b95352e93a333609a77f17b77d6a7a764b",
+      "tlsVerified": true,
+      "contentType": "text/javascript; charset=utf-8",
+      "resolvedUrl": "https://kithmoot.forgesworn.dev/j/sw.js"
+    },
+    {
+      "host": "kithmoot.app",
+      "path": "/j/assets/index-BFavicRN.js",
+      "sha256": "b4a46cd782d9340e12577151ece3602f9c2eba3866694f72cacb687a2a1995c9",
+      "tlsVerified": true,
+      "contentType": "text/javascript; charset=utf-8",
+      "resolvedUrl": "https://kithmoot.forgesworn.dev/j/assets/index-BFavicRN.js"
+    },
+    {
+      "host": "kithmoot.app",
+      "path": "/j/assets/main-Bwv2QIR3.js",
+      "sha256": "7c882a9375b21439064f1e762d137be18cab963bc15fd5d3de8f8d24d35571ca",
+      "tlsVerified": true,
+      "contentType": "text/javascript; charset=utf-8",
+      "resolvedUrl": "https://kithmoot.forgesworn.dev/j/assets/main-Bwv2QIR3.js"
+    }
+  ],
+  "browserUserAgentUsed": true,
+  "defaultPythonUserAgentBlockedByCloudflare1010": true
+}

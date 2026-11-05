@@ -1,0 +1,40 @@
+{
+  "passed": true,
+  "originalLimits": {
+    "maxRooms": 4,
+    "aggregateBytesPerSecond": 2000000,
+    "maxBytes": 1073741824,
+    "minFreeBytes": 2147483648
+  },
+  "savedRoomsLimit": 8,
+  "saveKeptPaused": true,
+  "startAppliedNewLimit": true,
+  "restoreKeptPaused": true,
+  "explicitStartAfterRestore": true,
+  "roomsPreserved": true,
+  "deviceAccessCountPreserved": true,
+  "actualPrivateMetrics": true,
+  "metrics": {
+    "sampledAt": 1793871699802,
+    "uptimeSeconds": 24,
+    "allocations": 0,
+    "streamConnections": 0,
+    "forwardedBytes": 0,
+    "bytesPerSecond": 0,
+    "intervalSeconds": 11.755,
+    "udp": {
+      "allocations": 0,
+      "forwardedBytes": 0,
+      "bytesPerSecond": 0
+    },
+    "stream": {
+      "allocations": 0,
+      "forwardedBytes": 0,
+      "bytesPerSecond": 0
+    },
+    "forwardedPackets": 0,
+    "droppedPackets": 0,
+    "streamErrors": 0,
+    "refusedStreams": 0
+  }
+}
