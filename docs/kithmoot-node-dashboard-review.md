@@ -14,7 +14,7 @@ draft PR remains held; no maintainer has been contacted.
 
 ## Exact revision and access
 
-- Dashboard source: `7b92ca40c8d28b116bffbdb86924127a959a7533`.
+- Dashboard source: `3d10482dd04bd163d44ff230bdb6ea71f61070c4`.
 - Draft [PR 53](https://github.com/forgesworn/archipelago-apps/pull/53).
 - [Component receipt](evidence/kithmoot-node-dashboard-20261105/component-review.json)
   records that source revision, source and compiled-asset SHA256 values,

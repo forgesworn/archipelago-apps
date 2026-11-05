@@ -1,7 +1,7 @@
 # KithMoot Node: Archy maintainer review
 
 The 5 November dashboard expansion is ready for component review at source
-`7b92ca40c8d28b116bffbdb86924127a959a7533`. Its new screens, exact assets,
+`3d10482dd04bd163d44ff230bdb6ea71f61070c4`. Its new screens, exact assets,
 captures, setup and expected results are in the
 [dashboard review pack](kithmoot-node-dashboard-review.md). The live demo still
 runs the earlier controller identified below; the expanded dashboard has not

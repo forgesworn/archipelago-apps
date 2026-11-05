@@ -2,7 +2,7 @@
   "schema": "kithmoot-node-ui-component/1",
   "passed": true,
   "actualController": true,
-  "sourceRevision": "7b92ca40c8d28b116bffbdb86924127a959a7533",
+  "sourceRevision": "3d10482dd04bd163d44ff230bdb6ea71f61070c4",
   "sourceFiles": [
     {
       "path": "client.mjs",
@@ -26,7 +26,7 @@
     },
     {
       "path": "browser-review.mjs",
-      "sha256": "3bcd698bf973940cce9a1210381d79b40e3314ba4c35253a635427ee8c5e7416"
+      "sha256": "eb8b80604cd65d69dfb490046211e492b8398f22c58fa69e1171008a1d2feb7f"
     },
     {
       "path": "package.json",
