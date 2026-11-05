@@ -136,9 +136,10 @@ Live maintainer captures:
 - [Actual relay stats](evidence/kithmoot-node-settings-metrics-live-20261105/usage-390.png)
 
 Actual dashboard, linked-signer, metrics and save/start/restore/start evidence
-is separate from component results. Physical-phone, commercial-VPN,
-new outside-network media and Companion WebView acceptance remain unclaimed.
-Maintainer review of this material UI revision remains pending.
+is separate from component results. The separate browser run below adds
+controlled public-network media evidence. Physical-phone, commercial-VPN and
+Companion WebView acceptance remain unclaimed. Maintainer review of this
+material UI revision remains pending.
 
 
 ## Sustained browser continuity on the current backend
