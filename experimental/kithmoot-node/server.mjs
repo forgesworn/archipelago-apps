@@ -1,13 +1,18 @@
 import { createServer } from 'node:http'
 import { createHash, randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { existsSync, lstatSync, fstatSync, chmodSync, openSync, closeSync, readFileSync, writeFileSync, renameSync, fsyncSync, constants, rmSync, readdirSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { existsSync, lstatSync, chmodSync, readFileSync, rmSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { connect } from 'node:net'
 import { verifyEvent } from 'nostr-tools/pure'
 import QRCode from 'qrcode'
 import { healthReport, resourceSampler, shelterObservation, certificateObservation, dashboardSnapshot } from './observability.mjs'
+
+import { Refused, readPrivate, savePrivate } from './private-state.mjs'
+import { pickLimits, validLimits } from './limits.mjs'
+import { relayMetricsSampler } from './relay-metrics.mjs'
+import { settingsInformation, changeSavedSettings } from './settings.mjs'
 
 const KEY = /^[a-f0-9]{64}$/
 const STATE = '/var/lib/kithmoot-node'
@@ -16,7 +21,6 @@ const SESSION_IDLE_MS = 30 * 60 * 1000
 const SESSION_MAX_MS = 8 * 60 * 60 * 1000
 const hash = value => createHash('sha256').update(value).digest('hex')
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
-class Refused extends Error { constructor(status, code) { super(code); this.status = status } }
 
 export function ownerKeys(value) {
   const keys = String(value ?? '').split(',').map(key => key.trim()).filter(Boolean)
@@ -27,28 +31,10 @@ export function ownerKeys(value) {
 export function choices(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).sort().join() !== 'aggregateBytesPerSecond,hostedAwayFromHome,maxBytes,maxRooms,minFreeBytes'
-    || value.hostedAwayFromHome !== true || ![1, 4, 8].includes(value.maxRooms)
-    || ![1_000_000, 2_000_000, 5_000_000].includes(value.aggregateBytesPerSecond)
-    || ![268435456, 1073741824, 4294967296].includes(value.maxBytes)
-    || ![1073741824, 2147483648].includes(value.minFreeBytes)) throw new Refused(422, 'invalid-setup')
+    || value.hostedAwayFromHome !== true || !validLimits(pickLimits(value))) throw new Refused(422, 'invalid-setup')
   return structuredClone(value)
 }
 
-function readPrivate(path) {
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-  try {
-    const info = fstatSync(fd)
-    if (!info.isFile() || info.uid !== process.getuid() || info.mode & 0o077 || info.size > 65536) throw Error('Unsafe saved node settings')
-    return JSON.parse(readFileSync(fd, 'utf8'))
-  } finally { closeSync(fd) }
-}
-function savePrivate(path, value) {
-  const temporary = path + '.new-' + randomBytes(8).toString('hex')
-  const fd = openSync(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
-  try { writeFileSync(fd, JSON.stringify(value) + '\n'); fsyncSync(fd) } finally { closeSync(fd) }
-  try { renameSync(temporary, path) } finally { rmSync(temporary, { force: true }) }
-  const parent = openSync(dirname(path), constants.O_RDONLY); try { fsyncSync(parent) } finally { closeSync(parent) }
-}
 function deletionPrepared(state) {
   let value
   try { value = readPrivate(join(state, 'ui-delete-prepared')) } catch (error) { if (error.code === 'ENOENT') return false; throw error }
@@ -72,6 +58,7 @@ export class NodeProcess {
   #doctor
   #observations
   #sample
+  #relaySample
   #poll
   #startedAt
   #runtime
@@ -84,6 +71,7 @@ export class NodeProcess {
     if (!info.isDirectory() || info.uid !== process.getuid() || info.mode & 0o022) throw Error('Node data ownership needs attention')
     chmodSync(state, 0o700)
     this.#sample = resourceSampler(state)
+    this.#relaySample = relayMetricsSampler(facts, secrets)
   }
   #serial(work) { const result = this.#queue.then(work); this.#queue = result.catch(() => {}); return result }
   #neverRan() {
@@ -147,6 +135,13 @@ export class NodeProcess {
       return { configured: true }
     }).then(async value => { await this.start(); return value })
   }
+  changeSettings(value, restore = false) {
+    return this.#serial(async () => {
+      const result = await changeSavedSettings(this.state, value, !!this.#child, restore)
+      this.#status = undefined; this.#observations = undefined
+      return result
+    })
+  }
   status() {
     // Multiple tabs share one bounded probe; polling never fans out doctors.
     if (!this.#poll) this.#poll = this.#readStatus().finally(() => { this.#poll = undefined })
@@ -155,17 +150,21 @@ export class NodeProcess {
   async #readStatus() {
     const configured = existsSync(join(this.state, 'node.json')) && !existsSync(join(this.state, 'initialising'))
     const setupPending = existsSync(join(this.state, 'ui-configuration.json')) && !configured
-    const base = { v: 1, host: this.facts.host, configured, setupPending, running: !!this.#child, paused: existsSync(join(this.state, 'ui-paused')), deleting: deletionPrepared(this.state),
-      ...(configured || setupPending ? { limits: (() => { const value = readPrivate(join(this.state, configured ? 'node.json' : 'ui-configuration.json')); return {
-        maxRooms: value.maxRooms, maxBytes: value.maxBytes, minFreeBytes: value.minFreeBytes, aggregateBytesPerSecond: value.aggregateBytesPerSecond } })() } : {}) }
+    const saved = configured || setupPending ? readPrivate(join(this.state, configured ? 'node.json' : 'ui-configuration.json')) : null
+    const paused = existsSync(join(this.state, 'ui-paused')), deleting = deletionPrepared(this.state)
+    const base = { v: 1, host: this.facts.host, configured, setupPending, running: !!this.#child, paused, deleting,
+      ...(saved ? { limits: pickLimits(saved) } : {}),
+      ...(configured ? { settings: settingsInformation(this.state, saved, !!this.#child, paused, deleting) } : {}) }
+
     const current = this.#child
     let observations = this.#observations
     if (!observations || observations.until < performance.now()) {
-      const [resources, shelter, certificate] = this.#runtime.observe ? await this.#runtime.observe() : await Promise.all([
+      const [resources, shelter, certificate, relay] = this.#runtime.observe ? await this.#runtime.observe() : await Promise.all([
         this.#sample(), configured && current ? shelterObservation(this.state).catch(() => null) : null,
-        configured ? certificateObservation(this.facts) : null
+        configured ? certificateObservation(this.facts) : null,
+        configured && current ? this.#relaySample() : null
       ])
-      observations = { until: performance.now() + 10000, resources, shelter, certificate }
+      observations = { until: performance.now() + 10000, resources, shelter, certificate, relay }
       if (current === this.#child) this.#observations = observations
     }
     if (current !== this.#child) return dashboardSnapshot({ base: { ...base, running: !!this.#child }, resources: observations.resources })
@@ -193,7 +192,7 @@ export class NodeProcess {
     if (current !== this.#child) return dashboardSnapshot({ base: { ...base, running: !!this.#child }, resources: observations.resources })
     return dashboardSnapshot({ base, state, doctor: current ? this.#doctor : undefined,
       resources: observations.resources, shelter: current ? observations.shelter : undefined,
-      certificate: observations.certificate, startedAt: this.#startedAt, problem })
+      certificate: observations.certificate, relay: current ? observations.relay : undefined, startedAt: this.#startedAt, problem })
   }
   async pair() {
     return this.#serial(async () => {
@@ -249,8 +248,12 @@ export class NodeProcess {
       const child = this.#child
       if (child) {
         try { process.kill(-child.pid, 'SIGTERM') } catch {}
-        for (let i = 0; i < 50 && child.exitCode === null; i++) await sleep(100)
-        if (child.exitCode === null) { try { process.kill(-child.pid, 'SIGKILL') } catch {} }
+        for (let i = 0; i < 50 && this.#child === child && child.exitCode === null; i++) await sleep(100)
+        if (this.#child === child && child.exitCode === null) {
+          try { process.kill(-child.pid, 'SIGKILL') } catch {}
+          for (let i = 0; i < 50 && this.#child === child && child.exitCode === null; i++) await sleep(20)
+          if (this.#child === child && child.exitCode === null) throw new Refused(503, 'node-pause-failed')
+        }
         this.#child = undefined
       }
       this.#status = undefined; this.#doctor = undefined; this.#observations = undefined
@@ -324,7 +327,7 @@ export function createController({ owners, hosts, node, publicDirectory, now = (
       const [name, type] = files[path]
       response.writeHead(200, { 'Content-Type': type }); response.end(readFileSync(join(publicDirectory, name))); return
     }
-    if (request.method !== 'POST' || !['/api/session', '/api/sign-out', '/api/status', '/api/setup', '/api/start', '/api/pause', '/api/pair', '/api/prepare-delete', '/api/cancel-delete'].includes(path)) throw new Refused(404, 'not-found')
+    if (request.method !== 'POST' || !['/api/session', '/api/sign-out', '/api/status', '/api/setup', '/api/start', '/api/pause', '/api/pair', '/api/prepare-delete', '/api/cancel-delete', '/api/settings', '/api/restore-settings'].includes(path)) throw new Refused(404, 'not-found')
     if (request.headers['content-type'] !== 'application/json') throw new Refused(415, 'json-required')
     const chunks = []; let length = 0
     for await (const chunk of request) { length += chunk.length; if (length > 4096) throw new Refused(413, 'too-large'); chunks.push(chunk) }
@@ -342,12 +345,12 @@ export function createController({ owners, hosts, node, publicDirectory, now = (
       return json(response, 200, { v: 1, token, expiresAt: Math.floor((now() + SESSION_IDLE_MS) / 1000) })
     }
     session(request)
-    if (path !== '/api/setup' && Object.keys(value).length) throw new Refused(400, 'invalid-input')
+    if (!['/api/setup', '/api/settings', '/api/restore-settings'].includes(path) && Object.keys(value).length) throw new Refused(400, 'invalid-input')
     if (path === '/api/sign-out') {
       sessions.delete(request.headers.authorization.slice(7))
       return json(response, 200, { v: 1, result: { signedOut: true } })
     }
-    const actions = { '/api/status': () => node.status(), '/api/setup': () => node.setup(choices(value)), '/api/start': () => node.start(),
+    const actions = { '/api/settings': () => node.changeSettings(value), '/api/restore-settings': () => node.changeSettings(value, true), '/api/status': () => node.status(), '/api/setup': () => node.setup(choices(value)), '/api/start': () => node.start(),
       '/api/pause': () => node.stop(), '/api/pair': () => node.pair(), '/api/prepare-delete': () => node.prepareDelete(), '/api/cancel-delete': () => node.cancelDelete() }
     const result = await actions[path]()
     return json(response, 200, { v: 1, result: result ?? { accepted: true } })

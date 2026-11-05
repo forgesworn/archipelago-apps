@@ -1,3 +1,4 @@
+import { limitSpecifications } from './limits.mjs'
 export const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char])
 const known = value => typeof value === 'number' && Number.isFinite(value) && value >= 0
 const count = value => known(value) ? escape(value.toLocaleString()) : 'Unavailable'
@@ -25,6 +26,12 @@ const checks = {
 }
 const navPages = ['Overview', 'Connections', 'Usage', 'Settings', 'Diagnostics']
 
+export function limitFields(limits = {}, disabled = false) {
+  return limitSpecifications.map(([name, title, options, initial]) => `<label>${title}<select name="${name}" ${disabled ? 'disabled' : ''}>${options.map(([value, label]) => `<option value="${value}" ${value === (limits[name] ?? initial) ? 'selected' : ''}>${label}</option>`).join('')}</select></label>`).join('')
+}
+export function settingsEditor(status, draft = status.limits) {
+  return `<h2>Change node limits</h2><p>The node stays paused when you save. Start it from Overview when you are ready to make rooms and calls available again.</p><p class="muted">Limits cannot be lower than the saved room count, message-file storage or available free-space reserve. Existing room data and keys are kept.</p><form id="settings-edit">${limitFields(draft)}<div class="actions"><button class="primary" type="submit">Save settings</button><button type="button" data-action="back">Cancel</button></div></form>`
+}
 function overview(status) {
   const services = status.services ?? []
   return `<h3>What’s running</h3><ul class="services">${services.length ? services.map(service => `<li><div class="service-heading"><strong>${escape(service.label)}</strong>${badge(service.state)}</div><p class="muted">${escape(service.detail)}</p><dl class="service-meta">${row('Version', escape(service.version ?? 'Not reported'))}${row('Uptime', uptime(service.uptimeSeconds))}</dl></li>`).join('') : '<li>Service details are unavailable. Refresh these controls.</li>'}</ul>
@@ -42,21 +49,28 @@ function connections(status) {
 }
 
 function usage(status) {
-  const usage = status.usage ?? {}, limits = status.limits ?? {}
+  const usage = status.usage ?? {}, limits = status.limits ?? {}, relay = usage.relay
+  const measuredRate = value => known(value) ? bandwidth(value) : relay ? 'Waiting for another sample' : 'Unavailable'
+  const transport = (title, value) => `<div class="transport"><h4>${title}</h4><dl class="details">${row('Allocations', count(value?.allocations))}${row('Forwarded payload', bytes(value?.forwardedBytes))}${row('Payload rate', measuredRate(value?.bytesPerSecond))}</dl></div>`
   return `<h3>Usage</h3><p class="muted">Sampled ${date(usage.sampledAt)}. Container CPU and memory cover the controls, supervisor and both relays.</p><dl class="facts">
     ${fact('Container CPU', known(usage.cpuPercent) ? count(usage.cpuPercent) + '%' : 'Unavailable', '100% means one CPU core. The first sample needs a second reading.')}
     ${fact('Container memory', bytes(usage.memoryBytes), 'Limit: ' + bytes(usage.memoryLimitBytes))}
     ${fact('Room message storage', bytes(usage.storeBytes), 'Limit: ' + bytes(limits.maxBytes))}
     ${fact('Free space on data filesystem', bytes(usage.freeBytes), 'Keep free: ' + bytes(limits.minFreeBytes))}</dl>
-    <dl class="details">${row('CPU allowance', known(usage.cpuLimitCores) ? count(usage.cpuLimitCores) + ' cores' : 'Not reported')}${row('Hosted rooms', `${count(status.rooms)} / ${count(limits.maxRooms)}`)}${row('Call bandwidth', 'Not measured', 'Configured total limit: ' + bandwidth(limits.aggregateBytesPerSecond) + '. This is a cap, not measured traffic.')}${row('TURN allocations', 'Not reported', 'An allocation is a relay connection, not a person. Reconnecting can temporarily use more than one.')}</dl>
-    <p class="muted">Unavailable counters are not zero. Video quality, jitter and frozen frames must be measured in the calling apps. This view does not collect call content or participant IP addresses.</p>`
+    <h3>Calls through this node</h3><p class="muted">${relay ? `Relay sample ${date(relay.sampledAt)}. Totals cover this relay start, ${uptime(relay.uptimeSeconds)} ago.` : 'Relay statistics are unavailable. Refresh after the relay starts. Older relay builds need an update to report these counters.'}</p>
+    <dl class="facts">${fact('TURN allocations', count(relay?.allocations), 'Relay connections, not people.')}${fact('Payload rate', measuredRate(relay?.bytesPerSecond), relay?.intervalSeconds ? 'Average over ' + count(relay.intervalSeconds) + ' seconds.' : 'A second relay sample is needed after startup or a reset.')}${fact('Forwarded payload', bytes(relay?.forwardedBytes), 'Both directions; excludes TURN and TLS headers.')}${fact('Dropped packets', count(relay?.droppedPackets), 'Relay/control policy, queue or socket drops; not a media packet-loss percentage.')}</dl>
+    <div class="transports">${transport('UDP', relay?.udp)}${transport('TCP/TLS streams', relay?.stream)}</div>
+    <dl class="details">${row('Open relay streams', count(relay?.streamConnections), 'Includes handshakes and health checks; not a count of callers.')}${row('Stream failures', count(relay?.streamErrors), 'Malformed frames, queue limits and socket errors. Ordinary disconnects are excluded. Host TLS handshake failures are not visible here.')}${row('Stream capacity refusals', count(relay?.refusedStreams))}${row('CPU allowance', known(usage.cpuLimitCores) ? count(usage.cpuLimitCores) + ' cores' : 'Not reported')}${row('Hosted rooms', `${count(status.rooms)} / ${count(limits.maxRooms)}`)}${row('Call bandwidth limit', bandwidth(limits.aggregateBytesPerSecond))}</dl>
+    <p class="muted">The host terminates TLS, so its TLS traffic arrives at Spry as TCP. Stream payload accepted into a relay output queue is counted even if that stream closes before delivery. Reconnecting can temporarily use more than one allocation. Unavailable counters are not zero. Video quality, jitter and frozen frames must be measured in the calling apps. No call content or participant IP addresses are collected by this view.</p>`
 }
 
 function bandwidth(value) { return known(value) ? count(value * 8 / 1000000) + ' Mbit/s' : 'Unavailable' }
 function settings(status) {
   const limits = status.limits ?? {}
   return `<h3>Saved settings</h3><dl class="details">${row('Hosted room limit', count(limits.maxRooms))}${row('Total call bandwidth limit', bandwidth(limits.aggregateBytesPerSecond))}${row('Message storage limit', bytes(limits.maxBytes))}${row('Free disk reserve', bytes(limits.minFreeBytes))}${row('Call route', 'Through this node by default', 'Room members do not need to reveal their IP addresses to each other.')}${row('Room files', 'Unavailable in node rooms')}${row('TURN login lifetime', 'At most 5 minutes')}${row('Hosting', 'Away from home', 'Confirmed during setup. A public IP alone does not establish where a server is hosted.')}</dl>
-    <p class="muted">Limits are chosen during setup. This version shows the saved values; changing limits here is not yet supported. Keep the saved data when reviewing the host configuration.</p>
+    <p class="muted">${status.settings?.issue ? 'Saved settings need a configuration review before they can be changed. Keep the saved data.' : status.settings?.editable ? 'Change limits while the node is paused. Saving keeps it paused; start it from Overview to apply the settings. The previous limits can be restored here.' : 'Pause the node from Overview before changing limits. Pausing ends calls and makes rooms unavailable while keeping saved data.'}</p>
+    ${status.settings?.previous ? `<div class="callout"><h4>Previous limits</h4><dl class="details">${row('Hosted rooms', count(status.settings.previous.maxRooms))}${row('Call bandwidth', bandwidth(status.settings.previous.aggregateBytesPerSecond))}${row('Message storage', bytes(status.settings.previous.maxBytes))}${row('Free disk reserve', bytes(status.settings.previous.minFreeBytes))}</dl></div>` : ''}
+    <div class="actions"><button data-action="edit-settings" ${status.settings?.editable ? '' : 'disabled'}>Change limits</button>${status.settings?.previous ? `<button data-action="restore-settings" ${status.settings.editable ? '' : 'disabled'}>Restore previous limits</button>` : ''}</div>
     <h3>Account and data</h3><p>Pair KithMoot on your browser, computer or phone from Overview. Removing someone and closing a room happen in KithMoot. The node holds no room keys.</p><div class="actions"><button class="danger" data-action="delete" ${status.deleting ? 'disabled' : ''}>Delete everything…</button></div>`
 }
 

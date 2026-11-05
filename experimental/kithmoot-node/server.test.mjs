@@ -40,6 +40,7 @@ test('host cookies and arbitrary signers cannot inspect status or obtain a pairi
   const f = await fixture(t)
   assert.equal((await f.post('/api/status', '{}', undefined, { Cookie: 'archipelago_session=fixture' })).status, 401)
   assert.equal((await f.post('/api/pair', '{}', 'Bearer ' + 'A'.repeat(43))).status, 401)
+  for (const path of ['/api/settings', '/api/restore-settings']) assert.equal((await f.post(path, '{}', undefined, { Cookie: 'archipelago_session=fixture' })).status, 401)
   const foreign = generateSecretKey()
   try { assert.equal((await f.post('/api/session', '{}', await f.signed({ signer: foreign }))).status, 403) } finally { foreign.fill(0) }
   assert.equal(f.calls, 0)

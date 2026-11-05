@@ -12,3 +12,7 @@ html.no-blur section{background:var(--archy-bg);backdrop-filter:none}
 html.embedded{--archy-panel:rgba(0,0,0,.85)}.embedded header,.embedded footer{background:var(--archy-panel);border:1px solid var(--archy-border);border-radius:12px;padding:16px}.embedded header{margin-bottom:16px}.embedded header .intro{margin-bottom:0}.embedded footer{margin-top:16px}
 html.no-blur.embedded header,html.no-blur.embedded footer{background:var(--archy-bg)}
 @media(prefers-reduced-transparency:reduce){.embedded header,.embedded footer{background:var(--archy-bg)}}
+
+.transports{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr));gap:16px;margin:24px 0}.transport{min-width:0;padding:16px;border:1px solid var(--archy-border);border-radius:12px}.transport h4{font-size:1rem;margin:0 0 8px}.transport .details{margin:0}.transport .detail-row{grid-template-columns:1fr}.transport .detail-row:last-child{border:0}
+
+@media(max-width:480px){.facts{grid-template-columns:repeat(auto-fit,minmax(min(100%,9rem),1fr))}}.facts dt{overflow-wrap:anywhere}

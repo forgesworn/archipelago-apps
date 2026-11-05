@@ -1,10 +1,10 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
-import { dashboard, supportReport, escape } from './dashboard.mjs'
+import { dashboard, supportReport, escape, limitFields, settingsEditor } from './dashboard.mjs'
 
 const content = document.querySelector('#content'), notice = document.querySelector('#notice')
 let token, status, busy = false, view = 'status', pairing, expiryTimer, polling = false
-let activityPending = false, dashboardPage = 'overview', returnAction
+let activityPending = false, dashboardPage = 'overview', returnAction, editingSettings
 if (window.parent !== window) document.documentElement.classList.add('embedded')
 const messages = {
   'host-identity-required': 'Choose an identity belonging to this Archy node.',
@@ -17,6 +17,17 @@ const messages = {
   'retry-saved-setup': 'Retry with the saved setup choices.',
   'deletion-prepared': 'Deletion is prepared. Cancel deletion before setting up or starting the node.',
   'node-unavailable': 'The node could not complete that request. Check its status and try again.',
+  'pause-before-settings': 'Pause the node from Overview before changing limits. Saving keeps it paused.',
+  'settings-changed': 'Settings changed in another window. Cancel and refresh before trying again.',
+  'settings-room-limit-too-small': 'The room limit is lower than the number of saved rooms. Keep a larger limit or close rooms in KithMoot first.',
+  'settings-storage-limit-too-small': 'The storage limit is lower than the saved message files. Keep a larger limit; no messages were removed.',
+  'settings-disk-reserve-unavailable': 'The host has less free space than this reserve. Free space on the host or choose a smaller reserve.',
+  'settings-operations-pending': 'A room change is unfinished. Start the node and let it finish before pausing and changing limits.',
+  'settings-usage-unavailable': 'Saved usage could not be checked safely. Settings have not been changed.',
+  'settings-review-required': 'Saved settings need a configuration review. Keep the existing data.',
+  'invalid-settings': 'Choose one of the available limits and try again.',
+  'no-previous-settings': 'There are no previous limits to restore.',
+  'node-pause-failed': 'The node did not confirm that it stopped. Refresh its status before trying again.',
   'busy': 'The node is busy. Wait a moment and try again.'
 }
 function inform(message, error = false) { notice.textContent = message; notice.hidden = !message; notice.classList.toggle('error', error) }
@@ -65,13 +76,9 @@ async function signIn() {
 }
 function renderSetup() {
   const saved = status.setupPending ? status.limits : undefined
-  const select = (name, title, options, initial) => `<label>${title}<select name="${name}" ${saved ? 'disabled' : ''}>${options.map(([value, label]) => `<option value="${value}" ${value === (saved?.[name] ?? initial) ? 'selected' : ''}>${label}</option>`).join('')}</select></label>`
   mount(`<h2>${saved ? 'Finish setting up' : 'Set up your node'}</h2><p>Use a rented server or an Archy hosted away from home. Room calls use this node by default. Files are unavailable in node rooms.</p>
     <form id="setup">
-    ${select('maxRooms', 'Hosted rooms', [[1, '1 room'], [4, 'Up to 4 rooms'], [8, 'Up to 8 rooms']], 4)}
-    ${select('aggregateBytesPerSecond', 'Total call bandwidth', [[1000000, '8 Mbit/s'], [2000000, '16 Mbit/s'], [5000000, '40 Mbit/s']], 2000000)}
-    ${select('maxBytes', 'Message storage limit', [[268435456, '256 MiB'], [1073741824, '1 GiB'], [4294967296, '4 GiB']], 1073741824)}
-    ${select('minFreeBytes', 'Leave free on this host', [[1073741824, 'At least 1 GiB'], [2147483648, 'At least 2 GiB']], 2147483648)}
+    ${limitFields(saved, !!saved)}
     <label class="check"><input name="away" type="checkbox" required><span>This node is hosted away from my home connection.</span></label>
     <div class="actions"><button class="primary" type="submit">${saved ? 'Retry saved setup' : 'Set up node'}</button><button type="button" data-action="sign-out">Sign out</button><button type="button" class="danger" data-action="delete">Delete everything…</button></div></form>`)
   content.querySelector('form').addEventListener('submit', event => { event.preventDefault(); void run('setup') })
@@ -80,6 +87,10 @@ function renderStatus() {
   if (!status.configured && status.deleting) return mount('<span class="badge">Prepared for deletion</span><h2>Return to Archy to finish</h2><p>Setup is blocked. Use Archy’s <strong>Delete app and data</strong> action, or cancel deletion below to return to setup.</p><div class="actions"><button class="primary" data-action="cancel-delete">Cancel deletion</button><button data-action="sign-out">Sign out</button></div>')
   if (!status.configured) return renderSetup()
   mount(dashboard(status, dashboardPage))
+}
+function renderSettingsEditor(draft) {
+  mount(settingsEditor(status, draft))
+  content.querySelector('form').addEventListener('submit', event => { event.preventDefault(); void run('save-settings') })
 }
 function renderDelete() {
   mount('<h2>Delete this node and its data</h2><p>First close every hosted room in KithMoot. Closing revokes access, ends calls, purges the room’s messages and sends the devices their self-destruct instruction.</p><p>Prepare deletion below once all rooms, devices and pending requests are gone. Then use Archy’s <strong>Delete app and data</strong> action. This screen cannot close rooms for you.</p><div class="actions"><button class="danger" data-action="prepare-delete">Check rooms and prepare deletion</button><button data-action="back">Keep node</button></div>')
@@ -92,12 +103,21 @@ function renderPairing() {
 async function refresh(activity = true) { status = await api('status', {}, activity); if (view === 'status') renderStatus() }
 async function run(action, activity = true) {
   if (busy) return
-  const focusAction = action === 'back' ? returnAction : action === 'sign-out' ? 'sign-in' : action
+  let settingsDraft
+  if (view === 'settings-edit') settingsDraft = Object.fromEntries(['maxRooms', 'aggregateBytesPerSecond', 'maxBytes', 'minFreeBytes'].map(name => [name, Number(content.querySelector('form').elements[name].value)]))
+  const focusAction = action === 'back' ? returnAction : ['save-settings', 'restore-settings'].includes(action) ? 'edit-settings' : action === 'sign-out' ? 'sign-in' : action
   busy = true; inform(''); content.setAttribute('aria-busy', 'true')
   content.querySelectorAll('button').forEach(button => { button.disabled = true })
   try {
     if (action === 'sign-in') await signIn()
     else if (action === 'sign-out') { try { await api('sign-out') } finally { token = undefined; clearPairing(); renderSignIn() } }
+    else if (action === 'edit-settings') { editingSettings = status.settings; returnAction = 'edit-settings'; view = 'settings-edit'; renderSettingsEditor() }
+    else if (action === 'save-settings') {
+      await api('settings', { revision: editingSettings.revision, limits: settingsDraft }); view = 'status'; dashboardPage = 'settings'; await refresh(); inform('Settings saved. The node is still paused. Start it from Overview when ready.')
+    }
+    else if (action === 'restore-settings') {
+      await api('restore-settings', { revision: status.settings.revision }); await refresh(); inform('Previous limits restored. The node is still paused.')
+    }
     else if (action === 'delete') { returnAction = 'delete'; view = 'delete'; renderDelete() }
     else if (action === 'back') { clearPairing(); view = 'status'; await refresh() }
     else if (action === 'copy-diagnostics') { await navigator.clipboard.writeText(supportReport(status)); inform('Diagnostics copied. Review the report before sharing it.') }
@@ -124,14 +144,15 @@ async function run(action, activity = true) {
     if (token && view === 'status' && status) renderStatus()
     else if (token && view === 'delete') renderDelete()
     else if (token && view === 'pair' && pairing) renderPairing()
+    else if (token && view === 'settings-edit') renderSettingsEditor(settingsDraft)
     else if (!token) renderSignIn()
     const target = content.querySelector(`[data-action="${focusAction}"]:not(:disabled)`)
     if (target) target.focus({ preventScroll: true })
-    else if (['pair', 'delete', 'prepare-delete', 'cancel-delete'].includes(action)) { const heading = content.querySelector('h2'); if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }) } }
+    else if (['pair', 'delete', 'prepare-delete', 'cancel-delete', 'edit-settings'].includes(action)) { const heading = content.querySelector('h2'); if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }) } }
   }
 }
 for (const name of ['pointerdown', 'keydown']) document.addEventListener(name, event => { if (event.isTrusted) activityPending = true }, { passive: true })
-window.addEventListener('online', () => { if (token && !busy) void run('refresh', false) })
+window.addEventListener('online', () => { if (token && !busy && view === 'status') void run('refresh', false); else if (token) inform('Your browser is online again. Your current screen is still open.') })
 window.addEventListener('offline', () => inform('You are offline. Reconnect to manage the node.', true))
 window.archipelagoNostr?.onIdentitySelected(() => { token = undefined; clearPairing(); if (!busy) renderSignIn() })
 setInterval(async () => {

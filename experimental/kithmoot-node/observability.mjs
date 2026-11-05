@@ -96,7 +96,7 @@ export function certificateObservation(facts) {
   })
 }
 
-export function dashboardSnapshot({ base, state, doctor, resources, shelter, certificate, startedAt, problem }) {
+export function dashboardSnapshot({ base, state, doctor, resources, shelter, certificate, relay, startedAt, problem }) {
   const observedAt = Date.now(), configured = base.configured, running = base.running
   const checks = doctor?.checks ?? checkNames.map(name => ({ name, state: 'unknown' }))
   const check = name => checks.find(item => item.name === name)?.state ?? 'unknown'
@@ -113,7 +113,7 @@ export function dashboardSnapshot({ base, state, doctor, resources, shelter, cer
     ],
     connections: { controlsPort: 3753, httpsPort: 443, turnUdpTcpPort: 34790, turnTlsPort: 53499, turnTls443Port: 443,
       checkedAt: doctor?.checkedAt ?? null, checks, certificateValidUntil: certificate?.validUntil ?? null, external: 'not-measured' },
-    usage: { ...resources, storeBytes: running ? shelter?.storeBytes ?? null : null, bandwidthBytesPerSecond: null, allocations: null },
+    usage: { ...resources, storeBytes: running ? shelter?.storeBytes ?? null : null, bandwidthBytesPerSecond: running ? relay?.bytesPerSecond ?? null : null, allocations: running ? relay?.allocations ?? null : null, relay: running ? relay ?? null : null },
     diagnostics: { problem: problem ?? null, checkedAt: doctor?.checkedAt ?? null,
       // No arbitrary report strings, logs or raw exception messages cross this boundary.
       checks: configured && running ? checks : [], external: 'not-measured' }
