@@ -1,24 +1,28 @@
 # KithMoot Node: Archy maintainer review
 
-The owner clarified on 3 November that maintainer ZAT applies only when
-submitting back to the official Archy repository. It does not block delivery
-through ForgeSworn's repositories or the authorised demo installation.
+The 5 November dashboard expansion is ready for component review at source
+`7b92ca40c8d28b116bffbdb86924127a959a7533`. Its new screens, exact assets,
+captures, setup and expected results are in the
+[dashboard review pack](kithmoot-node-dashboard-review.md). The live demo still
+runs the earlier controller identified below; the expanded dashboard has not
+been deployed or merged.
 
-For official Archy submission: **Maintainer must review and approve UI work on
-the Archy install, launch, pairing hand-off, delete-everything and status screens
-before merging or approval. ZAT pending.** No official submission or maintainer
-approval has been recorded; no maintainer message has been sent.
+**Maintainer must review and approve UI work on the Archy install, launch,
+pairing hand-off, delete-everything, Overview, Connections, Usage, Settings and
+Diagnostics screens before merging or approval. ZAT pending.** No maintainer
+approval has been recorded and no maintainer message has been sent. General
+ship instructions and automated checks do not satisfy this gate.
 
 ## Exact candidate
 
-- UI/controller source: `bd7d0c8f5077d1ceef6b26f4c768052a5ffe5066`.
+- Previously deployed UI/controller source: `bd7d0c8f5077d1ceef6b26f4c768052a5ffe5066`.
 - Draft [PR 53](https://github.com/forgesworn/archipelago-apps/pull/53).
 - Live Linux x64 candidate: see the [demo review pack](kithmoot-node-demo-review.md)
   for the installed image, patched host revision, private access and rollback.
 - The original [ARM64 fixture evidence](evidence/kithmoot-node-archy-20261103.json)
   and [component receipt](evidence/kithmoot-node-archy-20261103/component-review.json)
   remain historical evidence for the original operator UI/controller. The
-  [current component receipt](evidence/kithmoot-node-copy-20261103/component-review.json)
+  [earlier wording component receipt](evidence/kithmoot-node-copy-20261103/component-review.json)
   covers the revised wording, access count, connection errors and session policy.
 
 The owner authorised the private demo installation on 3 November. Open

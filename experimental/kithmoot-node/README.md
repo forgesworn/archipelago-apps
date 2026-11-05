@@ -91,6 +91,45 @@ The host app-gate override applies to gate-fronted ports. Forcing that override
 on for the native TURN mapping closes that mapping, since TURN cannot answer
 an HTTP login challenge. Leave the manifest's native TURN declaration in place.
 
+## Private dashboard observations
+
+The signed status API now powers Overview, Connections, Usage, Settings and
+Diagnostics. It exposes only a fixed summary: aggregate room/access/operation
+counts, four service observations, the nine allowlisted local doctor checks,
+saved limits, local certificate expiry, container resources, filesystem free
+space and Shelter's encrypted-message storage total. Detailed supervisor or
+socket replies, keys, identities, room identifiers and participant addresses
+are never forwarded. Support copying is explicit and sends nothing itself.
+
+`pending` means unfinished supervisor operations, not waiting guests. Access
+counts can include offline devices and count one device in multiple rooms.
+Local STUN responses and a trusted local TLS connection do not qualify outside
+media calls. External tests, live bandwidth, allocation counts, historical
+charts and client video-quality measurements are not collected by this version.
+
+CPU and memory use the private cgroup v2 root, only when the process reports
+`0::/`. Other cgroup layouts and platforms show unavailable counters. CPU is a
+delta between observations, with 100% representing one core. Filesystem reserve
+uses available bytes on the data volume; Shelter's owned private socket returns
+only its storage total and lease state. Missing data is unknown, not zero.
+The first CPU sample needs another observation. Backend-specific version/uptime
+are shown as not reported/unavailable when the existing protocol lacks them.
+
+Observations are cached for 10 seconds, supervisor status for two seconds and
+doctor checks for 15 seconds. Concurrent tabs share one in-flight status probe.
+A stopped/replaced supervisor cannot reuse an in-flight predecessor's readiness.
+The fixed status command is limited to eight seconds, doctor to 45 seconds and
+the new socket/TLS observations to two seconds each. Backend failure leaves the
+configured limits and recovery controls visible. Polling does not extend sign-in.
+
+Settings displays the existing bounded setup choices. Post-setup limit editing
+is not implemented. Pause ends calls and preserves saved data; this version does
+not introduce a drain action. Destructive deletion still uses the existing
+supervisor freeze and the host's private deletion handshake.
+
+See the [5 November dashboard review pack](../../docs/kithmoot-node-dashboard-review.md)
+for exact source, component evidence, deliberate style choices and pending gates.
+
 ## Verification
 
 ```sh
@@ -116,5 +155,6 @@ runs the actual production supervisor/backends, Rust TLS and nginx, including
 authenticated TURN on 443. See the separate evidence receipt for its limits.
 
 Maintainer must review and approve UI work on the Archy install, launch,
-pairing hand-off, delete-everything and status screens before merging or
+pairing hand-off, delete-everything, Overview, Connections, Usage, Settings and
+Diagnostics screens before merging or
 approval. ZAT pending.
