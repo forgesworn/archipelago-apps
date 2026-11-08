@@ -96,14 +96,15 @@ function renderDelete() {
   mount('<h2>Delete this node and its data</h2><p>First close every hosted room in KithMoot. Closing revokes access, ends calls, purges the room’s messages and sends the devices their self-destruct instruction.</p><p>Prepare deletion below once all rooms, devices and pending requests are gone. Then use Archy’s <strong>Delete app and data</strong> action. This screen cannot close rooms for you.</p><div class="actions"><button class="danger" data-action="prepare-delete">Check rooms and prepare deletion</button><button data-action="back">Keep node</button></div>')
 }
 function renderPairing() {
-  mount('<h2>Pair with your KithMoot app</h2><p>Open this link in KithMoot on the browser, computer or phone you want to use. Sign in to the same KithMoot account on each device. This code connects that account to your node. Keep it private.</p><div class="qr"><img alt="Private KithMoot pairing code" width="256" height="256"></div><p>This code expires within six minutes. Guests join through a room link after you admit them.</p><a class="button primary" id="open-pair">Open KithMoot</a><div class="actions"><button data-action="copy-pair">Copy pairing link</button><button data-action="back">Done</button></div>')
+  mount('<h2>Pair with your KithMoot app</h2><p>Open this link in KithMoot on the browser, computer or phone you want to use. Sign in to the same KithMoot account on each device. This code connects that account to your node. Keep it private.</p><div class="qr"><img alt="Private KithMoot pairing code" width="256" height="256"></div><p>This code expires within six minutes. Guests join through a room link after you admit them.</p><a class="button primary" id="open-pair">Open KithMoot</a><label for="pairing-link" class="pair-link">Private pairing link</label><input id="pairing-link" class="copy-link" type="text" readonly autocomplete="off" autocapitalize="off" spellcheck="false"><div class="actions"><button data-action="copy-pair">Copy pairing link</button><button data-action="back">Done</button></div>')
   content.querySelector('img').src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(pairing.qr)
   content.querySelector('#open-pair').href = pairing.link
+  content.querySelector('#pairing-link').value = pairing.link
 }
 async function refresh(activity = true) { status = await api('status', {}, activity); if (view === 'status') renderStatus() }
 async function run(action, activity = true) {
   if (busy) return
-  let settingsDraft
+  let settingsDraft, manualPairing
   if (view === 'settings-edit') settingsDraft = Object.fromEntries(['maxRooms', 'aggregateBytesPerSecond', 'maxBytes', 'minFreeBytes'].map(name => [name, Number(content.querySelector('form').elements[name].value)]))
   const focusAction = action === 'back' ? returnAction : ['save-settings', 'restore-settings'].includes(action) ? 'edit-settings' : action === 'sign-out' ? 'sign-in' : action
   busy = true; inform(''); content.setAttribute('aria-busy', 'true')
@@ -121,7 +122,18 @@ async function run(action, activity = true) {
     else if (action === 'delete') { returnAction = 'delete'; view = 'delete'; renderDelete() }
     else if (action === 'back') { clearPairing(); view = 'status'; await refresh() }
     else if (action === 'copy-diagnostics') { await navigator.clipboard.writeText(supportReport(status)); inform('Diagnostics copied. Review the report before sharing it.') }
-    else if (action === 'copy-pair') { await navigator.clipboard.writeText(pairing.link); inform('Pairing link copied. Keep it private.') }
+    else if (action === 'copy-pair') {
+      const current = pairing
+      try {
+        await navigator.clipboard.writeText(current.link)
+        if (pairing === current && view === 'pair' && token) inform('Pairing link copied. Keep it private.')
+      } catch {
+        if (pairing === current && view === 'pair' && token) {
+          manualPairing = current
+          inform('Automatic copying is unavailable. The pairing link is selected; copy it with your keyboard or touch menu.')
+        }
+      }
+    }
     else if (action === 'pair') {
       returnAction = 'pair'
       pairing = await api('pair'); view = 'pair'; renderPairing()
@@ -147,7 +159,11 @@ async function run(action, activity = true) {
     else if (token && view === 'settings-edit') renderSettingsEditor(settingsDraft)
     else if (!token) renderSignIn()
     const target = content.querySelector(`[data-action="${focusAction}"]:not(:disabled)`)
-    if (target) target.focus({ preventScroll: true })
+    if (manualPairing && manualPairing === pairing && view === 'pair') {
+      const input = content.querySelector('#pairing-link')
+      input.focus({ preventScroll: true }); input.select()
+    }
+    else if (target) target.focus({ preventScroll: true })
     else if (['pair', 'delete', 'prepare-delete', 'cancel-delete', 'edit-settings'].includes(action)) { const heading = content.querySelector('h2'); if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }) } }
   }
 }

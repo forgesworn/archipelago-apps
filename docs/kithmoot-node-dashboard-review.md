@@ -11,6 +11,87 @@ pairing hand-off and delete-everything screens before merging or approval.
 ZAT pending.** No reviewed-revision approval is recorded. PR53 remains draft;
 no maintainer has been contacted.
 
+## 8 November 2026: pairing copy under a blocked clipboard policy
+
+Review candidate only; this fix is unmerged and not deployed to Archy. The affected screen is **KithMoot Node → Settings → Pair with KithMoot →
+pairing hand-off**, also reachable from Overview. The Diagnostics copy button
+is outside this change.
+
+**Maintainer must review and approve UI work on the Archy KithMoot Node pairing
+hand-off screen before merging or approval. ZAT pending.** No maintainer has
+been contacted and no approval of this candidate is recorded.
+
+### Candidate and setup
+
+The source base is `acaa3ca88e97a8a17b39cd7800a2a57e786f8b9b` on local branch
+`fix/kithmoot-node-clipboard-20261108`. Identify this exact UI
+candidate with these source/build hashes, also present in the machine-readable
+[focused receipt](evidence/kithmoot-node-clipboard-20261108/clipboard-policy/component-review.json):
+
+| File | SHA-256 |
+| --- | --- |
+| `experimental/kithmoot-node/client.mjs` | `b89648fc82802b632b764d29f0b50f683891183780ba5c4c760fc202418368b6` |
+| `experimental/kithmoot-node/public/style.css` | `c335dae786d6bf5f72d4da6bacbfd7954f4bacea1290f9af6a1f2bb30b65528f` |
+| Built `dist/public/client.js` | `cddfd462ae87823432736f1db9ef0ec69bda4eaee362a66e242a7af7829bea6c` |
+
+Use Node 24 and the pinned dependencies. Rebuild and reproduce the focused
+fixture from the repository root:
+
+```sh
+npm ci --prefix experimental/kithmoot-node --ignore-scripts --no-audit --no-fund
+npm ci --prefix tests/smoke --ignore-scripts --no-audit --no-fund
+npm --prefix experimental/kithmoot-node run build
+E2E_KITHMOOT_NODE_UI=component-review E2E_KITHMOOT_NODE_CLIPBOARD_ONLY=1 E2E_KITHMOOT_NODE_REVIEW_OUTPUT=/tmp/kithmoot-node-clipboard-review node experimental/kithmoot-node/browser-review.mjs
+```
+
+The harness opens `https://node.example:3753/review-host-no-clipboard` in an
+actual iframe, with a real `Permissions-Policy: clipboard-write=()` response.
+The signed controller is real; the signer, backend and host gate are fixtures.
+This URL exists only inside the routed browser fixture; it is not a deployed
+service. The live `https://demo.forgesworn.dev:3753/` still serves the old UI.
+All captured pairing material is a non-functional fixture string.
+
+### Review actions and expected results
+
+1. Sign in to the fixture, choose Pair with KithMoot and Copy pairing link.
+   With policy denying clipboard writes, a plain manual-copy instruction must
+   appear. The read-only Private pairing link field must hold the exact link,
+   have focus and select the complete value. No Chromium error is shown as
+   the user-facing instruction and no false copied-success message appears.
+2. Select/copy the field using keyboard or the touch menu. The Open KithMoot
+   link and QR remain available. The app requests no broader host permissions.
+3. Repeat without the Clipboard API. The same selected-field fallback applies.
+   In the ordinary clipboard-enabled standalone case, Copy still succeeds and
+   the system clipboard contains the exact fixture link.
+4. Advance six minutes, including while a clipboard operation is pending.
+   The field, QR and open link disappear. A late completion cannot restore the
+   code or replace the expiry message with a copied-success message.
+5. Inspect 320/390/768/1440 px, landscape and 200% text. The field follows the
+   existing control tokens, is labelled and has no page-level horizontal
+   overflow. The full host fixture and this changed screen remain distinct
+   from physical-device and maintainer acceptance.
+
+[390 px fallback](evidence/kithmoot-node-clipboard-20261108/clipboard-policy/pairing-copy-blocked-390.png),
+[320 px fallback](evidence/kithmoot-node-clipboard-20261108/clipboard-policy/pairing-copy-blocked-320.png),
+[200% text](evidence/kithmoot-node-clipboard-20261108/clipboard-policy/pairing-copy-blocked-large-text.png).
+
+### Verification and scope
+
+- Before the fix, the real policy-denied iframe reproduced the missing fallback:
+  the regression timed out waiting for manual-copy guidance after Copy.
+- Build, syntax checks and all 32 controller tests pass.
+- The [full browser journey](evidence/kithmoot-node-clipboard-20261108/component-review.json)
+  passed with 61 captures, 21 accessibility scans and no page errors.
+- The final focused run passed with six full-frame captures, one accessibility
+  scan and no page errors. Its harness adds full-height capture and 200% text
+  coverage after the full journey; the product source/build hashes are unchanged.
+- Pairing secrets remain transient in the current page and are cleared by the
+  existing expiry/navigation/sign-out paths. No new service, stored data,
+  recipient or authority is introduced. Clipboard policy is not relaxed.
+- The live server, public TURN, room routing, settings and existing sessions
+  were not changed. Desktop/Android/web account pairing and actual calls remain
+  separate migration checks. No fixture server is left running.
+
 ## Exact build and access
 
 - Controller source: `6c27156de8f4744c08cf7fefde76b41763c0910d`.
