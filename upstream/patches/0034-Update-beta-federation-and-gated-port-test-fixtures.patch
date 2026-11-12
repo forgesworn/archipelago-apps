@@ -1,0 +1,52 @@
+From fe9d34039fc1aeb3b0624952f3f9048e9e12a927 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 16:22:33 +0000
+Subject: [PATCH] Update beta federation and gated-port test fixtures
+
+---
+ core/archipelago/src/appgate/network_fixture.rs              | 1 +
+ core/archipelago/src/federation/pending_one_shot_tests.rs    | 2 +-
+ core/archipelago/src/federation/pending_preparation_tests.rs | 2 +-
+ 3 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/core/archipelago/src/appgate/network_fixture.rs b/core/archipelago/src/appgate/network_fixture.rs
+index adbe224..d02f4c6 100644
+--- a/core/archipelago/src/appgate/network_fixture.rs
++++ b/core/archipelago/src/appgate/network_fixture.rs
+@@ -79,6 +79,7 @@ async fn serve() {
+             declared: true,
+             session_passthrough: false,
+             auth_enabled: true,
++            turn_upstream: None,
+         };
+         *gate.port_map.write().await = crate::appgate::identity::test_port_map(app.clone());
+         let gate = Arc::new(gate);
+diff --git a/core/archipelago/src/federation/pending_one_shot_tests.rs b/core/archipelago/src/federation/pending_one_shot_tests.rs
+index 501a220..63b86e6 100644
+--- a/core/archipelago/src/federation/pending_one_shot_tests.rs
++++ b/core/archipelago/src/federation/pending_one_shot_tests.rs
+@@ -134,7 +134,7 @@ async fn inbound_fixture() -> (
+     };
+     (dir, row, proof, native, input)
+ }
+-async fn mint(dir: &Path, row: &str, input: MintInput) -> Result<String> {
++async fn mint(dir: &Path, row: &str, input: MintInput) -> anyhow::Result<String> {
+     let guard = Arc::new(outbound_decision_guard().await);
+     protected_owner::mint_invitation(dir, row.to_owned(), input, guard).await
+ }
+diff --git a/core/archipelago/src/federation/pending_preparation_tests.rs b/core/archipelago/src/federation/pending_preparation_tests.rs
+index a5adef6..92fd775 100644
+--- a/core/archipelago/src/federation/pending_preparation_tests.rs
++++ b/core/archipelago/src/federation/pending_preparation_tests.rs
+@@ -95,7 +95,7 @@ fn mint_input() -> MintInput {
+         fips_npub: None,
+     }
+ }
+-async fn mint(dir: &Path, row_id: String, input: MintInput) -> Result<String> {
++async fn mint(dir: &Path, row_id: String, input: MintInput) -> anyhow::Result<String> {
+     let decision = std::sync::Arc::new(outbound_decision_guard().await);
+     protected_owner::mint_invitation(dir, row_id, input, decision).await
+ }
+-- 
+2.39.5 (Apple Git-154)
+

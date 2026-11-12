@@ -18,7 +18,7 @@ No live services, data, firewall rules or credentials were changed by this task.
 - Our compatibility branch starts at `3b295e3e79e228ef1fdacd221feed85191932a28`,
   retaining the KithMoot node and clipboard work in PR53/PR54. Neither PR is
   treated as maintainer-approved or merged.
-- This candidate branch pins beta.2 and contains 33 rebased patches. Main,
+- This candidate branch pins beta.2 and contains 34 rebased patches. Main,
   the existing alpha branches and the live node remain unchanged. These pins
   are preparation for review, not activation authority.
 
@@ -126,7 +126,8 @@ The remaining Wildbloom storage/sales/refund, Spry runtime/TLS/mesh and KithMoot
 private ingress/lifecycle patches have been rebased. Beta's protected ingress,
 new Settings grouping, ecash host facts and broader safe Quadlet resource
 handling are retained. Storage appears within Settings' System group and search.
-A separate patch fixes an upstream beta test's invalid parent-module import.
+Separate test patches fix an upstream beta parent-module import, two ambiguous
+federation result types and the added TURN field in beta's network fixture.
 
 The runtime build now stages patched scripts/configuration with a regenerated
 `RELEASE-PAYLOAD.json` and a separate ForgeSworn provenance record. It retains
@@ -137,11 +138,11 @@ reusing immutable image tags; they do not replace any live app image.
 
 Verified locally so far:
 
-- Exact beta Git source fetched. The archive-derived build tree matched the
-  real Git tree after all 33 compatibility patches, byte for byte. The final
-  series replayed cleanly as `193bbef45d685d47fbfcf2dff0f5760a2d0da80e`.
-  Both the replay and local build have Git tree
-  `47f1d4f7044bc9897fdc394239b79acebd63f430`; their last committer differs.
+- Exact beta Git source fetched. All 34 patches applied cleanly; current
+  assembled source is `18260448bb570d96962f5da2f2e30c163b351dd4`, tree
+  `fadcb6832e0077194aa2fcbbaea5083b8d9e7f47`. The earlier 33-patch local
+  frontend build and clean replay had identical tree
+  `47f1d4f7044bc9897fdc394239b79acebd63f430`; their last committer differed.
 - Dashboard and embedded AIUI type checks; production dashboard build.
 - 125 storage/settings/linked-bridge frontend tests, additional route/login
   tests, and 26 catalogue/provider tests. The old unsigned-store assertion was
@@ -150,6 +151,10 @@ Verified locally so far:
   paths, with synthetic RPC and no payments. Captures are in the review pack.
 - 90 Python bundle/recovery/installer tests; all eight nginx/certificate tests
   and 23 dashboard-public-guard tests in an isolated, offline Linux container.
+- All 22 production-source TLS tests pass in isolated Linux. Ten runtime
+  transaction and four maintenance-drain regressions also pass, covering
+  private app retention, code recovery, interrupted renames and timer choices.
+  These are generated filesystem fixtures, not an installed-node rehearsal.
 - Runtime staging tests cover changed helper bytes, declaration refresh,
   canonical staging and symlink refusal before existing payload replacement.
 
@@ -195,3 +200,14 @@ Maintainer must review and approve UI work on Settings, Storage & selling,
 Sales & customers/refund recording, App Store, linked-signer login and the
 embedded Wildbloom/Spry/KithMoot node screens before merging or approval.
 ZAT pending.
+
+## Repository refresh
+
+The two clean tracked integration worktrees (`feat/kithmoot-node-20261102`
+and `fix/kithmoot-node-clipboard-20261108`) passed `git pull --ff-only` and
+were already current. GitHub refs were fetched for the original checkout.
+The original operator branch, detached alpha source and local patched source
+branches have no tracking upstream; none was switched, reset or merged.
+Full Gitea ref/tag refreshes timed out, including a bounded retry. The exact
+beta tag/source was fetched successfully into this task's separate source
+checkout; the original source checkouts retain their alpha revisions.

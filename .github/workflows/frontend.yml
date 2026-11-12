@@ -55,6 +55,9 @@ jobs:
           sudo apt-get update && sudo apt-get install -y python3-yaml
           npm install --global corepack
           ARCHY_SOURCE=.cache/archy-frontend python3 -m unittest discover -s tests -p test_runtime_payload.py
+          python3 -m unittest discover -s .cache/archy-frontend/scripts/tests -p test_release_payload.py
+          python3 -m unittest discover -s .cache/archy-frontend/scripts/tests -p test_public_update_runtime.py
+          python3 -m unittest discover -s .cache/archy-frontend/scripts/tests -p test_public_update_maintenance.py
           scripts/build-frontend.sh .cache/archy-frontend
       - name: Dashboard UI tests
         if: steps.plan.outputs.skip != 'true'
