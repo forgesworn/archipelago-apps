@@ -47,6 +47,8 @@ jobs:
         if: always()
         with:
           name: beta-migration-${{ github.sha }}
-          path: .local/beta-migration-*
+          path: |
+            .local/beta-migration-result.json
+            .local/beta-migration-journal.log
           if-no-files-found: ignore
           retention-days: 14

@@ -15,6 +15,8 @@ import tempfile
 
 
 def inventory(root):
+    if any(path.is_symlink() for path in [root, *root.parents]):
+        raise ValueError('Symlink in recipe ancestry')
     result = {}
     for path in [root, *sorted(root.rglob('*'))]:
         mode = path.lstat().st_mode

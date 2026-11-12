@@ -10,6 +10,7 @@ import secrets
 import shutil
 import sqlite3
 import ssl
+import sys
 import subprocess
 import tarfile
 import time
@@ -38,7 +39,9 @@ def wait(check, message, seconds=180):
     while time.monotonic()<deadline:
         try:
             if check(): return
-        except Exception as error: last=type(error).__name__
+        except Exception as error:
+            last=type(error).__name__
+            if isinstance(error, subprocess.CalledProcessError): last += ': '+str(error.stderr)[-1000:]
         time.sleep(1)
     raise AssertionError(f'{message}; last error class: {last}')
 

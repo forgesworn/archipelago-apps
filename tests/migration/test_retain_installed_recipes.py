@@ -43,6 +43,12 @@ class RetentionTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.prepare()
         self.assertFalse(self.out.exists())
 
+    def test_symlink_parent_refuses_before_output(self):
+        (self.old/'apps').rename(self.old/'actual-apps')
+        (self.old/'apps').symlink_to(self.old/'actual-apps', target_is_directory=True)
+        with self.assertRaises(ValueError): self.prepare()
+        self.assertFalse(self.out.exists())
+
     def test_existing_output_preserved(self):
         self.out.mkdir();(self.out/'sentinel').write_text('keep')
         with self.assertRaises(ValueError): self.prepare()
