@@ -40,6 +40,13 @@ installed fixture apps and synthetic payment records. Review light and dark
 themes and empty, loading, failed and successful reads. This headless node
 does not include kiosk acceptance.
 
+The public catalogue fetched on 12 November failed independent signature
+verification and has no entries for our four node integrations; see the
+[catalogue evidence](../../archy-beta2-upgrade.md#known-beta-integration-differences).
+Verified-catalogue success needs an authenticated candidate accepted by the
+unchanged backend verifier. Synthetic UI responses only qualify rendering;
+they cannot establish working integrated App Store installation.
+
 1. Sign in at `/login`, then open `/dashboard/settings`. Find Storage & selling
    through both the System group and search.
 2. At `/dashboard/settings/storage`, edit limits, save a draft and review the

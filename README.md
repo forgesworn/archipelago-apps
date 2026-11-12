@@ -30,9 +30,10 @@ released only after the public image is available for both architectures.
 The [24 October delivery record](docs/spry-delivery-20261024.md) records released
 versions, fresh-host checks and remaining physical acceptance.
 For an installed 1.9.1 node, the [existing-node updater](docs/existing-node-update.md)
-documents alpha updates with backup and rollback. Beta requires a verified
-catalogue entry for new Spry installs; the unsigned community entry does not
-grant installation. Existing installed relays require separate qualification.
+documents alpha updates with backup and rollback. Beta requires verified
+catalogue entries for new App Store installs. Authenticated catalogue availability
+and entries for our apps remain outstanding; unsigned community metadata does
+not grant installation. Existing installed apps require separate qualification.
 
 The earlier `spry-turn-lab` experiment and independent transport qualification
 remain documented in [Archy call services](docs/archy-call-services.md).

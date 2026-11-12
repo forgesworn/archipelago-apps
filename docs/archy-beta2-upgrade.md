@@ -213,6 +213,25 @@ boundary is retained. New Spry store installation is unqualified until a
 supported verified catalogue path exists; the existing installed relay must
 remain in place and be qualified through installed-app controls.
 
+The [current public catalogue](https://source.archipelago-foundation.org/lfg2025/archy/raw/branch/main/releases/app-catalog.json),
+fetched on 12 November, reports `updated: 2026-10-05`. Its claimed release-root
+signature did not pass independent verification, so it is not qualification
+evidence for authenticated catalogue availability. It has no entries for `spry`, `wildbloom`,
+`wildbloom-node` or `kithmoot-node`; new App Store installation therefore needs
+a supported verified catalogue path for each, not only Spry. This observation
+does not authorise removing or replacing any installed private app.
+
+The catalogue SHA-256 is
+`ba2cbc4dafbf3c4d843ea2cac55910c279ea3b478aaf5075f64773346bb3f1b2`, identical
+to `releases/app-catalog.json` in pinned beta source. The verifier uses the
+source's sorted, compact UTF-8 JSON preimage with both signature fields removed,
+and the pinned Ed25519 root. As a positive control it successfully verifies the
+downloaded beta release manifest (SHA-256
+`59234917bd97a1f89dc7d5b77292d08fa40a4c7d3b085b82b1cf9b276b2eabe0`).
+Resolve authenticated catalogue availability before claiming working beta
+App Store support. Do not suppress verification or use the rejected catalogue
+as installation authority.
+
 This derivative cannot reuse the upstream release signature to authorise its
 modified backend/frontend. Do not feed our bundle through official signed OTA
 as though it were the upstream artefact. A tested operator migration path is
@@ -246,4 +265,13 @@ real Podman 5.4.2 generator from upstream commit
 `be85287fcf4590961614ee37be65eeb315e5d9ff`. Tor remains offline inside the isolated
 harness. This qualifies generation only; it does not upgrade the runner's
 Podman runtime or the live node. The older stop-order generator exclusion has
-also been removed. The corrected full suite still needs its passing result.
+also been removed. The corrected full suite, seven isolated host-operation
+tests, exact identity patch checks and all selected signer/integration modules
+passed in [backend run 43261318325](https://github.com/forgesworn/archipelago-apps/actions/runs/43261318325).
+The packaged Wildbloom storage-profile check and release backend build also
+passed. The matching frontend and fresh Debian host checks are still running;
+this is not yet a complete backend workflow pass.
+
+A final read-only node check found manager/nginx active, health `ok`, recovery
+complete and the same alpha version and binary hash recorded above. No live
+upgrade or backup was performed.
