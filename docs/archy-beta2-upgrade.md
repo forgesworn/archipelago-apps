@@ -1,6 +1,7 @@
 # Archy 2.1.0-beta.2 compatibility and node preservation
 
-Status: preparation in progress; **not approved for a live upgrade**.
+Status: compatibility candidate passes backend/frontend CI and the fresh-host
+fixture; **not approved for a live upgrade**.
 Scope: the owner confirmed only `demo.forgesworn.dev` (`95.216.164.146`).
 No live services, data, firewall rules or credentials were changed by this task.
 
@@ -121,6 +122,35 @@ during reconciliation unless the installed version is properly retained; copying
 an old manifest alone is insufficient proof. These conditions must survive a
 second manager restart and interrupted recovery on the disposable node.
 
+### Secrets format and rollback
+
+Beta's security RPC opens the encrypted secrets manager through
+`SecretsManager::open_protected`. It migrates `secrets/<app>/*.secret` records
+from `ARCHI_ENC1` to `ARCHI_ENC2` and retains the random key in
+`secrets/.manager/key-v2`. The alpha implementation only understands the old
+envelope. Switching back to the alpha binary after v2 records exist is therefore
+not a qualified rollback. Preserve the entire secrets tree and its matching
+key; never regenerate the key to work around a failed read.
+
+Legacy authentication derives its key from the original data-directory path.
+An isolated restore rehearsal must preserve `/var/lib/archipelago` inside the
+disposable host, or use an explicitly reviewed offline recovery procedure that
+retains the original derivation. Simply moving the legacy store to a different
+data directory and opening it does not establish recovery.
+
+A read-only count on the live node found zero `secrets/*/*.secret` records and
+no `.manager/key-v2`. This concerns that specific encrypted manager store;
+the node still has identities, wallet state and other application secrets that
+must be backed up. Repeat the inventory at cutover and account for records
+created during beta use before attempting any rollback.
+
+All five upstream protected-store migration tests passed in an offline Linux
+container using generated records and this worktree's existing Rust target.
+They cover preserved values and reopening, corrupt/wrong-key refusal before
+record replacement, missing/public-key refusal, interrupted migration and
+symlink custody, and independent random keys/unknown-envelope refusal. This
+does not establish restoration of the live node's complete state.
+
 ## Current installer safeguard
 
 `node/install-lite.sh` now refuses either runtime when any existing Archipelago
@@ -164,6 +194,9 @@ Verified locally so far:
 - 125 storage/settings/linked-bridge frontend tests, additional route/login
   tests, and 26 catalogue/provider tests. The old unsigned-store assertion was
   replaced with an explicit rejection test for beta's authenticated catalogue.
+- A focused 31-test fresh-authorisation/linked-bridge run passes, covering the
+  beta signing grant UI and existing bridge behaviour. The integrated app
+  consent, password/TOTP and linked-device flow still requires maintainer review.
 - Desktop/mobile browser storage, draft/apply, sales, refund-record and failure
   paths, with synthetic RPC and no payments. Captures are in the review pack.
 - 90 Python bundle/recovery/installer tests; all eight nginx/certificate tests
@@ -196,7 +229,7 @@ staging tests. The local ARM container could run 26 of those 27 payload cases;
 the remaining native-manifest fixture requires x86_64 and passed in CI.
 [Frontend run](https://github.com/forgesworn/archipelago-apps/actions/runs/43258922145).
 
-Linux backend, isolated installed-node migration and physical/client checks
+Backend CI, isolated installed-node migration and physical/client checks
 are separate gates. No current complete off-host recovery set or restore
 qualification is claimed.
 
@@ -239,7 +272,7 @@ still required, and the old binary/frontend-only updater remains guarded.
 
 [Maintainer review pack and screenshots](reviews/archy-beta2-20261112/README.md).
 Maintainer must review and approve UI work on Settings, Storage & selling,
-Sales & customers/refund recording, App Store, linked-signer login and the
+Sales & customers/refund recording, App Store, linked-signer login, Fresh authorisation and the
 embedded Wildbloom/Spry/KithMoot node screens before merging or approval.
 ZAT pending.
 
@@ -250,9 +283,10 @@ and `fix/kithmoot-node-clipboard-20261108`) passed `git pull --ff-only` and
 were already current. GitHub refs were fetched for the original checkout.
 The original operator branch, detached alpha source and local patched source
 branches have no tracking upstream; none was switched, reset or merged.
-Full Gitea ref/tag refreshes timed out, including a bounded retry. The exact
-beta tag/source was fetched successfully into this task's separate source
-checkout; the original source checkouts retain their alpha revisions.
+Full Gitea ref/tag refreshes timed out, including a bounded retry. The beta
+tag identity was verified remotely and its exact source commit fetched into
+this task's separate shallow checkout. The original source checkouts retain
+their alpha revisions; a complete ref/tag refresh is not claimed.
 
 ## Backend CI qualification
 
@@ -274,10 +308,39 @@ frontend build also passed. The fresh Debian host installed successfully and
 ran Spry through readiness, stop, start and restart. It then correctly refused
 the older fixture's signing request because beta requires fresh authorisation.
 The fixture now requests a session/operation-bound one-use grant and verifies
-both missing-grant and token-replay refusal. A new complete CI run is required;
-the earlier run is not an overall pass. The next run also retains its exact
-backend/frontend pair and input hashes as a 14-day review artefact, even if a
-later host check fails.
+both missing-grant and token-replay refusal. The complete rerun at
+`664be6ce144931625c9e09ff66245c77914f186e` passed all these stages, including
+the fresh Debian host, on 12 November at 17:53 UTC:
+[backend run 43268204623](https://github.com/forgesworn/archipelago-apps/actions/runs/43268204623).
+The full suite again passed 3,119 tests, with 29 ignores and eight exclusions;
+the seven host cases passed separately. The container suite passed 104 tests
+and production TLS passed 22. Release publication was skipped on this branch.
+
+The generated [fresh-host evidence](reviews/archy-beta2-20261112/fresh-host-evidence.json)
+records actual controller installation, seeded FIPS, Spry readiness and
+uninstall, dashboard stop/start/restart, LAN/mDNS owner origins, foreign-origin
+refusal, fresh signing grants and both grant/owner-proof replay refusal.
+This is a fresh Docker-runtime host test, not migration of the existing Podman
+node, Docker Desktop qualification or physical home-network acceptance.
+
+The [exact backend/frontend pair](https://github.com/forgesworn/archipelago-apps/actions/runs/43268204623/artifacts/13967879604)
+is retained for 14 days. Its downloaded archives, source identity and input
+hashes were verified locally:
+
+- Backend: `.cache/beta2-node-review/backend-review/archipelago`
+  (82,369,024 bytes), SHA-256
+  `e887b68d4232523bbf48a722b906b4759e9bf3270b98cc604630d8d92f57124d`.
+- Backend input digest:
+  `cb4cc545e29dbe65df1ed3b40b9c0ca362fcf52a4ee7f91dc79c9f23bdfbcb57`.
+- Source commit `18260448bb570d96962f5da2f2e30c163b351dd4`, tree
+  `fadcb6832e0077194aa2fcbbaea5083b8d9e7f47`.
+- The matching frontend is byte-identical to the retained local archive and
+  earlier frontend CI artefact documented above. The duplicate download was
+  removed after comparison; the canonical local frontend and backend remain.
+
+No task-owned fixture server, browser or test container remains running.
+The unmerged worktree, source checkouts and named review artefacts are retained
+for maintainer review and installed-node migration qualification.
 
 A final read-only node check found manager/nginx active, health `ok`, recovery
 complete and the same alpha version and binary hash recorded above. No live

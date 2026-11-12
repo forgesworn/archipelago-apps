@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "scope": "fresh-debian-docker-host-install",
+  "realRustController": true,
+  "existingDockerRuntime": true,
+  "seededFips": true,
+  "spryReady": true,
+  "ownerPairingScreen": true,
+  "spryUninstall": true,
+  "ownerLanAndMdnsOrigins": true,
+  "foreignOriginRefused": true,
+  "realNodeOwnerApprovals": true,
+  "ownerProofReplayRefused": true,
+  "freshSigningAuthorization": true,
+  "authorizationTokenReplayRefused": true,
+  "dashboardStopStartRestart": true,
+  "physicalHomeNetwork": false,
+  "dockerDesktopQualified": false
+}

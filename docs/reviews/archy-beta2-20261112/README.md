@@ -1,7 +1,7 @@
 # Archy beta 2 maintainer review pack
 
 **Maintainer must review and approve UI work on Settings, Storage & selling,
-Sales & customers/refund recording, App Store, linked-signer login and the
+Sales & customers/refund recording, App Store, linked-signer login, Fresh authorisation and the
 embedded Wildbloom/Spry/KithMoot node screens before merging or approval. ZAT pending.**
 
 No maintainer has been contacted. This pack does not supersede the outstanding
@@ -27,6 +27,14 @@ PR53/PR54 review or authorise deployment to `demo.forgesworn.dev`.
   CI at `dd8216be3b66a2870ece8b81451ef6767322e746` produced the same archive.
   [Download the exact CI review candidate](https://github.com/forgesworn/archipelago-apps/actions/runs/43258922145/artifacts/13962842901)
   (14-day retention). This is a review candidate, not a deployed build.
+- The matching [complete node candidate](https://github.com/forgesworn/archipelago-apps/actions/runs/43268204623/artifacts/13967879604)
+  passed backend CI and the disposable fresh Debian host fixture at integration
+  commit `664be6ce144931625c9e09ff66245c77914f186e`. Backend SHA-256:
+  `e887b68d4232523bbf48a722b906b4759e9bf3270b98cc604630d8d92f57124d`.
+  Source identity and frontend bytes match the candidate above. Full hashes and
+  local retention paths are in the [upgrade evidence](../../archy-beta2-upgrade.md#backend-ci-qualification).
+  [Fresh-host results](fresh-host-evidence.json) cover generated state only;
+  existing-node migration and integrated maintainer review remain pending.
 
 ## Setup and checks
 
@@ -61,6 +69,9 @@ they cannot establish working integrated App Store installation.
 6. Open `/dashboard/app-session/wildbloom`, `/dashboard/app-session/spry` and
    `/dashboard/app-session/kithmoot-node`. Exercise the identity chooser and
    `/nostr-signer` broker through the app, plus existing rooms and clipboard.
+   For signing, review the existing app consent and beta fresh-authorisation
+   dialog: cancellation, incorrect password/TOTP and successful confirmation.
+   A remembered app consent is not a substitute for the fresh signing grant.
 
 | Screen | Steps | Expected result |
 | --- | --- | --- |
@@ -70,6 +81,7 @@ they cannot establish working integrated App Store installation.
 | Refund recording | Open a completed-refund record, supply its payment hash and confirm customer receipt. | Save is disabled until confirmation. Recording a historical refund does not send a payment or remove the allowance. Automatic recovery refers to the original payment. |
 | App Store | Load a verified catalogue plus community metadata, then make the verified catalogue unavailable. | Signed versions/images remain authoritative. Unsigned Spry metadata cannot grant installation or native integration. A new Spry store install is currently unqualified; do not interpret its absence as permission to remove the installed relay. |
 | Linked-signer login and app identity chooser | On an isolated node, use an existing linked signer, enrol another, cancel a request and select identities in an embedded app. | Existing identities remain selectable; cancellation/rejection is clear; signing requests stay bound to the expected node origin. This integrated browser/device review remains pending. |
+| Fresh authorisation | Trigger embedded signing, inspect the operation, cancel, submit incorrect credentials and then approve with the generated owner credentials. | The grant is bound to the frozen operation and session, used once and never persisted or automatically reacquired. Private event content stays out of the password dialog. Linked-device approval remains a separate signer step. |
 | Embedded Wildbloom, Spry and KithMoot node | On an isolated upgraded fixture, open the existing apps and rooms, inspect status, copy the node information and exercise the signer flow. | Existing data, configuration and rooms remain present; clipboard and private signer routes work. Production/client acceptance remains pending. |
 
 ## Captures and evidence limits
