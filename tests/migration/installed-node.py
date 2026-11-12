@@ -83,6 +83,9 @@ def inspect(app):
 
 
 def running(app):
+    exists=subprocess.run([*USER,'podman','container','exists',app],capture_output=True)
+    if exists.returncode==1: return False
+    assert exists.returncode==0, 'Could not determine container presence'
     return inspect(app)['State']['Running']
 
 
@@ -133,7 +136,12 @@ run('chown','-R','1000:1000','/opt/archipelago')
 run('systemctl','restart','archipelago')
 wait(lambda: healthy('1.9.1'), 'Alpha restart failed')
 rpc('auth.login',{'password':password})
-for app in APPS:
+install_window=time.monotonic()
+for index, app in enumerate(APPS):
+    if index==5:
+        # The real alpha guard permits five installs per five minutes.
+        print('Waiting for the unchanged install rate-limit window',file=sys.stderr,flush=True)
+        time.sleep(max(0,301-(time.monotonic()-install_window)))
     wait(idle,'Alpha lifecycle busy')
     rpc('package.install',{'id':app,'dockerImage':'localhost/migration-fixture:1'})
     wait(lambda: running(app),f'Alpha did not install {app}')
@@ -142,26 +150,34 @@ rpc('package.stop',{'id':APPS[-1]})
 wait(lambda: not running(APPS[-1]),'Stopped app did not stop')
 # Write sentinels to the real anonymous volume mountpoints after installation.
 volumes={}
-for app in APPS:
+for app in APPS[:-1]:
     mounts=inspect(app)['Mounts']
     for mount in mounts:
         if mount['Destination'] in ('/config','/database'):
             path=Path(mount['Source'])/'migration-sentinel'
             path.write_text(f'generated:{app}:{mount["Destination"]}')
+            os.chown(path,100123,100456)
+            os.chmod(path,0o640)
             volumes[str(path)]=digest(path)
-assert len(volumes)==12, 'Image anonymous volumes were not created'
+assert len(volumes)==10, 'Image anonymous volumes were not created'
 # Snapshot after alpha itself has performed its normal reconciliation.
 run('systemctl','restart','archipelago')
 wait(lambda: healthy('1.9.1'),'Alpha second baseline startup failed')
 wait(idle,'Alpha baseline lifecycle busy')
-before={app:inspect(app) for app in APPS}
+before={app:inspect(app) for app in APPS[:-1]}
+unit_dir=Path('/home/archipelago/.config/containers/systemd')
+units={app:digest(unit_dir/f'{app}.container') for app in APPS}
 files={str(DATA/app/name):digest(DATA/app/name) for app in APPS for name in ('records.sqlite','blob')}
 recipes={app:digest(Path('/opt/archipelago/apps')/app/'manifest.yml') for app in APPS}
-# Quiesce all generated writers before the backup. Never perform this on live data.
+keys={str(DATA/'identity'/name):digest(DATA/'identity'/name) for name in ('node_key','node_key.pub')}
+assert keys
+# Quadlet's automatic removal can delete image-created anonymous volumes on
+# exit. Freeze the generated workloads instead; keep containers and mounts.
+# This is a crash-consistent fixture snapshot, verified by database recovery.
 run('systemctl','stop','archipelago')
-for app in APPS:
-    user('systemctl','--user','stop',f'{app}.service')
-wait(lambda: all(not running(app) for app in APPS),'Fixture writers did not stop')
+for app in APPS[:-1]: user('podman','pause',app)
+assert all(inspect(app)['State']['Paused'] for app in APPS[:-1])
+run('sync')
 backup=Path('/tmp/generated-pre-beta.tar')
 roots=['var/lib/archipelago','opt/archipelago','etc/archipelago','etc/nginx','etc/ufw',
        'etc/ssh','etc/systemd/system/archipelago.service','home/archipelago/.config/containers',
@@ -170,7 +186,7 @@ run('tar','--xattrs','--acls','--numeric-owner','-cpf',str(backup),'-C','/',*roo
 restore=Path('/tmp/generated-restore');restore.mkdir()
 run('tar','--xattrs','--acls','--numeric-owner','-xpf',str(backup),'-C',str(restore))
 run('tar','--xattrs','--acls','--compare','-f',str(backup),'-C',str(restore))
-for path, expected in {**files,**volumes}.items():
+for path, expected in {**files,**volumes,**keys}.items():
     restored=restore/path.lstrip('/')
     assert digest(restored)==expected
     original=Path(path)
@@ -182,6 +198,7 @@ for app in APPS:
     with sqlite3.connect(restore/str(DATA/app/'records.sqlite').lstrip('/')) as db:
         assert db.execute('pragma integrity_check').fetchone()==('ok',)
         assert db.execute('select value from records where id=?',('existing-room',)).fetchone()==('generated history',)
+for app in APPS[:-1]: user('podman','unpause',app)
 # Prepare an offline derivative. The installed tree itself is never the input.
 snapshot=Path('/tmp/installed-recipes');snapshot.mkdir()
 shutil.copytree('/opt/archipelago/apps',snapshot/'apps')
@@ -229,13 +246,15 @@ for iteration in range(2):
     assert any(item['id']==identity['id'] and item['nostr_pubkey']==identity['nostr_pubkey'] for item in identities)
     wait(idle,'Beta lifecycle busy')
     for app in APPS:
-        actual=inspect(app)
-        assert actual['Image']==before[app]['Image'],f'Image changed: {app}'
-        assert actual['Id']==before[app]['Id'],f'Container replaced: {app}'
-        assert actual['Mounts']==before[app]['Mounts'],f'Mounts changed: {app}'
+        if app!=APPS[-1]:
+            actual=inspect(app)
+            assert actual['Image']==before[app]['Image'],f'Image changed: {app}'
+            assert actual['Id']==before[app]['Id'],f'Container replaced: {app}'
+            assert actual['Mounts']==before[app]['Mounts'],f'Mounts changed: {app}'
+        assert digest(unit_dir/f'{app}.container')==units[app],f'Quadlet changed: {app}'
         assert running(app)==(app!=APPS[-1]),f'Running/stopped choice changed: {app}'
         assert digest(Path('/opt/archipelago/apps')/app/'manifest.yml')==recipes[app]
-    for path,expected in {**files,**volumes}.items(): assert digest(Path(path))==expected
+    for path,expected in {**files,**volumes,**keys}.items(): assert digest(Path(path))==expected
     if iteration==0: run('systemctl','restart','archipelago')
 assert not Path('/etc/archipelago/public-update-runtime.json').exists()
 print(json.dumps({'passed':True,'scope':'generated-alpha-1.9.1-to-beta2-rootless-podman',
@@ -244,7 +263,7 @@ print(json.dumps({'passed':True,'scope':'generated-alpha-1.9.1-to-beta2-rootless
     'fixtureAppCount':6,'anonymousVolumeCount':len(volumes),'secondBetaRestart':True,
     'imagesContainersMountsRetained':True,'stoppedAppRetained':True,
     'existingPasswordLogin':True,'existingIdentityRetained':True,'privateAndOverlappingRecipesRetained':True,
-    'generatedDatabaseBlobAndVolumeRestore':True,'numericOwnershipModesAndXattrs':True,
+    'generatedDatabaseBlobAndVolumeRestore':True,'backupUsedPauseNotContainerExit':True,'numericOwnershipModesAndXattrs':True,
     'interruptedPairRefusedBeforeBetaStart':True,'prestartCodeRecovery':True,
     'liveNodeDataUsed':False,'exactPrivateAlphaBuildQualified':False,
     'actualSixApplicationsQualified':False,'postBetaWritesRollbackQualified':False}))
