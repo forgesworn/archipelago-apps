@@ -114,7 +114,7 @@ for app in APPS:
     run('chown','-R','1000:1000',str(data))
     manifest={'app':{'id':app,'name':app,'version':'1.0.0',
         'description':'Generated preservation fixture; no real application or funds',
-        'container':{'image':'localhost/migration-fixture:1','pull_policy':'if-not-present','network':'none'},
+        'container':{'image':'localhost/migration-fixture:1','pull_policy':'if-not-present','network':'host'},
         'resources':{'memory_limit':'64Mi','disk_limit':'1Gi'},
         'security':{'capabilities':[],'readonly_root':True,'network_policy':'isolated'},
         'ports':[],'volumes':[{'type':'bind','source':str(data),'target':'/data','options':['rw']}],
@@ -122,6 +122,13 @@ for app in APPS:
     for base in [Path('/opt/archipelago/apps'),Path('/opt/archipelago/web-ui/archipelago-runtime/apps')]:
         directory=base/app;directory.mkdir(parents=True,exist_ok=True)
         (directory/'manifest.yml').write_text(yaml.safe_dump(manifest))
+# The generated owner has explicitly not installed the rest of the catalogue.
+not_installed=[]
+for path in Path('/opt/archipelago/apps').glob('*/manifest.yml'):
+    value=yaml.safe_load(path.read_text())
+    if value['app']['id'] not in APPS: not_installed.append(value['app']['id'])
+(DATA/'user-uninstalled.json').write_text(json.dumps(not_installed))
+run('chown','1000:1000',str(DATA/'user-uninstalled.json'))
 run('chown','-R','1000:1000','/opt/archipelago')
 run('systemctl','restart','archipelago')
 wait(lambda: healthy('1.9.1'), 'Alpha restart failed')

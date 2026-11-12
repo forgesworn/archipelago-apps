@@ -8,7 +8,7 @@ work=$(mktemp -d)
 mkdir -p "$root/.local"
 cleanup() {
   result=$?
-  docker exec "$name" journalctl -u archipelago --no-pager -n 800 > "$root/.local/beta-migration-journal.log" 2>&1 || true
+  docker exec "$name" journalctl --no-pager -n 3000 > "$root/.local/beta-migration-journal.log" 2>&1 || true
   if [ "$result" != 0 ]; then
     tail -n 100 "$root/.local/beta-migration-journal.log" >&2
   fi
