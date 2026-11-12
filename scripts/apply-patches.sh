@@ -6,5 +6,5 @@ dest=${1:-$root/.cache/archy}
 git -C "$dest" -c user.name=archipelago-apps -c user.email=ci@invalid am --abort >/dev/null 2>&1 || true
 shopt -s nullglob
 for p in "$root"/upstream/patches/*.patch; do
-  git -C "$dest" -c user.name=archipelago-apps -c user.email=ci@invalid am --3way "$p"
+  git -C "$dest" -c user.name=archipelago-apps -c user.email=ci@invalid am --committer-date-is-author-date --3way "$p"
 done

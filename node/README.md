@@ -98,11 +98,12 @@ gate; it does not migrate existing Podman containers.
    Expect three `active`. The installer finishes by requesting
    `https://<node-ip>/` from the node itself, then the backend's unauthenticated
    JSON-RPC `health` method through nginx, and fails if either does not answer.
-   It is safe to re-run, for example with a new backend or frontend release: it
-   restarts the service, regenerates the SSH host keys, and keeps the existing
-   TLS CA (a re-run reissues the leaf certificate under the same CA, so its
-   fingerprint changes). Re-verify and accept the new SSH host-key fingerprint
-   before reconnecting. The installer never recursively chowns
+   This installer is for a fresh host only. It refuses existing Archipelago
+   state before making changes. Do not re-run it to upgrade: it resets the
+   firewall and regenerates SSH host keys. For an existing server, retain its
+   data, configuration and host identity and use a separately qualified upgrade
+   with a verified recovery path. See the [beta compatibility assessment](../docs/archy-beta2-upgrade.md).
+   The installer never recursively chowns
    `/var/lib/archipelago`, where image layers and app volumes belong to
    subuid-mapped ids.
 

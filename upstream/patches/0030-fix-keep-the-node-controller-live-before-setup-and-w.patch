@@ -1,0 +1,91 @@
+From 10de24f2eaa8b755fa8675526da23e31cfeeda80 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 09:34:11 +0000
+Subject: [PATCH 30/32] fix: keep the node controller live before setup and
+ while paused
+
+---
+ .../src/container/kithmoot_node.rs            |  2 +-
+ .../src/container/prod_orchestrator.rs        | 42 +++++++++++++++++++
+ 2 files changed, 43 insertions(+), 1 deletion(-)
+
+diff --git a/core/archipelago/src/container/kithmoot_node.rs b/core/archipelago/src/container/kithmoot_node.rs
+index d2afa02..a5c2d14 100644
+--- a/core/archipelago/src/container/kithmoot_node.rs
++++ b/core/archipelago/src/container/kithmoot_node.rs
+@@ -222,7 +222,7 @@ pub async fn prepare_delete(runtime: &crate::config::ContainerRuntime) -> Result
+                 "exec",
+                 "--user",
+                 "1000:1000",
+-                "archy-kithmoot-node",
++                "kithmoot-node",
+                 "/opt/kithmoot-node/current/runtime/bin/node",
+                 "/opt/kithmoot-node/controller/controller.mjs",
+                 "prepare-delete",
+diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
+index 518b39d..cd28d39 100644
+--- a/core/archipelago/src/container/prod_orchestrator.rs
++++ b/core/archipelago/src/container/prod_orchestrator.rs
+@@ -804,6 +804,25 @@ async fn wait_for_manifest_host_ports(
+     // loop (observed on .228 after netbird's manifest deploy). Default protocol
+     // (empty) is tcp.
+     let container_name = compute_container_name(manifest);
++    // The node's controller must remain available before setup and while the
++    // operator has paused its backends. TURN readiness belongs to that signed
++    // status screen; probing those optional listeners would restart the UI
++    // before the operator can configure it or while deliberately paused.
++    let controller_port = if manifest.app.id == "kithmoot-node" {
++        let main = manifest
++            .app
++            .interfaces
++            .get("main")
++            .ok_or_else(|| anyhow::anyhow!("KithMoot node needs its operator interface"))?;
++        anyhow::ensure!(
++            manifest.app.ports.iter().any(|port| port.host == main.port
++                && matches!(port.protocol.to_ascii_lowercase().as_str(), "" | "tcp")),
++            "KithMoot node operator interface needs a declared TCP port"
++        );
++        Some(main.port)
++    } else {
++        None
++    };
+     let mut addresses = vec![IpAddr::V4(Ipv4Addr::LOCALHOST)];
+     let network = manifest
+         .app
+@@ -829,6 +848,7 @@ async fn wait_for_manifest_host_ports(
+         .ports
+         .iter()
+         .filter(|p| matches!(p.protocol.to_ascii_lowercase().as_str(), "" | "tcp"))
++        .filter(|p| controller_port.is_none_or(|port| p.host == port))
+         .map(|p| p.host)
+     {
+         let ready = tokio::select! {
+@@ -8327,6 +8347,28 @@ app:
+         assert!(wait_for_host_port(&[wrong, right], port, 3).await);
+     }
+ 
++    #[tokio::test]
++    async fn node_controller_liveness_accepts_unconfigured_or_paused_backends() {
++        let controller = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let ui = controller.local_addr().unwrap().port();
++        let absent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let backend = absent.local_addr().unwrap().port();
++        drop(absent);
++        let yaml = format!("app:\n  id: kithmoot-node\n  name: Node\n  version: 1.0.0\n  container:\n    image: localhost/node:test\n  ports:\n    - {{host: {backend}, container: {backend}, protocol: tcp}}\n    - {{host: {ui}, container: {ui}, protocol: tcp}}\n  interfaces:\n    main: {{type: ui, port: {ui}, protocol: https}}\n");
++        let manifest = AppManifest::parse(&yaml).unwrap();
++        let data = tempfile::tempdir().unwrap();
++        wait_for_manifest_host_ports(&manifest, 1, data.path())
++            .await
++            .unwrap();
++        drop(controller);
++        assert!(
++            wait_for_manifest_host_ports(&manifest, 1, data.path())
++                .await
++                .is_err(),
++            "a missing controller must still fail liveness"
++        );
++    }
++
+     #[tokio::test]
+     async fn host_port_wait_aborts_on_user_stop_marker() {
+         // A stop the user requests mid-wait must break the (up to 420s)

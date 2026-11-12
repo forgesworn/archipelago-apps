@@ -16,6 +16,16 @@ bundle=${1:?usage: install-lite.sh <bundle-dir>}
 runtime=${2:-podman}
 case "$runtime" in podman|docker) ;; *) echo 'runtime must be podman or docker' >&2; exit 1 ;; esac
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+# A fresh install resets the firewall, regenerates SSH host keys and replaces
+# runtime configuration. Never use it as an in-place version upgrade, even if
+# the daemon is stopped or the installation is only partly configured.
+for existing in /var/lib/archipelago /etc/archipelago /opt/archipelago \
+                /usr/local/bin/archipelago /etc/systemd/system/archipelago.service; do
+  if [ -e "$existing" ] || [ -L "$existing" ]; then
+    echo "Fresh installation only: $existing already exists. Use a reviewed, backed-up upgrade; no changes made." >&2
+    exit 1
+  fi
+done
 . "$bundle/PINS"
 test -f "$bundle/recover-wildbloom-payment.py" || { echo "bundle is missing the payment recovery tool" >&2; exit 1; }
 if [ "$runtime" = docker ]; then

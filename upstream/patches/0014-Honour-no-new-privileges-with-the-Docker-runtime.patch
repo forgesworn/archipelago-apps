@@ -1,0 +1,24 @@
+From 4b07b8fbf35b76fcb8ecc576708b551b81e256a9 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <147930957+TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 20:42:52 +0100
+Subject: [PATCH 14/32] Honour no-new-privileges with the Docker runtime
+
+---
+ core/container/src/runtime.rs | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/core/container/src/runtime.rs b/core/container/src/runtime.rs
+index 6724194..9d21eac 100644
+--- a/core/container/src/runtime.rs
++++ b/core/container/src/runtime.rs
+@@ -831,6 +831,10 @@ impl ContainerRuntime for DockerRuntime {
+             cmd.arg("--read-only");
+         }
+ 
++        if manifest.app.security.no_new_privileges {
++            cmd.args(["--security-opt", "no-new-privileges"]);
++        }
++
+         cmd.args(docker_network_and_ports(manifest, port_offset)?);
+ 
+         // Volumes

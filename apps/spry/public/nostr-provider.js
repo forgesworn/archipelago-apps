@@ -24,6 +24,7 @@
 
   function dashboardOrigin() {
     var url = new URL(window.location.href);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
     url.port = '';
     return url.origin;
   }
@@ -38,13 +39,19 @@
   }
 
   function sendToSignerFrame(message) {
-    if (!signerFrame || !signerFrame.contentWindow) return;
-    signerFrame.contentWindow.postMessage(message, dashboardOrigin());
+    var origin = dashboardOrigin();
+    if (!origin || !signerFrame || !signerFrame.contentWindow) return;
+    signerFrame.contentWindow.postMessage(message, origin);
   }
 
   function postToSigner(message) {
+    var origin = dashboardOrigin();
+    if (!origin) return;
     if (embedded) {
-      window.parent.postMessage(message, '*');
+      // Match the receive-side origin check and the standalone signer path.
+      // A foreign/navigated parent must not receive signing inputs or native
+      // rental/media capabilities merely because it embeds this app.
+      window.parent.postMessage(message, origin);
       return;
     }
     if (!signerFrame) createSignerFrame();
@@ -97,11 +104,12 @@
   }
 
   function createSignerFrame() {
-    if (embedded || signerFrame) return;
+    var origin = dashboardOrigin();
+    if (!origin || embedded || signerFrame) return;
     signerFrame = document.createElement('iframe');
     signerFrame.id = 'archipelago-nostr-signer';
     signerFrame.title = 'Archipelago Nostr signer';
-    signerFrame.src = dashboardOrigin() + '/nostr-signer';
+    signerFrame.src = origin + '/nostr-signer';
     // Keep the broker document alive between requests, but park its compositor
     // surface physically off-screen. Removing or display-hiding a full-screen
     // cross-origin iframe can leave Android WebView (and some mobile Chromium
@@ -329,9 +337,10 @@
   }
 
   window.addEventListener('message', function (e) {
-    var validSource = embedded
-      ? e.source === window.parent && e.origin === dashboardOrigin()
-      : signerFrame && e.source === signerFrame.contentWindow && e.origin === dashboardOrigin();
+    var trustedOrigin = dashboardOrigin();
+    var validSource = trustedOrigin && (embedded
+      ? e.source === window.parent && e.origin === trustedOrigin
+      : signerFrame && e.source === signerFrame.contentWindow && e.origin === trustedOrigin);
     if (!validSource || !e.data) return;
 
     if (!embedded && e.data.type === 'archipelago:signer-ready') {
@@ -363,6 +372,13 @@
     if (e.data.type === 'archipelago:identity-cancelled' ||
         e.data.type === 'archipelago:signer-identity-cancelled') {
       cancelIdentitySelection();
+      return;
+    }
+    if (e.data.type === 'archipelago-rental-progress') {
+      var activeRental = rentalPending[e.data.id];
+      if (!activeRental || ['connecting', 'quoting', 'awaiting-approval', 'paying', 'preparing'].indexOf(e.data.stage) === -1) return;
+      clearTimeout(activeRental.hostTimer);
+      if (activeRental.onProgress) { try { activeRental.onProgress(e.data.stage); } catch (_) {} }
       return;
     }
     if (e.data.type === 'archipelago-rental-response') {
@@ -413,12 +429,17 @@
     return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
   }
 
-  function rentalRequest(action, payload, timeout, signal) {
+  function rentalRequest(action, payload, timeout, signal, onProgress) {
     return new Promise(function (resolve, reject) {
       if (signal && (typeof signal.addEventListener !== 'function' || typeof signal.removeEventListener !== 'function' || typeof signal.aborted !== 'boolean')) { reject(new Error('Invalid rental cancellation signal.')); return; }
       if (signal && signal.aborted) { reject(new Error('Rental request closed.')); return; }
       var id = nativeRequestId();
-      function cleanup() { if (signal) signal.removeEventListener('abort', abort); }
+      var hostTimer;
+      function cleanup() {
+        clearTimeout(hostTimer);
+        queuedMessages = queuedMessages.filter(function (message) { return message.id !== id; });
+        if (signal) signal.removeEventListener('abort', abort);
+      }
       function fail(message) {
         var pending = rentalPending[id]; if (!pending) return;
         delete rentalPending[id]; clearTimeout(pending.timer); cleanup();
@@ -426,28 +447,49 @@
         reject(new Error(message));
       }
       function abort() { fail('Rental request closed. Recover any dispatched payment using the original purchase.'); }
-      rentalPending[id] = { resolve: resolve, reject: reject, cleanup: cleanup, timer: setTimeout(function () {
+      hostTimer = action === 'request' ? setTimeout(function () {
+        fail('Native rental confirmation is unavailable. Open this title from your node dashboard and recover the original purchase; do not pay again.');
+      }, 15000) : undefined;
+      rentalPending[id] = { resolve: resolve, reject: reject, cleanup: cleanup, hostTimer: hostTimer, onProgress: onProgress, timer: setTimeout(function () {
         fail('Rental response unavailable. Recover the same purchase without paying again.');
       }, timeout) };
       if (signal) signal.addEventListener('abort', abort, {once:true});
-      postToSigner(Object.assign({ type: 'archipelago-rental-request', id: id, action: action, playbackProtocol: 2 }, payload));
+      function send() {
+        if (rentalPending[id]) postToSigner(Object.assign({ type: 'archipelago-rental-request', id: id, action: action, playbackProtocol: 2 }, payload));
+      }
+      if (action === 'request' && document.fullscreenElement) {
+        Promise.resolve().then(function () { return document.exitFullscreen(); }).then(send, function () {
+          fail('Leave fullscreen to open the trusted node rental confirmation. No new payment was approved.');
+        });
+      } else send();
     });
   }
   window.archipelagoRental = {
+    inspect: function (offer, options) {
+      return rentalRequest('capabilities', {}, 5000, options && options.signal).then(function (capabilities) {
+        if (!capabilities || capabilities.inspectionProtocol !== 1) throw new Error('Update the node connection to inspect the original purchase.');
+        return rentalRequest('inspect', {offer:offer}, 35000, options && options.signal);
+      });
+    },
     status: function (handle) { return rentalRequest('status', { handle: handle }, 35000); },
     prepare: function (handle, retry) { return rentalRequest('prepare', { handle: handle, retry: retry === true }, 35000); },
     start: function (handle, readyId) { return rentalRequest('start', { handle: handle, ready_id: readyId }, 35000); },
     request: function (offer, options) {
       if (!options || options.playbackProtocol !== 2) return Promise.reject(new Error('Playback protocol 2 is required before requesting a rental.'));
       if (options.renewExpired !== undefined && typeof options.renewExpired !== 'boolean') return Promise.reject(new Error('Invalid rental renewal request.'));
-      return rentalRequest('request', { offer: offer, renewExpired: options.renewExpired === true }, 600000, options.signal);
+      function send() { return rentalRequest('request', { offer: offer, renewExpired: options.renewExpired === true }, 600000, options.signal, typeof options.onProgress === 'function' ? options.onProgress : null); }
+      if (!options.renewExpired) return send();
+      return rentalRequest('capabilities', {}, 5000, options.signal).then(function (capabilities) {
+        if (!capabilities || capabilities.inspectionProtocol !== 1) throw new Error('Update the node connection before renewing.');
+        return send();
+      });
     }
   };
   Object.defineProperty(window.archipelagoRental, 'playbackProtocol', { value: 2, writable: false, configurable: false, enumerable: true });
 
   window.archipelagoMediaRegistration = {
     request: function (action, payload) {
-      if (['select', 'resume', 'submit', 'complete', 'resolve', 'resolve-submit'].indexOf(action) === -1 || !payload || typeof payload !== 'object') {
+      if (['select', 'resume', 'submit', 'complete', 'resolve', 'resolve-submit', 'master-capabilities', 'master-resolve', 'master-approve', 'master-submit', 'master-complete', 'master-recover', 'master-recover-submit'].indexOf(action) === -1 || !payload || typeof payload !== 'object') {
         return Promise.reject(new Error('Invalid native media registration request'));
       }
       return new Promise(function (resolve, reject) {
@@ -460,7 +502,7 @@
         }, 600000) };
         postToSigner({ type: 'archipelago-media-registration-request', id: id, action: action,
           intent: payload.intent, selection: payload.selection, approvalId: payload.approvalId,
-          producerEvent: payload.producerEvent });
+          producerEvent: payload.producerEvent, operation: payload.operation, ownerId: payload.ownerId, producer: payload.producer, asset: payload.asset });
       });
     },
   };
