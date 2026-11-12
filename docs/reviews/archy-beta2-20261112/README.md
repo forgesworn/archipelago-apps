@@ -25,7 +25,7 @@ PR53/PR54 review or authorise deployment to `demo.forgesworn.dev`.
   `783a858a77246c7db526c5328a3dddfeb9dcf9668f75ee3f62b089e1401c8cfb`.
   Its source commit is `3f0b5e0645896af238364d77402f02086979b6b4`.
   This identifies a local review candidate, not a deployed build. CI's pinned
-  Node 20 build may produce different bytes and needs its own reviewed identity.
+  Node 24 build may produce different bytes and needs its own reviewed identity.
 
 ## Setup and checks
 

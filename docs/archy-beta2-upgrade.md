@@ -153,7 +153,11 @@ Verified locally so far:
 - Runtime staging tests cover changed helper bytes, declaration refresh,
   canonical staging and symlink refusal before existing payload replacement.
 
-The local frontend package completed on Node 24.21 (CI uses pinned Node 20).
+The local frontend package completed on Node 24.21. Initial CI exposed the
+upstream Node 20 setting as stale: the locked Vitest and vue-i18n require Node
+22/24, and npm 10 could not install that lockfile. CI now pins Node 24. The local
+artefact below predates that pin correction; its recorded input digest still
+contains the old Node 20 setting, despite the actual build having used Node 24.
 Its two deterministic repacks matched and the upstream complete-archive
 validator accepted the runtime byte declaration and native AIUI receipt:
 
@@ -167,6 +171,10 @@ validator accepted the runtime byte declaration and native AIUI receipt:
 Linux backend, isolated installed-node migration and physical/client checks
 are separate gates. No current complete off-host recovery set or restore
 qualification is claimed.
+
+The first local Linux production check used Rust 1.94.1, which is too old for
+upstream's `AtomicU64::try_update`, and its compiler subsequently received SIGKILL. This is not a backend pass; hosted CI uses the
+current stable toolchain and remains the backend build gate.
 
 ## Known beta integration differences
 
