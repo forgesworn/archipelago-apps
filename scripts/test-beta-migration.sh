@@ -43,5 +43,5 @@ docker exec "$name" runuser -u archipelago -- env XDG_RUNTIME_DIR=/run/user/1000
   DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus podman pull docker.io/library/busybox:1.37.0
 # No live identities or wallet copies: disconnect before generating any state.
 docker exec "$name" sh -c 'ip -4 route del default; ip -6 route del default 2>/dev/null || true'
-docker exec "$name" python3 /rehearsal/installed-node.py > "$root/.local/beta-migration-result.json"
+docker exec -e ARCHY_GENERATED_MIGRATION_FIXTURE=1 "$name" python3 /rehearsal/installed-node.py > "$root/.local/beta-migration-result.json"
 cat "$root/.local/beta-migration-result.json"

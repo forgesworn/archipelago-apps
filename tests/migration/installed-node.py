@@ -17,6 +17,8 @@ import time
 import urllib.request
 import yaml
 
+assert os.environ.get('ARCHY_GENERATED_MIGRATION_FIXTURE')=='1'
+assert Path('/.dockerenv').is_file()
 assert Path('/rehearsal/installed-node.py').is_file()
 assert not subprocess.check_output(['ip','-4','route','show','default']).strip()
 DATA = Path('/var/lib/archipelago')
@@ -26,7 +28,11 @@ USER = ['runuser','-u','archipelago','--','env','XDG_RUNTIME_DIR=/run/user/1000'
 
 
 def run(*args):
-    return subprocess.check_output(args, text=True, stderr=subprocess.PIPE)
+    try:
+        return subprocess.check_output(args, text=True, stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as error:
+        print(error.stderr[-4000:],file=sys.stderr,flush=True)
+        raise
 
 
 def user(*args):
@@ -91,6 +97,18 @@ def running(app):
 
 def digest(path):
     with path.open('rb') as stream: return hashlib.file_digest(stream,'sha256').hexdigest()
+
+
+def install_binary(source):
+    temporary=Path('/usr/local/bin/.archipelago-rehearsal-new')
+    shutil.copy2(source,temporary)
+    os.chmod(temporary,0o755)
+    assert digest(temporary)==digest(Path(source))
+    with temporary.open('rb') as stream: os.fsync(stream.fileno())
+    temporary.replace('/usr/local/bin/archipelago')
+    fd=os.open('/usr/local/bin',os.O_RDONLY|os.O_DIRECTORY)
+    try: os.fsync(fd)
+    finally: os.close(fd)
 
 
 wait(lambda: healthy('1.9.1'), 'Alpha baseline did not recover')
@@ -175,6 +193,7 @@ assert keys
 # exit. Freeze the generated workloads instead; keep containers and mounts.
 # This is a crash-consistent fixture snapshot, verified by database recovery.
 run('systemctl','stop','archipelago')
+pause_started=time.monotonic()
 for app in APPS[:-1]: user('podman','pause',app)
 assert all(inspect(app)['State']['Paused'] for app in APPS[:-1])
 run('sync')
@@ -199,6 +218,7 @@ for app in APPS:
         assert db.execute('pragma integrity_check').fetchone()==('ok',)
         assert db.execute('select value from records where id=?',('existing-room',)).fetchone()==('generated history',)
 for app in APPS[:-1]: user('podman','unpause',app)
+pause_seconds=round(time.monotonic()-pause_started,2)
 # Prepare an offline derivative. The installed tree itself is never the input.
 snapshot=Path('/tmp/installed-recipes');snapshot.mkdir()
 shutil.copytree('/opt/archipelago/apps',snapshot/'apps')
@@ -222,19 +242,17 @@ guard.write_text('[Service]\nExecStartPre=/usr/bin/test ! -e /etc/archipelago/mi
 marker=Path('/etc/archipelago/migration-fixture-pending');marker.touch()
 run('systemctl','daemon-reload')
 shutil.copy2('/usr/local/bin/archipelago','/tmp/alpha-backend')
-shutil.copy2('/beta/backend-review/archipelago','/usr/local/bin/archipelago')
-os.chmod('/usr/local/bin/archipelago',0o755)
+install_binary('/beta/backend-review/archipelago')
 refused=subprocess.run(['systemctl','start','archipelago'],capture_output=True).returncode
 assert refused!=0 and run('systemctl','show','archipelago','-p','MainPID','--value').strip()=='0'
-shutil.copy2('/tmp/alpha-backend','/usr/local/bin/archipelago')
+install_binary('/tmp/alpha-backend')
 marker.unlink();run('systemctl','reset-failed','archipelago');run('systemctl','start','archipelago')
 wait(lambda: healthy('1.9.1'),'Interrupted-pair code recovery failed')
 rpc('auth.login',{'password':password})
 run('systemctl','stop','archipelago');marker.touch()
 # Complete pair installation only inside this disposable guest. No public OTA
 # record is written, no signature is bypassed and no database is rolled back.
-shutil.copy2('/beta/backend-review/archipelago','/usr/local/bin/archipelago')
-os.chmod('/usr/local/bin/archipelago',0o755)
+install_binary('/beta/backend-review/archipelago')
 Path('/opt/archipelago/web-ui').rename('/opt/archipelago/web-ui.alpha-fixture')
 shutil.copytree(prepared,'/opt/archipelago/web-ui')
 run('chown','-R','1000:1000','/opt/archipelago/web-ui')
@@ -260,6 +278,8 @@ assert not Path('/etc/archipelago/public-update-runtime.json').exists()
 print(json.dumps({'passed':True,'scope':'generated-alpha-1.9.1-to-beta2-rootless-podman',
     'baselineBackendSha256':digest(Path('/tmp/alpha-backend')),
     'betaBackendSha256':digest(Path('/usr/local/bin/archipelago')),
+    'backupSha256':digest(backup),'backupBytes':backup.stat().st_size,
+    'generatedPauseSeconds':pause_seconds,'retainedManifestSha256':recipes,'quadletSha256':units,
     'fixtureAppCount':6,'anonymousVolumeCount':len(volumes),'secondBetaRestart':True,
     'imagesContainersMountsRetained':True,'stoppedAppRetained':True,
     'existingPasswordLogin':True,'existingIdentityRetained':True,'privateAndOverlappingRecipesRetained':True,
