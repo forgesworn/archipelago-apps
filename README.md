@@ -7,6 +7,12 @@ builds a pinned release of the app. Images are published to
 `ghcr.io/forgesworn/<id>`. `upstream/patches/` holds changes we propose to
 Archipelago itself.
 
+This branch prepares compatibility with **Archy 2.1.0-beta.2**. It is a review
+candidate: installed-node migration, recovery rehearsal and maintainer approval
+are still required. Follow the [beta assessment](docs/archy-beta2-upgrade.md)
+before changing an existing server. The fresh-host installer refuses existing
+nodes, and the alpha updater is not a beta migration path.
+
 | App | What it is |
 |---|---|
 | `wildbloom-node` | Blossom storage owned by your node identities |
@@ -15,7 +21,7 @@ Archipelago itself.
 
 For existing installations, see the [Wildbloom upgrade guide](docs/wildbloom-upgrade.md).
 
-With the matching ForgeSworn node update, install **Spry**, open it and choose
+On the released alpha integration, install **Spry**, open it and choose
 **Pair with KithMoot**. Then use the normal Call button in a conversation or
 group. On private home nodes, each person pairs their own node once; a public
 Spry can also serve guests without a node. See the [Spry guide](apps/spry/README.md)
@@ -24,7 +30,9 @@ released only after the public image is available for both architectures.
 The [24 October delivery record](docs/spry-delivery-20261024.md) records released
 versions, fresh-host checks and remaining physical acceptance.
 For an installed 1.9.1 node, the [existing-node updater](docs/existing-node-update.md)
-applies backend p2 and catalogue p3 with a backup and rollback.
+documents alpha updates with backup and rollback. Beta requires a verified
+catalogue entry for new Spry installs; the unsigned community entry does not
+grant installation. Existing installed relays require separate qualification.
 
 The earlier `spry-turn-lab` experiment and independent transport qualification
 remain documented in [Archy call services](docs/archy-call-services.md).
@@ -33,7 +41,7 @@ The browser defaults to your own node. Optional LNURLcash sales default to the
 reference mint at `mint.lnurlcash.com`; Moneyer remains an explicit test/development
 choice. For capacity reserved for yourself and private configuration, see
 [own storage and selling](docs/wildbloom-selling.md).
-Configure it in **Settings → Storage & selling** with the matching patched
+Configure it in **Settings → System → Storage & selling** in the beta patched
 dashboard/backend: see the [dashboard guide](docs/storage-selling-dashboard.md).
 For a complete clean-node, operator, buyer, renewal, refund and backup exercise,
 follow the [independent operator runbook](docs/wildbloom-operator-runbook.md).
@@ -42,7 +50,7 @@ The patches also let a node identity keep its key in a NIP-46 remote signer
 (a hardware signer such as Heartwood, or a phone app): see
 [`docs/linked-signers.md`](docs/linked-signers.md).
 
-Validate locally: `scripts/fetch-archy.sh && scripts/apply-patches.sh && scripts/validate.sh`.
+Validate locally: `ARCHY_FULL=1 scripts/fetch-archy.sh && scripts/apply-patches.sh && scripts/validate.sh`.
 
 MIT licence.
 
