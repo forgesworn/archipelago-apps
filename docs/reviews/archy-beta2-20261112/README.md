@@ -34,7 +34,8 @@ PR53/PR54 review or authorise deployment to `demo.forgesworn.dev`.
   Source identity and frontend bytes match the candidate above. Full hashes and
   local retention paths are in the [upgrade evidence](../../archy-beta2-upgrade.md#backend-ci-qualification).
   [Fresh-host results](fresh-host-evidence.json) cover generated state only;
-  existing-node migration and integrated maintainer review remain pending.
+  the [generated installed-node rehearsal](migration-evidence.json) also passes.
+  Exact live-node migration and integrated maintainer review remain pending.
 
 ## Setup and checks
 
@@ -49,8 +50,9 @@ OS preferences: the dashboard is deliberately dark-only and must remain dark
 in both. Cover empty, loading, failed and successful reads. This headless node
 does not include kiosk acceptance.
 
-The public catalogue fetched on 12 November failed independent signature
-verification and has no entries for our four node integrations; see the
+The public catalogue fetched on 12 November was rejected by independent
+signature verification and the [exact beta executable verifier](catalogue-verification.md).
+It also has no entries for our four node integrations; see the
 [catalogue evidence](../../archy-beta2-upgrade.md#known-beta-integration-differences).
 Verified-catalogue success needs an authenticated candidate accepted by the
 unchanged backend verifier. Synthetic UI responses only qualify rendering;

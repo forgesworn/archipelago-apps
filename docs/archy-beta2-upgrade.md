@@ -64,6 +64,27 @@ Sources: [release](https://source.archipelago-foundation.org/lfg2025/archy/relea
 | Runtime and recovery | Current binary, frontend, `/opt/archipelago`, `/etc/archipelago`, nginx, system/user units and Quadlets, user/container configuration, UID/subuid/subgid mapping, CA and SSH host identity, firewall rules and enabled/stopped timer/service choices. |
 | External state | Re-inventory bind mounts and named volumes immediately before backup. Any newly discovered path outside the captured roots blocks the upgrade until covered. |
 
+A further read-only check confirmed that File Browser has `AutoRemove=true`
+and both `/config` and `/database` volumes have `Anonymous=true`. An aggregate
+read found one 130-byte file in `/config` and no files in `/database`; both
+volume bindings still need preservation and re-inventory before maintenance. The other
+five live containers also use automatic removal. Podman's [run documentation](https://docs.podman.io/en/latest/markdown/podman-run.1.html)
+specifies removal of anonymous volumes when an automatically removed container
+exits. **Do not stop/restart File Browser as a backup prerequisite:** that can
+remove the very data being protected. No live container was stopped here.
+
+The generated rehearsal now freezes its running workloads with Podman pause,
+retains their container/volume references, flushes the filesystem and validates
+the resulting crash-consistent snapshot by restoring database, blob and volume
+contents. This is not yet a qualified live backup procedure: identify every
+host-side writer, bound the pause window, guarantee unpause on interruption,
+and verify recovery before any live action. The current node also has three
+rootless Podman health-check timers and a 15-second root NPM bridge timer;
+pausing app processes alone does not quiesce every writer or prevent health
+checks from reacting to the pause. Planned app recreation also needs
+explicit retention and reattachment of the existing anonymous volumes, or a
+separately tested conversion to durable named volumes/binds.
+
 Do not omit Podman volumes as a generic cache. Image layers may be reproducible;
 named/anonymous volumes are application state. Save exact custom image IDs and
 retain/export any image that cannot be pulled by immutable digest.
@@ -261,6 +282,8 @@ source's sorted, compact UTF-8 JSON preimage with both signature fields removed,
 and the pinned Ed25519 root. As a positive control it successfully verifies the
 downloaded beta release manifest (SHA-256
 `59234917bd97a1f89dc7d5b77292d08fa40a4c7d3b085b82b1cf9b276b2eabe0`).
+The retained production binary independently reproduces the refusal while
+accepting the signed release manifest; see the [reproduction report](reviews/archy-beta2-20261112/catalogue-verification.md).
 Resolve authenticated catalogue availability before claiming working beta
 App Store support. Do not suppress verification or use the rejected catalogue
 as installation authority.
@@ -342,6 +365,113 @@ No task-owned fixture server, browser or test container remains running.
 The unmerged worktree, source checkouts and named review artefacts are retained
 for maintainer review and installed-node migration qualification.
 
-A final read-only node check found manager/nginx active, health `ok`, recovery
-complete and the same alpha version and binary hash recorded above. No live
-upgrade or backup was performed.
+At the backend-qualification checkpoint, a read-only node check found
+manager/nginx active, health `ok`, recovery complete and the same alpha version
+and binary hash recorded above. No live upgrade or backup had been performed
+at that checkpoint; the later off-host copy is recorded below.
+
+## Generated installed-node migration rehearsal
+
+[Run 43280738065](https://github.com/forgesworn/archipelago-apps/actions/runs/43280738065)
+passed the rootless Podman rehearsal on Debian 13 at integration revision
+`10467fd7d918400c37695d73e564489ec634ced0`. The
+[recorded evidence](reviews/archy-beta2-20261112/migration-evidence.json) includes
+archive, recipe and Quadlet hashes. Its generated 228,116,480-byte snapshot
+was paused for 1.26 seconds; that timing is not a live-node estimate. It used
+published alpha
+backend p3 (SHA-256
+`e6158a4a34641562b77a1cbe754e60168caa07a6d558cb1fa9d7fdf1d3e7d94e`),
+frontend p5 and the exact retained beta backend/frontend pair above.
+
+The six generated manifest-driven workloads include a stopped app, private
+and overlapping recipes, SQLite room-history records, blobs and ten anonymous
+volumes attached to the five running workloads. They are test workloads, not
+Fedimint, File Browser, Wildbloom, Spry or KithMoot acceptance. The nine offline
+recipe-preparation regressions pass, including missing/indirect paths and
+non-destructive refusal of existing or overlapping destinations.
+
+The rehearsal passed:
+
+- Existing container IDs, image IDs, mounts, Quadlets and app recipe hashes
+  retained through beta startup and a second manager restart.
+- Existing password login, personal identity and node key bytes retained.
+- Deliberately stopped app remained stopped.
+- Paused-workload backup restored to a separate directory with matching file
+  bytes, numeric owners (including subuid/subgid values), permissions and
+  extended attributes; SQLite integrity and generated history checked.
+- A persistent service guard refused an interrupted mixed code pair before
+  beta could run; restoring the old code restored alpha and the original login.
+- No public update runtime record, altered signature verifier or test root.
+
+The guard and recipe preparation are CI rehearsal mechanisms, not a released
+operator updater. Recovery after beta has written incompatible state, complete
+live-machine restore, exact private alpha compatibility and real application/
+physical-client behaviour remain unqualified. The archive is a generated
+crash-consistent snapshot, not a claim of a live coherent recovery set.
+
+The exact live alpha executable was copied read-only into
+`.cache/beta2-live-alpha/archipelago` (113,043,064 bytes) and verified against
+`81a184a97a04b02ac65d44fe2b71e7c34f3d9c91486001b3cced60efa913230d`.
+This retains code for a private rehearsal; it is not a backup of identities,
+wallets, application data or the rest of the host. No live app was paused,
+stopped or restarted. The owner selected an encrypted recovery copy on this
+Mac; capture and qualification are recorded separately below. Do not treat
+the representative public alpha build as this private
+binary or publish private recovery material as a CI artefact.
+
+## Encrypted off-host recovery material
+
+The owner selected this Mac as the recovery destination. Private artefacts are
+retained outside Git in `~/Backups/archy-demo-20261112`, with a 0700
+directory and 0600 files. They use the existing age recovery recipients; the
+primary working identity was verified by encryption/decryption before capture.
+No age recovery identity was copied into the backup directory or onto the
+server. Node identities and host keys are intentionally inside the encrypted
+recovery archives.
+
+The exact installed KithMoot image was exported read-only to an encrypted OCI
+archive (270,344,821 bytes). Authenticated decryption, every OCI descriptor and
+blob hash, and the configuration's match to the installed image ID passed.
+Image import and application startup are not established by those checks.
+An encrypted inventory preserves all six container definitions and mounts,
+image/volume identities, UID mappings, packages, firewall and service/timer
+choices; all 20 read-only inventory commands succeeded and the encrypted
+result round-tripped exactly.
+
+Ten SQLite files were separately captured with SQLite's online backup API
+using read-only source connections, then restored into isolated temporary
+files on the Mac. All ten integrity checks passed and schema table counts
+matched. A second restore in a network-disabled Linux container also passed
+for all ten, including restored numeric owners and modes. It used only a
+64 MiB temporary filesystem, with no host mounts or application startup; the
+container was removed afterwards. Their encrypted archive is 15,138,698 bytes. These are individually
+consistent database snapshots, not one cross-application snapshot or a
+Fedimint wallet-engine recovery test. Temporary plaintext restores were
+removed after checking.
+
+The copy includes the entire `/var/lib/archipelago` backing store (including
+all inventoried bind data, anonymous volumes and image layers),
+`/opt/archipelago`, `/etc`, `/usr/local`, FIPS, user container configuration,
+root SSH recovery configuration and service state. Historical build/backup
+directories outside these recovery roots and unrelated OS files are omitted;
+this is a node recovery archive, not a disk image. The private receipt records
+the exact roots and exclusions.
+
+The completed archive is 2,425,957,028 bytes. Authenticated decryption and
+complete gzip/tar reading passed across 100,821 entries and 4,981,922,098
+regular-file bytes. Required roots and the exact alpha executable hash were
+verified; ten SQLite files extracted from this copy also passed offline
+integrity checks. Tar reported changes to the data and container-storage
+directories during reading and omitted 3,869 ephemeral sockets. The encrypted
+private diagnostic and receipts preserve that warning; it is not a pristine
+shutdown snapshot.
+
+Post-capture, manager/nginx are active, health/recovery is OK on the same
+alpha binary, and all six running, unpaused containers retain their original
+IDs, images, mounts and start timestamps. No app was restarted.
+
+The live copy was captured while services kept running. It must not be used as
+proof of a coherent cutover backup, complete host restore or wallet recovery.
+A fresh, bounded maintenance snapshot and isolated restore qualification
+remain required before activation; the File Browser and timer precautions
+above apply. None of this recovery material is uploaded to public CI or Git.
