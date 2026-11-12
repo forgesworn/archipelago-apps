@@ -22,8 +22,8 @@ PR53/PR54 review or authorise deployment to `demo.forgesworn.dev`.
   The automated runner stops its server and removes the fixture on exit.
 - The completed local frontend package is retained at
   `.cache/beta2-frontend-out/frontend.tar.gz`, SHA-256
-  `783a858a77246c7db526c5328a3dddfeb9dcf9668f75ee3f62b089e1401c8cfb`.
-  Its source commit is `3f0b5e0645896af238364d77402f02086979b6b4`.
+  `45b440d1896a0c51e4b71aba64c768a82e6487f4e0cb84a26e9d9ebadd839793`.
+  Its source commit is `18260448bb570d96962f5da2f2e30c163b351dd4`.
   This identifies a local review candidate, not a deployed build. CI's pinned
   Node 24 build may produce different bytes and needs its own reviewed identity.
 

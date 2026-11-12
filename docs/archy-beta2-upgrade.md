@@ -104,6 +104,23 @@ retain/export any image that cannot be pulled by immutable digest.
    TURN/TLS443, certificate renewal and private dashboard/signer denial from an
    external network. Record physical/client and maintainer evidence separately.
 
+### Migration-specific startup hazard
+
+Beta's ordinary legacy bootstrap still replaces `/opt/archipelago/apps`,
+`scripts` and `docker` from the frontend runtime payload. The public update
+transaction avoids this by retaining omitted private app sources and owning
+runtime promotion, including a startup guard for older binaries during recovery.
+Simply copying our new binary/frontend onto the alpha node does not establish
+that ownership and can lose private app definitions on the next manager start.
+
+The operator migration therefore needs an explicit, tested runtime handoff
+before starting the candidate. Assert that all six installed definitions,
+resolved image IDs, Quadlets, bind mounts and anonymous volumes remain exact,
+including KithMoot's locally built image. Catalogue defaults may change images
+during reconciliation unless the installed version is properly retained; copying
+an old manifest alone is insufficient proof. These conditions must survive a
+second manager restart and interrupted recovery on the disposable node.
+
 ## Current installer safeguard
 
 `node/install-lite.sh` now refuses either runtime when any existing Archipelago
@@ -160,18 +177,17 @@ Verified locally so far:
 
 The local frontend package completed on Node 24.21. Initial CI exposed the
 upstream Node 20 setting as stale: the locked Vitest and vue-i18n require Node
-22/24, and npm 10 could not install that lockfile. CI now pins Node 24. The local
-artefact below predates that pin correction; its recorded input digest still
-contains the old Node 20 setting, despite the actual build having used Node 24.
+22/24, and npm 10 could not install that lockfile. CI now pins Node 24. The final local artefact below was rebuilt after that
+correction and all 34 patches, using a clean source checkout.
 Its two deterministic repacks matched and the upstream complete-archive
 validator accepted the runtime byte declaration and native AIUI receipt:
 
 - Retained local artefact: `.cache/beta2-frontend-out/frontend.tar.gz`
-  (119,836,169 bytes).
-- SHA-256: `783a858a77246c7db526c5328a3dddfeb9dcf9668f75ee3f62b089e1401c8cfb`.
-- Build-input digest: `9d40d90c6cabe1e90ef2994d1cc184b704176800cc556c0246e805f1c11141a0`.
+  (119,836,125 bytes).
+- SHA-256: `45b440d1896a0c51e4b71aba64c768a82e6487f4e0cb84a26e9d9ebadd839793`.
+- Build-input digest: `99e8a841cd42aa256d26cc3546d41aa6e482b1a4ec80cd09308fba67059bcc94`.
 - Patched source commit in this artefact:
-  `3f0b5e0645896af238364d77402f02086979b6b4`.
+  `18260448bb570d96962f5da2f2e30c163b351dd4`.
 
 Linux backend, isolated installed-node migration and physical/client checks
 are separate gates. No current complete off-host recovery set or restore

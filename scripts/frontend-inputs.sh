@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Print the digest of everything a frontend release is built from: the ARCHY_*
 # lines of PINS, FRONTEND_SHA256 (the upstream asset we overlay), the Node
-# major, the patches that touch neode-ui/ (scripts/lib/patches.bash) and the build recipe. Wildbloom pin bumps do not change it.
+# major, every backend/frontend/runtime patch and the build recipe.
+# Wildbloom pin bumps do not change it.
 # CI publishes it as the release's inputs.sha256 and compares against it.
 set -euo pipefail
 cd "$(dirname "$0")/.."

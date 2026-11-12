@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the dashboard frontend from the patched archy tree and repack it as
-# upstream's own release tarball, with only the neode-ui build replaced.
+# upstream's release layout, replacing the dashboard and patched runtime helpers.
 #
 # Usage: scripts/build-frontend.sh [archy-dir]
 #   archy-dir  a full checkout already at ARCHY_REF with upstream/patches applied
@@ -43,9 +43,9 @@ if ! { [ -f "$cache" ] && echo "$FRONTEND_SHA256  $cache" | sha256sum -c - >/dev
     rm -f "$cache.part"
     [ -n "$FRONTEND_FALLBACK_URL" ] && [ -n "$FRONTEND_FALLBACK_SHA256" ] \
       || { echo "upstream asset unavailable and no fallback pinned for $ARCHY_RELEASE" >&2; exit 1; }
-    # A previous ForgeSworn frontend release retains aiui/ and
-    # archipelago-runtime/ from this exact, hash-pinned upstream release. Only
-    # those directories survive the overlay below; the dashboard is rebuilt.
+    # An explicitly qualified fallback must retain the exact hash-pinned
+    # upstream built runtime assets. Only archipelago-runtime survives the
+    # overlay below; the dashboard and native AIUI are rebuilt.
     base=$root/.cache/frontend-fallback-${FRONTEND_FALLBACK_SHA256}.tar.gz
     if ! { [ -f "$base" ] && echo "$FRONTEND_FALLBACK_SHA256  $base" | sha256sum -c - >/dev/null 2>&1; }; then
       curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
@@ -95,7 +95,8 @@ for entry in "$dist"/* "$dist"/.[!.]*; do
   cp -R "$entry" "$work/tree/"
 done
 
-# Include installable Spry in the runtime catalogue promoted by Archipelago.
+# Include Spry's runtime definition. The verified catalogue still controls
+# whether the beta App Store permits a new installation.
 mkdir -p "$work/tree/archipelago-runtime/apps/spry"
 cp "$root/apps/spry/manifest.yml" "$work/tree/archipelago-runtime/apps/spry/manifest.yml"
 
