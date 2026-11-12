@@ -265,9 +265,10 @@ real Podman 5.4.2 generator from upstream commit
 `be85287fcf4590961614ee37be65eeb315e5d9ff`. Tor remains offline inside the isolated
 harness. This qualifies generation only; it does not upgrade the runner's
 Podman runtime or the live node. The older stop-order generator exclusion has
-also been removed. The corrected full suite, seven isolated host-operation
+also been removed. The corrected full suite passed 3,119 tests with no failures,
+29 upstream ignores and eight exclusions. Seven isolated host-operation
 tests, exact identity patch checks and all selected signer/integration modules
-passed in [backend run 43261318325](https://github.com/forgesworn/archipelago-apps/actions/runs/43261318325).
+also passed in [backend run 43261318325](https://github.com/forgesworn/archipelago-apps/actions/runs/43261318325).
 The packaged Wildbloom storage-profile check, release backend build and matching
 frontend build also passed. The fresh Debian host installed successfully and
 ran Spry through readiness, stop, start and restart. It then correctly refused

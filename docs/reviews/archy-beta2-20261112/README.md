@@ -37,7 +37,8 @@ Chrome. Review at desktop width and 390 px mobile width.
 
 For the integrated review, use a disposable node with generated identities,
 installed fixture apps and synthetic payment records. Review light and dark
-themes and empty, loading, failed and successful reads. This headless node
+OS preferences: the dashboard is deliberately dark-only and must remain dark
+in both. Cover empty, loading, failed and successful reads. This headless node
 does not include kiosk acceptance.
 
 The public catalogue fetched on 12 November failed independent signature
@@ -78,8 +79,14 @@ they cannot establish working integrated App Store installation.
 - [Sales desktop](storage-sales-desktop.png)
 - [Sales mobile](storage-sales-mobile.png)
 - [Refund form mobile](storage-refund-mobile.png)
+- [Storage desktop with a light OS preference](storage-selling-desktop-os-light.png)
+- [Sales mobile with a light OS preference](storage-sales-mobile-os-light.png)
 
-Automated checks passed for the captured storage/sales flows. Settings grouping,
+Automated checks passed for the captured storage/sales flows. An additional
+Chromium run explicitly emulated `colorScheme: light`, asserted the light OS
+media query and the root computed `color-scheme: dark`, and passed the complete
+desktop/mobile flow without horizontal overflow. This verifies the existing
+dark-only baseline, not a new light theme. Settings grouping,
 complete login/embedding flows, visual acceptance and physical clients still
 need review of the final integrated build. Refresh this pack and approval after
 any material UI change. See [upgrade preparation](../../archy-beta2-upgrade.md)
