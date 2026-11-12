@@ -189,6 +189,13 @@ validator accepted the runtime byte declaration and native AIUI receipt:
 - Patched source commit in this artefact:
   `18260448bb570d96962f5da2f2e30c163b351dd4`.
 
+Hosted frontend CI at `dd8216be3b66a2870ece8b81451ef6767322e746`
+passed the complete package build, 59 UI tests, browser acceptance, 27 upstream
+release-payload tests, 14 runtime/maintenance tests and three integration
+staging tests. The local ARM container could run 26 of those 27 payload cases;
+the remaining native-manifest fixture requires x86_64 and passed in CI.
+[Frontend run](https://github.com/forgesworn/archipelago-apps/actions/runs/43258922145).
+
 Linux backend, isolated installed-node migration and physical/client checks
 are separate gates. No current complete off-host recovery set or restore
 qualification is claimed.
@@ -227,3 +234,16 @@ branches have no tracking upstream; none was switched, reset or merged.
 Full Gitea ref/tag refreshes timed out, including a bounded retry. The exact
 beta tag/source was fetched successfully into this task's separate source
 checkout; the original source checkouts retain their alpha revisions.
+
+## Backend CI qualification
+
+The complete beta backend test executable compiled in CI. Its first executed
+suite passed 3,115 tests with three failures, 29 upstream ignores and nine
+explicit exclusions. The failures were a missing `/usr/bin/tor` and two actual
+Quadlet tests encountering Ubuntu 24's Podman 4.9 `StopTimeout` limitation.
+The runner now installs Tor without starting its host services and builds the
+real Podman 5.4.2 generator from upstream commit
+`be85287fcf4590961614ee37be65eeb315e5d9ff`. Tor remains offline inside the isolated
+harness. This qualifies generation only; it does not upgrade the runner's
+Podman runtime or the live node. The older stop-order generator exclusion has
+also been removed. The corrected full suite still needs its passing result.

@@ -24,8 +24,9 @@ PR53/PR54 review or authorise deployment to `demo.forgesworn.dev`.
   `.cache/beta2-frontend-out/frontend.tar.gz`, SHA-256
   `45b440d1896a0c51e4b71aba64c768a82e6487f4e0cb84a26e9d9ebadd839793`.
   Its source commit is `18260448bb570d96962f5da2f2e30c163b351dd4`.
-  This identifies a local review candidate, not a deployed build. CI's pinned
-  Node 24 build may produce different bytes and needs its own reviewed identity.
+  CI at `dd8216be3b66a2870ece8b81451ef6767322e746` produced the same archive.
+  [Download the exact CI review candidate](https://github.com/forgesworn/archipelago-apps/actions/runs/43258922145/artifacts/13962842901)
+  (14-day retention). This is a review candidate, not a deployed build.
 
 ## Setup and checks
 
@@ -33,6 +34,25 @@ On a clean checkout, fetch and apply the pinned source, build the dashboard and
 run `scripts/test-storage-settings-browser.sh <archy-source>`. The runner needs
 Playwright Chromium; `PLAYWRIGHT_CHROMIUM_EXECUTABLE` can select an installed
 Chrome. Review at desktop width and 390 px mobile width.
+
+For the integrated review, use a disposable node with generated identities,
+installed fixture apps and synthetic payment records. Review light and dark
+themes and empty, loading, failed and successful reads. This headless node
+does not include kiosk acceptance.
+
+1. Sign in at `/login`, then open `/dashboard/settings`. Find Storage & selling
+   through both the System group and search.
+2. At `/dashboard/settings/storage`, edit limits, save a draft and review the
+   confirmation before applying to the disposable node.
+3. At `/dashboard/settings/storage/sales`, inspect sales and open the refund
+   recording dialog. Confirm that recording receipt does not initiate payment.
+4. At `/dashboard/discover`, exercise verified catalogue success and failure;
+   check the unsigned Spry installation refusal.
+5. Return to `/login` and exercise existing linked signers, another enrolment,
+   cancellation and rejection without replacing the original identity.
+6. Open `/dashboard/app-session/wildbloom`, `/dashboard/app-session/spry` and
+   `/dashboard/app-session/kithmoot-node`. Exercise the identity chooser and
+   `/nostr-signer` broker through the app, plus existing rooms and clipboard.
 
 | Screen | Steps | Expected result |
 | --- | --- | --- |
