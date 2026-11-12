@@ -203,6 +203,26 @@ jobs:
           scripts/apply-patches.sh .cache/archy-docker-host
           npm install --global corepack
           OUT_DIR=.cache/docker-host-frontend scripts/build-frontend.sh .cache/archy-docker-host
+      - name: Record exact backend candidate
+        if: steps.plan.outputs.skip != 'true'
+        run: |
+          mkdir -p .cache/backend-review
+          cp .cache/archy/core/target/release/archipelago .cache/backend-review/
+          (cd .cache/backend-review && sha256sum archipelago > archipelago.sha256)
+          scripts/backend-inputs.sh > .cache/backend-review/inputs.sha256
+          git -C .cache/archy rev-parse HEAD > .cache/backend-review/source-commit.txt
+          git -C .cache/archy rev-parse 'HEAD^{tree}' > .cache/backend-review/source-tree.txt
+          cat .cache/backend-review/archipelago.sha256 .cache/docker-host-frontend/frontend.sha256
+      - name: Retain matching node candidate for review and rehearsal
+        if: steps.plan.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-review-${{ github.sha }}
+          path: |
+            .cache/backend-review/
+            .cache/docker-host-frontend/
+          if-no-files-found: error
+          retention-days: 14
       - name: Fresh Debian host with the existing Docker runtime
         if: steps.plan.outputs.skip != 'true'
         env: { GH_TOKEN: "${{ github.token }}" }

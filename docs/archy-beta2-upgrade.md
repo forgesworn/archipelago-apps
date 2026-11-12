@@ -268,9 +268,15 @@ Podman runtime or the live node. The older stop-order generator exclusion has
 also been removed. The corrected full suite, seven isolated host-operation
 tests, exact identity patch checks and all selected signer/integration modules
 passed in [backend run 43261318325](https://github.com/forgesworn/archipelago-apps/actions/runs/43261318325).
-The packaged Wildbloom storage-profile check and release backend build also
-passed. The matching frontend and fresh Debian host checks are still running;
-this is not yet a complete backend workflow pass.
+The packaged Wildbloom storage-profile check, release backend build and matching
+frontend build also passed. The fresh Debian host installed successfully and
+ran Spry through readiness, stop, start and restart. It then correctly refused
+the older fixture's signing request because beta requires fresh authorisation.
+The fixture now requests a session/operation-bound one-use grant and verifies
+both missing-grant and token-replay refusal. A new complete CI run is required;
+the earlier run is not an overall pass. The next run also retains its exact
+backend/frontend pair and input hashes as a 14-day review artefact, even if a
+later host check fails.
 
 A final read-only node check found manager/nginx active, health `ok`, recovery
 complete and the same alpha version and binary hash recorded above. No live

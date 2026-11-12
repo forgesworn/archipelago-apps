@@ -19,6 +19,12 @@ client = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context
                                    urllib.request.HTTPCookieProcessor(cookies))
 
 
+class RpcError(RuntimeError):
+    def __init__(self, method, error):
+        super().__init__(f'{method} failed: {error.get("message", "RPC error")}')
+        self.code = error.get('code')
+
+
 def rpc(method, params=None):
     headers = {'Content-Type': 'application/json'}
     for cookie in cookies:
@@ -29,8 +35,17 @@ def rpc(method, params=None):
     with client.open(request, timeout=30) as response:
         value = json.load(response)
     if value.get('error') is not None:
-        raise RuntimeError(f'{method} failed: {value["error"].get("message", "RPC error")}')
+        raise RpcError(method, value['error'])
     return value.get('result')
+
+
+def require_fresh_authorization_refusal(method, params):
+    try:
+        rpc(method, params)
+    except RpcError as error:
+        assert error.code == -32041, f'Unexpected authorization refusal: {error.code}'
+    else:
+        raise AssertionError('Signing accepted without an unused fresh authorization')
 
 
 def wait(check, description):
@@ -139,7 +154,15 @@ for origin in [f'https://{environment["SPRY_RELAY_IP"]}:3744', environment['SPRY
         ['u', state['endpoint'].rstrip('/') + '/v1/pairings/list'], ['method', 'POST'],
         ['payload', hashlib.sha256(body).hexdigest()], ['nonce', secrets.token_urlsafe(32)],
         ['aud', state['audience']]]}
-    proof = rpc('identity.nostr-sign', {'id': identity['id'], 'event': event})
+    signing = {'id': identity['id'], 'event': event}
+    require_fresh_authorization_refusal('identity.nostr-sign', signing)
+    grant = rpc('auth.reauthenticate', {
+        'method': 'identity.nostr-sign', 'params': signing,
+        'password': password, 'code': '',  # Generated owner has no TOTP enrolment.
+    })
+    authorized = dict(signing, reauth_token=grant['reauth_token'])
+    proof = rpc('identity.nostr-sign', authorized)
+    require_fresh_authorization_refusal('identity.nostr-sign', authorized)
     header = 'Nostr ' + base64.b64encode(json.dumps(proof).encode()).decode()
     request = urllib.request.Request(node_url + '/v1/pairings/list', body,
         {'Origin': origin, 'Content-Type': 'application/json', 'Authorization': header})
@@ -170,5 +193,6 @@ print(json.dumps({'passed': True, 'scope': 'fresh-debian-docker-host-install',
     'spryReady': True, 'ownerPairingScreen': True, 'spryUninstall': True,
     'ownerLanAndMdnsOrigins': True, 'foreignOriginRefused': True,
     'realNodeOwnerApprovals': True, 'ownerProofReplayRefused': True,
+    'freshSigningAuthorization': True, 'authorizationTokenReplayRefused': True,
     'dashboardStopStartRestart': True,
     'physicalHomeNetwork': False, 'dockerDesktopQualified': False}))
