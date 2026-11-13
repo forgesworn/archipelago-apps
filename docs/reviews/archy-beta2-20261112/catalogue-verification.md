@@ -168,3 +168,46 @@ the installer now includes it, its regression passes, and the clean rerun used
 the corrected bundle without mid-run repair. `tests/node/fresh-apps-host.py`
 is the guarded fixture driver. The final signed-distribution rehearsal remains
 necessary after the publication decisions above.
+
+## Fail-closed preparation tool
+
+`scripts/prepare-catalogue-distribution.py` implements the required candidate
+assembly without changing any trust root. For each public app it resolves the
+multi-platform registry index, requires every requested architecture, replaces
+the mutable tag with its immutable digest, sets the corresponding cosign claim,
+and runs `cosign verify` against the operator-supplied public key. It refuses
+missing images/platforms, failed signature verification and existing output.
+KithMoot is excluded unless the owner/upstream explicitly selects private-OCI
+delivery and supplies the archive; that archive is hashed locally and never
+uploaded. The output is still unsigned and has no installation authority until
+the authorised release-root holder signs it.
+
+After ZAT permits the exact public images to be published and their digests to
+be cosign-signed, prepare the candidate with:
+
+```sh
+python3 scripts/prepare-catalogue-distribution.py \
+  --output .cache/app-catalog-distribution-candidate.json \
+  --cosign-pubkey /etc/archipelago/cosign.pub \
+  --platform linux/amd64 --platform linux/arm64 \
+  --kithmoot-oci /secure/private/kithmoot-private-image.oci.tar.gz \
+  --allow-private-kithmoot
+```
+
+Omit the final two arguments while the KithMoot private-distribution decision is
+unresolved. The tool then produces entries only for the three public apps; it
+does not silently publish or substitute KithMoot. The authorised signer, not the
+agent, performs the release-root and cosign private-key operations. Once the
+release-root holder has signed the catalogue, verify it with the unchanged
+candidate before any installation:
+
+```sh
+archipelago ceremony verify .cache/app-catalog-distribution-candidate.json
+```
+
+On 13 November the real preflight failed closed with
+`ghcr.io/forgesworn/spry:0.1.0-6b34f06-4: registry manifest unavailable (HTTP 404)`
+and wrote no candidate. Six unit tests cover immutable rewriting, private-OCI
+hashing/no-upload, missing authority, output preservation, required platforms
+and cosign failure. Publication, private-key operations and the final signed
+fresh-install rehearsal remain pending.
