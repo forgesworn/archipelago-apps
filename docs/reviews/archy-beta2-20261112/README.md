@@ -40,9 +40,13 @@ passed and produced patch-level-3 archive
 `92a5aba6ff9c1253ee0e3db3fb64ffeeacf9d30c78505f679b3c8939552dac70`.
 Only `NATIVE-AIUI.json`, `FORGESWORN-BUNDLE.json` and `RELEASE-PAYLOAD.json`
 changed from the integrated patch-level-2 archive above; all 1,277 other files
-are byte-identical. The final patch-level-3 x86-64 release hash must be recorded
-from its passing CI run, and the production ARM64 backend must be built and
-verified separately before live cutover. Multi-platform image run
+are byte-identical. Native ARM64 backend run
+[43529354420](https://github.com/forgesworn/archipelago-apps/actions/runs/43529354420)
+passed and produced `.cache/beta2-ui-release-backend-p3/archipelago-arm64`,
+SHA-256 `ef2917fd030548fa1b0492f3694042e892480ed8dea472f99ff2ddd35c41dad3`.
+The downloaded hash matches its receipt and the file is an AArch64 Linux
+executable. The final patch-level-3 x86-64 release hash must still be recorded
+from its passing CI run. Multi-platform image run
 [43525691004](https://github.com/forgesworn/archipelago-apps/actions/runs/43525691004)
 passed native Wildbloom and Wildbloom Node build/smoke jobs on amd64 and arm64.
 These release changes add no new UI flow; final approval must still identify the
