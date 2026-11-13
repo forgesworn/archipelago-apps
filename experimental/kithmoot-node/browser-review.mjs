@@ -60,7 +60,7 @@ await context.route('**/*', async route => {
   const input = route.request(), url = new URL(input.url())
   if (url.hostname !== 'node.example') return route.abort()
   if (loseNextStatus && url.pathname === '/api/status') { loseNextStatus = false; return route.abort() }
-  if (url.pathname === '/review-host') return route.fulfill({ contentType: 'text/html', body: '<!doctype html><html lang="en"><head><title>Archy embedded component fixture</title></head><body style="margin:0;background:#16181d"><iframe title="KithMoot Node" src="/" style="display:block;border:0;width:100%;height:844px"></iframe></body></html>' })
+  if (['/review-host', '/review-host-no-clipboard'].includes(url.pathname)) return route.fulfill({ headers: url.pathname.endsWith('no-clipboard') ? { 'Permissions-Policy': 'clipboard-write=()' } : {}, contentType: 'text/html', body: '<!doctype html><html lang="en"><head><title>Archy embedded component fixture</title></head><body style="margin:0;background:#16181d"><iframe title="KithMoot Node" src="/" style="display:block;border:0;width:100%;height:844px"></iframe></body></html>' })
   if (url.pathname === '/nostr-provider.js') return route.fulfill({ contentType: 'text/javascript', body: `window.archipelagoNostr={selectIdentity:async()=>{},onIdentitySelected:()=>{}};window.nostr={getPublicKey:async()=>${JSON.stringify(pubkey)},signEvent:event=>window.fixtureSign(event)};` })
   const response = await new Promise((resolve, reject) => {
     const req = request(base + url.pathname + url.search, { method: input.method(), headers: { ...input.headers(), host: url.host } }, reply => {
@@ -87,6 +87,7 @@ async function axe(name) {
   accessibility.push({ name, violations }); assert.deepEqual(violations, [], name + ': accessibility violations')
 }
 try {
+  if (process.env.E2E_KITHMOOT_NODE_CLIPBOARD_ONLY !== '1') {
   await page.goto('https://node.example:3753/')
   await page.getByRole('button', { name: 'Choose identity and sign in' }).waitFor()
   await capture('01-sign-in-390'); await axe('sign-in')
@@ -143,6 +144,9 @@ try {
   assert.equal(await page.evaluate(() => document.activeElement?.dataset.page), 'overview', 'background refresh must preserve keyboard focus')
   await page.getByRole('button', { name: 'Pair with KithMoot', exact: true }).click()
   await page.getByRole('heading', { name: 'Pair with your KithMoot app' }).waitFor()
+  await page.getByRole('button', { name: 'Copy pairing link', exact: true }).click()
+  await page.getByText('Pairing link copied. Keep it private.', { exact: true }).waitFor()
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), link)
   await capture('08-pairing-390'); assert.equal(await page.getByRole('link', { name: 'Open KithMoot' }).getAttribute('href'), link); await axe('pairing')
   await page.getByRole('button', { name: 'Done', exact: true }).click()
   await page.getByRole('button', { name: 'Pause node' }).click(); await page.getByRole('button', { name: 'Start node' }).waitFor()
@@ -227,6 +231,57 @@ try {
     accessibility.push({ name: 'embedded-' + title.toLowerCase(), violations }); assert.deepEqual(violations, [])
   }
   await embeddedPage.close()
+  }
+  configured = running = true; rooms = 1; devices = 3; pending = 0
+  // Reproduce the actual host-policy refusal rather than mocking writeText.
+  const blockedPage = await context.newPage()
+  blockedPage.setDefaultTimeout(10000)
+  blockedPage.on('pageerror', error => errors.push(error.message))
+  await blockedPage.exposeFunction('fixtureSign', event => finalizeEvent(event, key))
+  await blockedPage.clock.install()
+  await blockedPage.goto('https://node.example:3753/review-host-no-clipboard')
+  const blocked = blockedPage.frameLocator('iframe')
+  await blocked.getByRole('button', { name: 'Choose identity and sign in' }).click()
+  await blocked.getByRole('button', { name: 'Pair with KithMoot', exact: true }).click()
+  const blockedFrame = blockedPage.frames().find(frame => frame.parentFrame())
+  assert.equal(await blockedFrame.evaluate(() => document.featurePolicy.allowsFeature('clipboard-write')), false)
+  await blocked.getByRole('button', { name: 'Copy pairing link', exact: true }).click()
+  await blocked.getByText('Automatic copying is unavailable. The pairing link is selected; copy it with your keyboard or touch menu.').waitFor()
+  const privateLink = blocked.getByLabel('Private pairing link', { exact: true })
+  assert.equal(await privateLink.inputValue(), link)
+  assert.deepEqual(await privateLink.evaluate(input => ({ readonly: input.readOnly, selected: document.activeElement === input && input.selectionStart === 0 && input.selectionEnd === input.value.length })), { readonly: true, selected: true })
+  for (const [width, height, enlarged = false] of [[320,740],[390,844],[768,1024],[1440,900],[844,390],[390,844,true]]) {
+    await blockedPage.setViewportSize({ width, height })
+    await blockedFrame.evaluate(value => { document.documentElement.style.fontSize = value ? '200%' : '' }, enlarged)
+    assert(await blockedFrame.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+    await blockedPage.locator('iframe').evaluate(element => { element.style.height = '844px' })
+    const frameHeight = await blockedFrame.evaluate(() => document.documentElement.scrollHeight)
+    await blockedPage.locator('iframe').evaluate((element, value) => { element.style.height = value + 'px' }, frameHeight)
+    await blockedFrame.evaluate(() => scrollTo(0, 0))
+    const name = `pairing-copy-blocked-${enlarged ? 'large-text' : width}.png`
+    await blockedPage.screenshot({ path: join(directory, name), fullPage: true }); screenshots.push(name)
+  }
+  await blockedFrame.evaluate(() => { document.documentElement.style.fontSize = '' })
+  const blockedAxe = await new AxeBuilder({ page: blockedPage }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
+  const blockedViolations = blockedAxe.violations.map(item => ({ id: item.id, impact: item.impact, targets: item.nodes.map(node => node.target) }))
+  accessibility.push({ name: 'pairing-clipboard-policy-blocked', violations: blockedViolations }); assert.deepEqual(blockedViolations, [])
+  // A browser without the Clipboard API gets the same manual path.
+  await blockedFrame.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }))
+  await blocked.getByRole('button', { name: 'Copy pairing link', exact: true }).click()
+  assert.equal(await privateLink.inputValue(), link)
+  assert(await privateLink.evaluate(input => document.activeElement === input && input.selectionEnd === input.value.length))
+  // A clipboard completion arriving after expiry must not revive the link or claim success.
+  await blockedFrame.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: () => new Promise(resolve => { window.finishPairCopy = resolve }) } }))
+  await blocked.getByRole('button', { name: 'Copy pairing link', exact: true }).click()
+  await blockedFrame.waitForFunction(() => typeof window.finishPairCopy === 'function')
+  await blockedPage.clock.fastForward(360001)
+  await blocked.getByText('That pairing code expired. Create a fresh code to continue.').waitFor()
+  await blockedFrame.evaluate(() => window.finishPairCopy())
+  await blocked.locator('#content[aria-busy="false"]').waitFor()
+  assert.equal(await blocked.getByText('Pairing link copied. Keep it private.', { exact: true }).count(), 0)
+  assert.equal(await privateLink.count(), 0)
+  assert.equal(await blocked.getByRole('link', { name: 'Open KithMoot', exact: true }).count(), 0)
+  await blockedPage.close()
   assert.deepEqual(errors, [])
   assert.deepEqual(await fingerprints(sourceNames), sourceFiles, 'Source changed during the browser check')
   await writeFile(join(directory, 'component-review.json'), JSON.stringify({ schema: 'kithmoot-node-ui-component/1', passed: true, actualController: true,
