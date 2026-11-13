@@ -304,8 +304,10 @@ still required, and the old binary/frontend-only updater remains guarded.
 [Maintainer review pack and screenshots](reviews/archy-beta2-20261112/README.md).
 Maintainer must review and approve UI work on Settings, Storage & selling,
 Sales & customers/refund recording, App Store, linked-signer login, Fresh authorisation and the
-embedded Wildbloom/Spry/KithMoot node screens before merging or approval.
-ZAT pending.
+embedded Wildbloom/Spry/KithMoot node screens before any PR is accepted into
+core Archipelago or final core approval. ZAT pending. The owner clarified on
+13 November that this does not gate the ForgeSworn PR53–PR55 chain or exact
+public-image publication.
 
 ## Repository refresh
 

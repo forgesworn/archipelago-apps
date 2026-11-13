@@ -2,10 +2,14 @@
 
 **Maintainer must review and approve UI work on Settings, Storage & selling,
 Sales & customers/refund recording, App Store, linked-signer login, Fresh authorisation and the
-embedded Wildbloom/Spry/KithMoot node screens before merging or approval. ZAT pending.**
+embedded Wildbloom/Spry/KithMoot node screens before any PR is accepted into core
+Archipelago or final core approval. ZAT pending.**
 
-No maintainer has been contacted. This pack does not supersede the outstanding
-PR53/PR54 review or authorise deployment to `demo.forgesworn.dev`.
+The owner clarified on 13 November that this gate applies to acceptance into
+core Archipelago. ForgeSworn implementation, testing, its PR53–PR55 chain and
+exact public-image publication may proceed without recording that as ZAT. No
+maintainer has been contacted. This pack does not authorise a core Archipelago
+merge or deployment to `demo.forgesworn.dev`.
 
 **Candidate update, 13 November:** the earlier backend/frontend pair below is
 superseded for approval. Integrated review found that externally managed

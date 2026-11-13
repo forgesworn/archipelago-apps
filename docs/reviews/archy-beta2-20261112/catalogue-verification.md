@@ -182,8 +182,9 @@ delivery and supplies the archive; that archive is hashed locally and never
 uploaded. The output is still unsigned and has no installation authority until
 the authorised release-root holder signs it.
 
-After ZAT permits the exact public images to be published and their digests to
-be cosign-signed, prepare the candidate with:
+After the exact public images are published through the ForgeSworn `main`
+workflow and their digests are cosign-signed by the authorised key holder,
+prepare the candidate with:
 
 ```sh
 python3 scripts/prepare-catalogue-distribution.py \

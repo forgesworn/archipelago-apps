@@ -28,9 +28,10 @@ builds or backups merely because a new window opens.
 
 ## Starting position
 
-- PR55 was rechecked on 13 November: draft, no recorded maintainer approval,
-  review candidate `dd263b07810563b0fa78b72c325f92c56b95fd77`. It is stacked
-  on PR54 and PR53; their outstanding acceptance gates still apply.
+- PR55 was rechecked on 13 November: no recorded maintainer approval. It is
+  stacked on PR54 and PR53. The owner clarified that ZAT is required before PRs
+  are accepted into core Archipelago, not before the ForgeSworn implementation,
+  test, PR-merge and exact-image publication work.
 - Backend/frontend CI, the fresh-host fixture and the generated rootless
   Podman migration rehearsal pass. The latter uses published alpha p3 and
   generated applications; it does not qualify our private alpha or real apps.
@@ -167,16 +168,18 @@ the others.
   35/36-patch pair passed the isolated embedded-app and fresh-signing browser
   checks on 13 November; safe captures and fixture limitations are in the pack.
 - [ ] Obtain and record explicit Archipelago maintainer approval of the
-  reviewed revision, including unresolved PR53/PR54 UI work. Refresh the pack
-  and approval after material UI changes.
+  reviewed revision, including PR53/PR54 UI work, before accepting a PR into
+  core Archipelago. Refresh the pack and approval after material UI changes.
 
 **Maintainer must review and approve UI work on Settings, Storage & selling,
 Sales & customers/refund recording, App Store, linked-signer login, Fresh
-authorisation and embedded Wildbloom/Spry/KithMoot node screens before merging
-or approval. ZAT pending.**
+authorisation and embedded Wildbloom/Spry/KithMoot node screens before any PR
+is accepted into core Archipelago or final core approval. ZAT pending.**
 
 Automated checks and general instructions to proceed do not satisfy this gate.
-The review can proceed alongside engineering once its exact candidate is ready.
+The owner clarified on 13 November that it does not block the ForgeSworn PR
+chain, testing or exact-image publication. Review can proceed alongside that
+engineering once its exact candidate is ready.
 
 ### 5. Perform one controlled live cutover and verify existing users
 
@@ -216,19 +219,18 @@ client behaviour are recorded, with no unresolved loss or access regression.
 
 ## Next action
 
-Draft PR55 now carries review candidate `dd263b07810563b0fa78b72c325f92c56b95fd77`
-without merge or an Archy push. Goal 3 remains unqualified only at authenticated
-distribution. The owner can pass the [catalogue report](reviews/archy-beta2-20261112/catalogue-verification.md)
-to the maintainer: the public catalogue signature is invalid, all four entries
-are missing, the exact Spry/Wildbloom tags are unpublished, and beta also
-requires immutable cosign-verified images. The new fail-closed preparation tool
-reproduces those refusals without writing a candidate. After ZAT permits exact
-image publication, publish and cosign them, sign the compatible catalogue with
-the authorised release root, and decide KithMoot's private-image route. Then
-rerun the unchanged verifier and install/start/check each app through that route
-on an isolated fresh node. The separate local four-app installation and real
-NIP-46 signer rehearsals passed, as did 20 current room/clipboard browser checks;
-do not mislabel them as signed-registry, human-device or embedded acceptance.
-The owner can separately pass the existing exact UI review pack for maintainer
-approval. No live backup, restart, cutover or maintainer contact has been
-authorised by these checks.
+Complete the ForgeSworn PR53–PR55 chain and publish the exact public images
+through its normal `main` workflows. The owner has authorised that work and
+clarified that it is not a core Archipelago merge. Goal 3 remains unqualified
+at authenticated distribution: the public catalogue signature is invalid, all
+four entries are missing, and beta requires immutable cosign-verified images.
+After publication, the authorised key holders must cosign the image digests and
+sign the compatible catalogue with the release root; KithMoot's private-image
+route still needs an explicit decision. Then rerun the unchanged verifier and
+install/start/check each app through that route on an isolated fresh node. The
+separate local four-app installation and real NIP-46 signer rehearsals passed,
+as did 20 current room/clipboard browser checks; do not mislabel them as
+signed-registry, human-device or embedded acceptance. The owner can separately
+pass the existing exact UI review pack to the maintainer for ZAT before any
+core Archipelago PR acceptance. No live backup, restart, cutover or maintainer
+contact is authorised by this clarification.
