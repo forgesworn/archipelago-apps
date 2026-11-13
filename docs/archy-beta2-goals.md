@@ -29,8 +29,8 @@ builds or backups merely because a new window opens.
 ## Starting position
 
 - PR55 was rechecked on 13 November: draft, no recorded maintainer approval,
-  code/evidence baseline `298d7ab`. It is stacked on PR54 and PR53; their
-  outstanding acceptance gates still apply.
+  review candidate `dd263b07810563b0fa78b72c325f92c56b95fd77`. It is stacked
+  on PR54 and PR53; their outstanding acceptance gates still apply.
 - Backend/frontend CI, the fresh-host fixture and the generated rootless
   Podman migration rehearsal pass. The latter uses published alpha p3 and
   generated applications; it does not qualify our private alpha or real apps.
@@ -216,16 +216,19 @@ client behaviour are recorded, with no unresolved loss or access regression.
 
 ## Next action
 
-Goal 3 remains unqualified only at authenticated distribution. The owner can
-pass the [catalogue report](reviews/archy-beta2-20261112/catalogue-verification.md)
+Draft PR55 now carries review candidate `dd263b07810563b0fa78b72c325f92c56b95fd77`
+without merge or an Archy push. Goal 3 remains unqualified only at authenticated
+distribution. The owner can pass the [catalogue report](reviews/archy-beta2-20261112/catalogue-verification.md)
 to the maintainer: the public catalogue signature is invalid, all four entries
 are missing, the exact Spry/Wildbloom tags are unpublished, and beta also
-requires immutable cosign-verified images. Publish the exact reviewed packages,
-sign their immutable digests and the complete compatible catalogue with the
-authorised keys, and decide KithMoot's private-image route. Then rerun the
-unchanged verifier and install/start/check each app through that route on an
-isolated fresh node. The separate local four-app installation rehearsal passed;
-do not mislabel it as a signed-registry pass or weaken verification. The owner
-can separately pass the existing exact UI review pack for maintainer approval.
-No live backup, restart, cutover or maintainer contact has been authorised by
-these checks.
+requires immutable cosign-verified images. The new fail-closed preparation tool
+reproduces those refusals without writing a candidate. After ZAT permits exact
+image publication, publish and cosign them, sign the compatible catalogue with
+the authorised release root, and decide KithMoot's private-image route. Then
+rerun the unchanged verifier and install/start/check each app through that route
+on an isolated fresh node. The separate local four-app installation and real
+NIP-46 signer rehearsals passed, as did 20 current room/clipboard browser checks;
+do not mislabel them as signed-registry, human-device or embedded acceptance.
+The owner can separately pass the existing exact UI review pack for maintainer
+approval. No live backup, restart, cutover or maintainer contact has been
+authorised by these checks.
