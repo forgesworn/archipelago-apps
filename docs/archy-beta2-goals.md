@@ -16,7 +16,7 @@ Existing users must not need to recreate rooms or re-pair identities.
 | Original checkout | `~/WebstormProjects/archipelago-apps` remains on `feat/operator-call-transport`. Do not switch, reset or duplicate the beta work there. |
 | Generated migration tests | `tests/migration/`, `scripts/test-beta-migration.sh` and `.github/workflows/beta-migration.yml` in the beta worktree. These are fixtures, not a production updater. |
 | Private recovery material | `~/Backups/archy-demo-20261112/`. Start with `RECOVERY.txt`, the JSON receipts and `SHA256SUMS`. Keep payloads, identities and keys outside Git and public CI. |
-| Actual-node restore rehearsal | A disposable Linux environment with network access disabled before importing live identities or wallet data. Select a resource-suitable environment before starting; none is currently reserved. |
+| Actual-node restore rehearsal | Retained offline Podman VM `archy-restore-20261113` (2 CPUs, 4 GiB RAM, 30 GiB disk). Verified baseline `/var/restore-root`; mutable `/var/runtime-root`; external network blocked. Manager/apps stopped. |
 | Maintainer review | [Named-screen review pack](reviews/archy-beta2-20261112/README.md). The owner passes it on; do not contact the maintainer without authorisation. |
 | Live cutover | Only `demo.forgesworn.dev` (`95.216.164.146`), after the gates below. No other node is in scope. |
 
@@ -36,12 +36,15 @@ builds or backups merely because a new window opens.
   generated applications; it does not qualify our private alpha or real apps.
 - The 2.43 GB encrypted online node archive, exact private KithMoot OCI image
   and individual SQLite snapshots have passed the documented readback checks.
-  Ten SQLite snapshots also passed Linux ownership/mode and integrity checks.
-  A complete node restore and coherent cutover snapshot remain unqualified.
+  On 13 November the actual archive also passed a full isolated VM restore,
+  all six offline application starts and exact-alpha health recovery. The
+  online source's consistency limits remain. The separate coherent snapshot
+  procedure passed isolated consistency/interruption tests; a fresh snapshot
+  is still required at cutover. See `~/Backups/archy-demo-20261112/restore-evidence/RESTORE-REPORT.md`.
 - Last live verification was 12 November, after backup: alpha
   `1.9.1-alpha-dev`, manager/nginx healthy and six running containers with
   unchanged IDs, images, mounts and start times. Refresh this before live work;
-  this document is not a new live health check.
+  the isolated restore is not a new live health check.
 - The exact old private alpha and beta candidate artefacts remain in the
   worktree caches named in the evidence document. CI downloads have limited
   retention; preserve the verified local copies and do not substitute a newer
@@ -53,19 +56,26 @@ builds or backups merely because a new window opens.
 
 **Where:** private recovery directory and an isolated disposable Linux host.
 
-- [ ] Select the restore environment and check disk/RAM capacity. Keep its
+- [x] Select the restore environment and check disk/RAM capacity. Keep its
   network disabled before importing real node identities, wallets or images.
-- [ ] Restore the existing recovery material into a separate destination;
+  The retained `archy-restore-20261113` VM has 2 CPUs, 4 GiB RAM and a 30-GiB
+  disk; external networking was blocked before import.
+- [x] Restore the existing recovery material into a separate destination;
   verify owners, subuid/subgid mapping, modes, ACLs, xattrs, keys, app data,
   volume bindings and the exact installed private image. Import and inspect
   the OCI image; a valid archive alone does not prove runtime recovery.
-- [ ] Check real application storage, including Fedimint's storage engine,
+  All recorded metadata passed; the archive contains no ACL records.
+- [x] Check real application storage, including Fedimint's storage engine,
   KithMoot room/history state and Wildbloom files/receipts. Record exact passes
   and failures. Do not run a restored wallet online or initiate payments.
-- [ ] Prepare and rehearse a bounded, coherent snapshot procedure that accounts
+  The private report records the runtime adaptations and manager/app results.
+- [x] Prepare and rehearse a bounded, coherent snapshot procedure that accounts
   for manager/app writers, rootless health-check timers and the root NPM bridge.
   It must recover automatically from interruption and restore prior service
   choices. The existing online copy cannot establish cross-application consistency.
+  `scripts/coherent-node-snapshot.py` passed consistency, timeout and SIGKILL
+  rehearsals; the final 89.408-second pause restored all recorded choices and
+  passed separate-destination application/data verification.
 
 **Done when:** a private restore report demonstrates the captured state can
 be recovered, and the snapshot procedure has tested consistency and interruption
@@ -81,49 +91,81 @@ action that could remove its container.
 
 **Where:** beta worktree, generated CI fixtures and the isolated restored node.
 
-- [ ] Implement/review an operator migration procedure for this derivative.
-  Neither the old alpha updater nor the fresh installer is the migration path.
-- [ ] Promote the exact backend, frontend and runtime together. Retain all six
-  installed recipes, exact images, Quadlets, bind/anonymous volumes and
-  running/stopped choices across beta bootstrap and a second manager restart.
-- [ ] Cover lifecycle locks, maintenance drain, interrupted promotion and
-  persistent startup refusal for an incomplete pair. Test recovery before
-  candidate startup and recovery after candidate state changes separately.
-- [ ] Exercise the procedure against the exact private alpha executable and
-  actual restored configuration. Keep private evidence out of public CI.
-- [ ] Account for beta's encrypted-secret conversion and matching key. Do not
-  promise old-alpha rollback after incompatible beta writes, or restore stale
-  wallet/application data merely to undo a code change.
+- [x] Implement/review an operator migration procedure for this derivative.
+  `scripts/migrate-node.py` and its persistent startup guard are the qualified
+  path. Neither the old alpha updater nor the fresh installer is used.
+- [x] Promote the exact backend, frontend and runtime together. All six exact
+  container/image/environment/mount/Quadlet fingerprints and both anonymous
+  volumes survived beta bootstrap and a second manager restart. Four existing
+  recipes were retained byte-for-byte; Wildbloom and Wildbloom Node had no old
+  or candidate recipe and remained explicitly external to manager reconciliation.
+- [x] Cover lifecycle locks, maintenance drain, interrupted promotion and
+  persistent startup refusal for an incomplete pair. Pre-candidate interruption
+  recovered alpha without starting it; a real post-beta SIGKILL resumed forward,
+  and a mixed pair was rejected and repaired without alpha rollback.
+- [x] Exercise the procedure against the exact private alpha executable and
+  actual restored configuration. Alpha's environment-drift repair removed Spry
+  and KithMoot in a negative rehearsal, so the qualified procedure bypasses
+  alpha reconciliation. Private evidence remains outside Git and public CI.
+- [x] Account for beta's encrypted-secret conversion and matching key. The real
+  store has zero encrypted records and no key to convert; generated conversion
+  tests remain the format-change evidence. No old-alpha rollback or stale
+  application-data restoration is permitted after candidate startup.
 
 **Done when:** the procedure and its failure/recovery paths pass on the actual
 isolated baseline, with a recorded source revision, artefact hashes and evidence
-for all six apps. Generated fixture passes alone do not close this goal.
+for all six apps. This goal is complete. Environment adaptations and the absence
+of real secret records are documented; they are not claims of live deployment,
+real password login, physical-client acceptance or a new-install catalogue.
 
 ### 3. Resolve the authenticated catalogue contract
 
 **Where:** beta integration and the [catalogue reproduction report](reviews/archy-beta2-20261112/catalogue-verification.md).
 
-- [ ] Recheck the upstream catalogue when resuming this work. The 12 November
-  copy failed the unchanged release-root verifier and omitted the four node
-  integration entries; this is a dated observation, not a permanent claim.
+- [x] Recheck the upstream catalogue when resuming this work. On 13 November
+  the served bytes remained identical to the rejected 12 November copy, failed
+  both independent and exact-candidate verification, and omitted all four node
+  integration entries. A signed release manifest passed as the positive control.
 - [ ] Establish a supported authenticated distribution route for new Spry,
-  Wildbloom, Wildbloom Node and KithMoot Node installs. Prepare any upstream
-  report for the owner to share; do not bypass signatures or invent OTA authority.
-- [ ] Independently verify that an unavailable catalogue cannot remove,
+  Wildbloom, Wildbloom Node and KithMoot Node installs. The upstream report is
+  prepared for the owner to share. Signed compatible entries and authenticated
+  registry delivery are still required; do not bypass signatures or invent OTA
+  authority. The exact Spry/Wildbloom packages are not yet published, all three
+  public apps need immutable cosign-signed image references, and KithMoot's
+  private-image distribution position needs an explicit owner/upstream decision.
+- [x] Prove the four applications can actually install independently of that
+  distribution gate. On 13 November a clean Debian 13 rootless Podman guest
+  installed and started all four through manager RPC and passed readiness checks
+  using locally loaded exact images, generated identities and no external route.
+  The exact backend/frontend pair was `9a5fde6f…`/`75eb02ba…`; see the
+  [public receipt](reviews/archy-beta2-20261112/fresh-apps-local-evidence.json).
+  This is not a registry pull or signed-catalogue pass. KithMoot used its exact
+  private OCI and Rosetta; fixture-only public addressing/certificates and FIPS
+  provisioning are documented in the upgrade evidence.
+- [x] Keep the fresh Podman network path installable. The rehearsal exposed and
+  fixed `install-lite.sh` omitting `nftables`, without which `archy-net` apps
+  cannot start. The regression and clean end-to-end rerun passed.
+- [x] Independently verify that an unavailable catalogue cannot remove,
   replace or prevent use of the six already-installed apps during migration.
+  The actual-node offline migration retained all six exact application/runtime
+  fingerprints with no catalogue or external network available.
 
-**Done when:** new-install support has verified catalogue authority and real
-installation evidence. If that remains unresolved, keep it explicitly
-unqualified. Existing-node migration requires its own preservation/reconciliation
-proof; an upstream catalogue fix is not a substitute for that proof.
+**Status: unqualified pending authenticated distribution.** Local application
+installation has passed, but new App Store support still requires release-root
+catalogue authority, immutable cosign-verified image delivery and an actual
+fresh install through that authenticated route. Existing-node migration has its
+own passing preservation/reconciliation proof; neither result substitutes for
+the others.
 
 ### 4. Obtain approval of the exact UI candidate
 
 **Where:** PR55, its stacked prerequisites and the existing review pack.
 
-- [ ] Supply the exact build/URL, setup, test steps and expected results for
+- [x] Supply the exact build/URL, setup, test steps and expected results for
   every named screen. Retain the existing captures; add integrated evidence
-  for flows that were previously covered only by synthetic RPC.
+  for flows that were previously covered only by synthetic RPC. The exact
+  35/36-patch pair passed the isolated embedded-app and fresh-signing browser
+  checks on 13 November; safe captures and fixture limitations are in the pack.
 - [ ] Obtain and record explicit Archipelago maintainer approval of the
   reviewed revision, including unresolved PR53/PR54 UI work. Refresh the pack
   and approval after material UI changes.
@@ -174,8 +216,16 @@ client behaviour are recorded, with no unresolved loss or access regression.
 
 ## Next action
 
-Start goal 1 by selecting the isolated Linux restore environment and checking
-its capacity. Use the existing encrypted archive for a private restore rehearsal;
-do not start another live archive transfer or restart the node just to resume.
-Then qualify the migration against that restored baseline. The active upgrade
-chat owns this sequence; the other status chat needs only this plan and PR55.
+Goal 3 remains unqualified only at authenticated distribution. The owner can
+pass the [catalogue report](reviews/archy-beta2-20261112/catalogue-verification.md)
+to the maintainer: the public catalogue signature is invalid, all four entries
+are missing, the exact Spry/Wildbloom tags are unpublished, and beta also
+requires immutable cosign-verified images. Publish the exact reviewed packages,
+sign their immutable digests and the complete compatible catalogue with the
+authorised keys, and decide KithMoot's private-image route. Then rerun the
+unchanged verifier and install/start/check each app through that route on an
+isolated fresh node. The separate local four-app installation rehearsal passed;
+do not mislabel it as a signed-registry pass or weaken verification. The owner
+can separately pass the existing exact UI review pack for maintainer approval.
+No live backup, restart, cutover or maintainer contact has been authorised by
+these checks.

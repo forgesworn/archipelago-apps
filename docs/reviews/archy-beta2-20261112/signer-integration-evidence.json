@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "scope": "real-nak-nip46-linked-identity-and-signer-login",
+  "backendSha256": "9a5fde6fc0555f3675f052b9e3d8a141bda21e7b4f0e5bf94256a17b97deb5b7",
+  "externalNetwork": false,
+  "publicRelay": false,
+  "linkedIdentity": true,
+  "secretFreeExport": true,
+  "freshSigning": true,
+  "freshGrantReplayRefused": true,
+  "loginEnrolment": true,
+  "signerLogin": true,
+  "loginReplayRefused": true,
+  "automaticSignerApproval": true,
+  "humanOrPhysicalSignerApproval": false,
+  "browserUIAcceptance": false,
+  "publication": false
+}

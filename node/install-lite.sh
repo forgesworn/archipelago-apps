@@ -52,7 +52,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get -o DPkg::Lock::Timeout=600 update
 runtime_packages=()
 if [ "$runtime" = podman ]; then
-  runtime_packages=(podman netavark aardvark-dns passt uidmap slirp4netns fuse-overlayfs)
+  runtime_packages=(podman netavark aardvark-dns nftables passt uidmap slirp4netns fuse-overlayfs)
 else
   runtime_packages=(nftables)
   if ! command -v docker >/dev/null; then

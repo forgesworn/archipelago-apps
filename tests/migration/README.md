@@ -44,3 +44,29 @@ failure. Only bounded generated-state result/journal files are uploaded.
 The code is a rehearsal, not a production updater or backup command. It does
 not qualify post-beta database rollback, a maintenance window, the exact live
 private build, real application behaviour, physical clients or maintainer ZAT.
+
+## Operator snapshot tests
+
+`test_coherent_node_snapshot.py` covers the separate operator procedure in
+`scripts/coherent-node-snapshot.py`. These unit tests use generated fake units,
+containers and tar programs; they do not connect to the owner node. The actual
+isolated-node recovery, consistency, timeout and SIGKILL evidence is recorded
+in `docs/archy-beta2-upgrade.md` and the private restore report. The production
+command must only be used in an agreed maintenance window.
+
+## Operator pair/runtime migration tests
+
+`test_migrate_node.py` covers `scripts/migrate-node.py` and
+`scripts/migration-startup-guard.py` with generated filesystems and a fake host.
+It checks exact pair activation, retained Quadlets/images/mounts, candidate or
+external recipe classification, two manager starts, interrupted activation,
+resumption, forward repair and refusal of alpha rollback after beta startup.
+These tests do not run real applications or connect to the owner node.
+
+The operator transaction preserves observed installed units before beta starts,
+keeps application containers running, stops the manager/root NPM writers, takes
+the snapshot/lifecycle locks during replacement, and leaves a persistent guard
+against mixed or incomplete pairs. Once candidate startup is attempted, recovery
+is forward-only; it never restores stale application data or automatically
+returns to alpha. Use only with the reviewed hashes and recovery evidence in
+`docs/archy-beta2-upgrade.md`, during an agreed maintenance window.

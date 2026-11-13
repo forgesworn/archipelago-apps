@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "sourceRevision": "e56ac08482fa7a207e2dbc36e34774188440d4ab",
+  "scope": "current-kithmoot-browser-rooms-chat-pairing-and-clipboard",
+  "browser": "chromium",
+  "offlineRelay": true,
+  "publicRelay": false,
+  "checks": 20,
+  "chatReliabilityChecks": 14,
+  "pairingChecks": 6,
+  "realRooms": true,
+  "twoDevicePairingAndUnpairing": true,
+  "clipboardRefusalFallback": true,
+  "clipboardComponentPassed": true,
+  "clipboardAccessibilityViolations": 0,
+  "clipboardPageErrors": 0,
+  "embeddedArchyAcceptance": false,
+  "physicalClientAcceptance": false
+}

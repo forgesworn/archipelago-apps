@@ -10,6 +10,11 @@ and its existing Docker runtime, and additionally installs pinned FIPS for
 Spry. It requires a fresh Debian host and has a separate install qualification
 gate; it does not migrate existing Podman containers.
 
+For restrictive-NAT calling without a full Archipelago installation, use the
+[standalone public Spry relay recipe](../docs/spry-relay-vps.md). It installs
+only the native STUN/TURN service on a dedicated VPS, with immutable image
+selection, TLS, tracked firewall changes and private per-device profiles.
+
 ## What it contains
 
 - The patched backend from this repository's `backend-<ARCHY_RELEASE>-p<BACKEND_PATCH_LEVEL>`
@@ -30,7 +35,7 @@ gate; it does not migrate existing Podman containers.
   What runs is therefore the release's copy of those files, not the installer's.
 - The `archipelago` user (uid 1000, lingering), subuid/subgid ranges, passwordless
   sudo and the rootless Podman configuration the ISO writes (graphroot under
-  `/var/lib/archipelago/containers/storage`, netavark, pasta), plus the `archy-net`
+  `/var/lib/archipelago/containers/storage`, netavark, nftables and pasta), plus the `archy-net`
   network and the user's `podman.socket`.
 - Per-device TLS and SSH host keys from archy's first-boot script, then the
   per-node CA, which reissues the leaf with every global address as a SAN so one

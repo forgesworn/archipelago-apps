@@ -271,25 +271,30 @@ supported verified catalogue path exists; the existing installed relay must
 remain in place and be qualified through installed-app controls.
 
 The [current public catalogue](https://source.archipelago-foundation.org/lfg2025/archy/raw/branch/main/releases/app-catalog.json),
-fetched on 12 November, reports `updated: 2026-10-05`. Its claimed release-root
-signature did not pass independent verification, so it is not qualification
-evidence for authenticated catalogue availability. It has no entries for `spry`, `wildbloom`,
-`wildbloom-node` or `kithmoot-node`; new App Store installation therefore needs
-a supported verified catalogue path for each, not only Spry. This observation
-does not authorise removing or replacing any installed private app.
+fetched again on 13 November, remains byte-identical to the 12 November copy
+and reports `updated: 2026-10-05`. Its claimed release-root signature failed
+both independent verification and the exact candidate's production verifier,
+so it is not qualification evidence for authenticated catalogue availability.
+It has 64 entries but none for `spry`, `wildbloom`, `wildbloom-node` or
+`kithmoot-node`; new App Store installation therefore needs a supported
+verified catalogue path for each, not only Spry. This observation does not
+authorise removing or replacing any installed private app.
 
 The catalogue SHA-256 is
 `ba2cbc4dafbf3c4d843ea2cac55910c279ea3b478aaf5075f64773346bb3f1b2`, identical
 to `releases/app-catalog.json` in pinned beta source. The verifier uses the
 source's sorted, compact UTF-8 JSON preimage with both signature fields removed,
-and the pinned Ed25519 root. As a positive control it successfully verifies the
+and the pinned Ed25519 root. On 12 November it successfully verified the
 downloaded beta release manifest (SHA-256
 `59234917bd97a1f89dc7d5b77292d08fa40a4c7d3b085b82b1cf9b276b2eabe0`).
-The retained production binary independently reproduces the refusal while
-accepting the signed release manifest; see the [reproduction report](reviews/archy-beta2-20261112/catalogue-verification.md).
-Resolve authenticated catalogue availability before claiming working beta
-App Store support. Do not suppress verification or use the rejected catalogue
-as installation authority.
+That manifest URL returned 404 on 13 November; the fresh control used a retained
+signed alpha manifest (SHA-256
+`19dfbac51a9f266aafa6342aa1df32fc6e48b5e35a7b332a253ae2edcb49dcad`),
+which both verifiers accepted. The exact candidate rejected the catalogue with
+exit 1; see the [reproduction report and owner-ready upstream request](reviews/archy-beta2-20261112/catalogue-verification.md).
+Resolve authenticated catalogue availability and exercise actual fresh installs
+before claiming working beta App Store support. Do not suppress verification
+or use the rejected catalogue as installation authority.
 
 This derivative cannot reuse the upstream release signature to authorise its
 modified backend/frontend. Do not feed our bundle through official signed OTA
@@ -474,7 +479,306 @@ alpha binary, and all six running, unpaused containers retain their original
 IDs, images, mounts and start timestamps. No app was restarted.
 
 The live copy was captured while services kept running. It must not be used as
-proof of a coherent cutover backup, complete host restore or wallet recovery.
-A fresh, bounded maintenance snapshot and isolated restore qualification
-remain required before activation; the File Browser and timer precautions
-above apply. None of this recovery material is uploaded to public CI or Git.
+proof of a coherent cutover backup. A fresh, bounded maintenance snapshot and
+restore qualification remain required before activation; the File Browser and
+timer precautions above apply. None of this recovery material is uploaded to
+public CI or Git.
+
+### Actual-node isolated restore rehearsal, 13 November
+
+The private report is
+`~/Backups/archy-demo-20261112/restore-evidence/RESTORE-REPORT.md`; its JSON
+receipts and logs remain outside Git. A task-owned 2-CPU/4-GiB Fedora CoreOS
+VM with a 30-GiB disk was selected after Docker proved unable to restore
+overlay whiteout device nodes. External networking was blocked before import,
+with only the host SSH control channel retained; runtime containers also used
+`network=none`. No live backup, server restart, payment or live-node change
+occurred.
+
+The full filesystem comparison passed: all 100,821 entries, 59,113 file hashes,
+numeric owners, modes, recorded timestamps, links, FIFOs, eight whiteouts and
+67 extended attributes matched, with no unexpected paths. The archive has no
+ACL records, so non-default ACL recovery is not demonstrated. Original UID and
+subuid/subgid mappings and the original data path were restored. The standalone
+OCI import recovered the exact KithMoot image ID. All six original container
+IDs, image IDs/names, binds and mounts matched the captured inventory.
+
+A failed first runtime open exposed an important crash-recovery requirement:
+Podman deleted the six stale-running auto-remove containers and anonymous
+volumes. The untouched baseline was recopied, and the runtime-only preparation
+disabled auto-removal in both the Podman SQLite configuration and OCI specs
+before opening them. Both anonymous volumes then survived application start
+and stop; the captured File Browser settings file hash remained exact.
+
+All six real applications started offline and later stopped with exit code
+zero. Fedimint opened its existing RocksDB/federation state and started its
+monitors without external connectivity or payments. Six KithMoot room
+databases passed integrity checks with 3,399 events. Wildbloom's 17 blob
+records matched 17 restored files, and its sales/allowance records remained.
+The exact private alpha reported `1.9.1-alpha-dev` and returned local health
+`status=ok`, `crash_recovery_complete=true`. One manager discovery sample had
+`wildbloom-node` exited, so manager health alone is not treated as integrated
+per-app health evidence.
+
+The VM uses Fedora CoreOS, Podman 5.1.2 and Rosetta rather than the live
+Debian/Podman 4.3 environment. It is retained with manager/apps stopped and
+isolation enabled for migration qualification. The online-copy consistency
+limits, full host/disk-image recovery, physical clients and external network
+acceptance remain unqualified. A later alpha repair run removed Spry and
+KithMoot from a mutable runtime copy. Goal 2 reproduced that environment-drift
+path and qualified a direct guarded-beta migration that bypasses alpha repair.
+
+### Coherent snapshot procedure and rehearsal
+
+`scripts/coherent-node-snapshot.py` is the operator procedure, distinct from
+the generated fixture. It takes the snapshot/update lifecycle locks, records
+manager, root NPM bridge and container health-timer choices, stops the manager
+and root writers, and pauses running rootless containers without stopping or
+recreating them. It synchronizes the filesystem and writes an uncompressed,
+mode-0600 tar while streaming SHA-256. Output cannot overwrite an existing
+archive or reside inside captured roots. The manifest records exact roots,
+container/service choices and recovery status.
+
+The capture runs as a transient systemd unit with an always-run recovery
+action. Recovery terminates any incomplete tar process group, removes an
+uncommitted archive, unpauses only containers paused by the operation, and
+restores recorded service/timer choices. Missing transient health timers are
+recreated with the recorded container health interval, with an initial check
+and without container restart. A deadline-aware read enforces the pause budget;
+unit tests cover timeout cleanup, health-timer discovery/recreation, idempotent
+recovery and archive hashing/refusal.
+
+For a live maintenance window only, after reviewing the current inventory and
+free disk/RAM, the documented command is:
+
+```sh
+sudo install -m 700 scripts/coherent-node-snapshot.py /opt/archipelago/scripts/
+sudo /opt/archipelago/scripts/coherent-node-snapshot.py \
+  --output /root/archy-coherent-YYYYMMDD.tar --pause-budget 120
+```
+
+This stops the manager during capture. Do not run it outside an agreed window.
+The default manager/NPM units match the real node; `--additional-root` exists
+only for host layouts such as the rehearsal VM's `/usr/local` symlink to
+`/var/usrlocal`. Verify the archive and restore separately, then encrypt and
+transfer it off-host before activation. If recovery reports errors, use the
+state's recorded recovery command rather than starting an upgrade.
+
+The final isolated rehearsal used a 300-second VM budget and completed with an
+89.408-second pause and 2.3-GiB service memory peak. A separate restore passed
+full tar comparison and exact alpha/application checks. Six managed writer
+databases all contained sequence 11279, the root writer remained readable,
+all six container definitions and both anonymous volumes were present, and
+KithMoot's 3,399 events and Wildbloom's 17 blob files/records survived. A
+one-second timeout and a real SIGKILL during tar both terminated capture,
+removed uncommitted output and restored all services; all three health timers
+received future runs. Private receipts are under
+`~/Backups/archy-demo-20261112/restore-evidence/coherent-snapshot-*` and
+`*-interruption-result.json`. Goal 1 is complete; a fresh coherent snapshot is
+still required at cutover.
+
+
+## Actual-node operator migration qualification, 13 November
+
+Goal 2 is complete on the isolated restored baseline. This is not live upgrade
+approval. No live backup, restart, deployment, payment or maintainer contact
+occurred.
+
+### Procedure and exact artefacts
+
+`scripts/migrate-node.py` owns the pair/runtime transaction;
+`scripts/migration-startup-guard.py` is its persistent systemd startup guard.
+Base revision `3e1dc3f` with the current reviewed working-tree additions:
+
+- Migration SHA-256 `0a8d5314ac677f933c4d606233f4b3906be33fcce13f4ecb971158c771a71775`.
+- Guard SHA-256 `c9bd6ed3ebdfb23d67a49db1480d9949bd7e1d0928a286ad6d19b024768473c3`.
+- Candidate backend SHA-256 `e887b68d4232523bbf48a722b906b4759e9bf3270b98cc604630d8d92f57124d`.
+- Candidate frontend SHA-256 `45b440d1896a0c51e4b71aba64c768a82e6487f4e0cb84a26e9d9ebadd839793`.
+- Exact alpha SHA-256 `81a184a97a04b02ac65d44fe2b71e7c34f3d9c91486001b3cced60efa913230d`.
+- The candidate's actual health version is `2.1.0-beta.2-dev`; the procedure
+  requires that exact string rather than accepting a prefix.
+
+The transaction binds the old and new hashes, records manager/root-NPM choices,
+stops those control-plane writers without stopping application containers,
+takes snapshot/update lifecycle locks, and preserves every observed Quadlet in
+`update-transactions/installed-units` before candidate startup. It verifies six
+container IDs, image IDs/names, mounts, auto-remove/network/port settings,
+environment/command/labels, running state, recipe hashes and anonymous volumes
+on two manager starts. It retains externally managed apps rather than inventing
+recipes for them. On SELinux hosts the guard receives the executable `bin_t`
+label; an unlabelled `var_t` copy was correctly rejected by systemd during the
+rehearsal and that installation defect was fixed.
+
+After a fresh coherent recovery set and a matching live inventory, install the
+reviewed scripts and run with the running manager:
+
+```sh
+sudo install -m 755 scripts/migrate-node.py scripts/migration-startup-guard.py \
+  /opt/archipelago/scripts/
+sudo /opt/archipelago/scripts/migrate-node.py promote \
+  --backend /root/beta2/archipelago \
+  --frontend /root/beta2/frontend.tar.gz \
+  --backend-sha256 e887b68d4232523bbf48a722b906b4759e9bf3270b98cc604630d8d92f57124d \
+  --old-backend-sha256 81a184a97a04b02ac65d44fe2b71e7c34f3d9c91486001b3cced60efa913230d \
+  --frontend-sha256 45b440d1896a0c51e4b71aba64c768a82e6487f4e0cb84a26e9d9ebadd839793 \
+  --version 2.1.0-beta.2-dev --health-timeout 600 \
+  --app fedimint-clientd --app filebrowser --app kithmoot-node \
+  --app spry --app wildbloom --app wildbloom-node
+```
+
+The explicit app list is sorted and must match the current inventory; a changed
+set is a stop condition, not permission to add or remove applications. The
+operation state is `/etc/archipelago/node-migration.json`; code backups/staging
+are under `/opt/archipelago/.node-migration`, and mode-0600 inventory evidence
+is under `/var/lib/archipelago/node-migration`. Keep those recovery records
+until delivery closes. `--manager-stopped` exists for a reviewed maintenance
+entry and then requires the exact old backend hash. Normal cutover uses the
+healthy running-manager precondition above.
+
+Before candidate startup, `recover` restores only the old code pair and removes
+new runtime-ownership records. Once candidate startup is authorised, recovery
+is forward-only: rerun the same `promote` command. Do not restore an old
+filesystem/database snapshot to undo a code change. The guard accepts only a
+complete pair for the recorded phase; an incomplete or mixed pair cannot start
+the manager.
+
+### Alpha repair negative result
+
+The exact alpha was also run on a fresh copy to diagnose the earlier loss. It
+reported healthy `1.9.1-alpha-dev` recovery while removing both Spry and
+KithMoot for environment drift. The VM's missing live sudo policy then blocked
+recreation. Original host networking did not prevent that drift path; the
+earlier `network=none` adaptation was not its sole cause. Alpha does not honour
+beta's installed-runtime records or lifecycle lock, so alpha self-repair is not
+a safe migration step. The qualified procedure bypasses it. The negative log is
+`alpha-migration-repair.log` and its analysis is `alpha-repair-analysis.json`
+in the private evidence directory.
+
+The captured baseline has no `wildbloom` or `wildbloom-node` recipe in
+`/opt/archipelago/apps`, and the candidate supplies neither. Those two
+containers are therefore retained as explicitly external to manager
+reconciliation. The other four installed recipes are retained exactly. This
+corrects the earlier assumption that all six had on-disk recipes.
+
+### Passing real-data rehearsals
+
+Operation `214243d3-12c1-49df-bb84-829b12dc0190` promoted the exact pair. Both
+beta starts returned `status=ok`, `crash_recovery_complete=true` and the exact
+version. All six application fingerprints and both File Browser anonymous
+volumes matched after the second start. KithMoot retained 3,399 events in six
+rooms; Wildbloom retained 17 blob records/files and five paid sales; File
+Browser's settings hash matched; Fedimint's RocksDB files remained present.
+No catalogue or external network was available, demonstrating that installed
+app preservation does not depend on catalogue availability.
+
+The same operation then rejected an alpha/beta mixed pair and refused alpha
+rollback. Forward repair was interrupted with a real SIGKILL after its first
+beta inventory receipt while in `candidate-starting`; resumption completed a
+further two-start verification and returned to `active`. The application/data
+checks above passed again.
+
+A separate fresh-baseline operation `8e481f76-a058-4b10-b65c-27134619aa48`
+was killed during frontend replacement in `prepared`, before candidate startup
+was authorised. `recover` restored the exact alpha pair, removed the new
+runtime-ownership records and preserved all six original running containers,
+images and mounts. An earlier checkpoint that observed `candidate-starting`
+was not counted as pre-start evidence or rolled back.
+
+Private receipts and logs are under
+`~/Backups/archy-demo-20261112/restore-evidence/migration-success/`,
+`migration-forward-recovery/` and `migration-prestart-recovery/`. The private
+restore report summarises the failed environment adaptations as well as these
+passes. All six final rehearsal containers were stopped cleanly with both
+anonymous volumes retained; the VM remains offline and the verified baseline's
+alpha hash is unchanged. The migration and snapshot test suite now has 30
+passing tests.
+
+### Qualification limits
+
+The VM uses Fedora CoreOS, Podman 5.1.2 and Rosetta rather than live
+Debian/Podman 4.3. Application execution used `network=none` and disabled
+auto-remove solely as recovery adaptations; the operator procedure does not
+change those settings on the source node. Host networking was still blocked
+by the VM firewall. Live sudo policy, external ingress and real client traffic
+were not exercised.
+
+The actual store contains zero `secrets/*/*.secret` records and no v2 key, so
+there is no real record to convert in this baseline. An unauthenticated
+`security.list-expiring` request was rejected with 401 and did not create a key;
+no owner password was available or changed for a real login test. The five
+generated protected-store migration tests above remain the v1-to-v2 conversion
+and matching-key evidence. Existing-password login on the real restored node,
+physical clients and a controlled live cutover remain separate acceptance
+steps. Goal 3 (authenticated new installs) and exact-revision maintainer UI
+approval remain open.
+
+## Fresh application installation and distribution readiness, 13 November
+
+Goal 3 remains unqualified at authenticated distribution, but a separate local
+fresh-install rehearsal passed for all four integration applications. The clean
+Debian 13 ARM64 guest used rootless Podman 5.4.2 and the exact reviewed pair:
+backend `9a5fde6fc0555f3675f052b9e3d8a141bda21e7b4f0e5bf94256a17b97deb5b7`,
+frontend `75eb02bab32700e73b038fb5fabe57118b9a36972be7ff43c3b080804f53f19d`.
+Through authenticated manager RPCs it installed, started and readiness-checked
+Wildbloom Node, Wildbloom, Spry and KithMoot Node. All remained running on
+readback; both Wildbloom containers were healthy, Spry's private relay was
+ready, and KithMoot's exact private image ID was
+`bc57a79baf111d3e2bc4a5c2c15bebb91c96469bca96dda49ceb32d51461cd86`.
+The [public receipt](reviews/archy-beta2-20261112/fresh-apps-local-evidence.json)
+records every local image ID and explicit non-claims.
+
+The public images were built from their pinned ARM64 inputs; Wildbloom Node's
+application and Shelter test stages passed during its build. KithMoot used only
+the retained code OCI through Rosetta, not restored identity or room data.
+External routing was removed before seed onboarding and stayed absent through
+installation. The fixture used generated credentials, a loopback dummy public
+address and self-signed public certificate for KithMoot preflight, and the
+release-checksummed ARM64 FIPS package omitted by the lite recipe. It did not
+exercise public CA issuance, external ingress, physical clients or payments.
+The guarded driver is `tests/node/fresh-apps-host.py`.
+
+A first install attempt exposed a real lite-host dependency defect: the Podman
+package list omitted `nftables`, so netavark could not create `archy-net` and
+Wildbloom Node repeatedly exited. `node/install-lite.sh` now includes it, the
+new `tests/test_fresh_install.py` regression failed before the fix and passes
+with the complete fresh-install tests. The final clean run used the corrected
+bundle without mid-run repair.
+
+This is local image/manifest transport, not signed App Store distribution.
+The registry check found exact Spry `0.1.0-6b34f06-4` and Wildbloom
+`0.0.1-ee21ed5-5` tags unpublished; Wildbloom Node's pinned tag is available
+only as amd64. Older public tags do not contain the candidate's provider
+changes and were not substituted. Beta also requires an immutable image digest
+and valid cosign claim under the node's pinned image key at every pull, in
+addition to the release-root catalogue signature. KithMoot remains deliberately
+private with a private Shelter input; publishing it or inventing a catalogue
+entry would change the chosen distribution position. See the
+[owner-ready distribution request](reviews/archy-beta2-20261112/catalogue-verification.md).
+Publish and cosign the exact public artefacts, sign the compatible catalogue
+with the authorised release root, decide authenticated private KithMoot
+delivery, then repeat fresh installation through that authenticated route.
+
+## Linked signer, room and clipboard integration evidence, 13 November
+
+A real `nak` NIP-46 signer and loopback relay passed against the exact ARM64
+backend `9a5fde6fc0555f3675f052b9e3d8a141bda21e7b4f0e5bf94256a17b97deb5b7`.
+The production RPC flow linked an identity, exported no Nostr or pairing secret,
+signed a synthetic event with a fresh grant, enrolled that identity for login,
+and completed a signer login. Reusing either the signing grant or completed
+login attempt failed. `nak verify` independently accepted the event. The
+[signer receipt](reviews/archy-beta2-20261112/signer-integration-evidence.json)
+records that approval was automatic: no human/physical signer, embedded-browser
+UI or public-relay acceptance is claimed. The guarded driver is
+`tests/node/signer-integration-host.py`. Its generated fixture password was
+removed on success and the VM/relay/signer were stopped and removed.
+
+Current KithMoot source `e56ac08482fa7a207e2dbc36e34774188440d4ab` passed 20
+Chromium checks against its deterministic offline relay. These covered real
+rooms, chat reliability, two-device pairing/unpairing and clipboard refusal.
+The node controller's component review separately passed clipboard-policy
+refusal, absent Clipboard API and late-expiry handling, with no page errors or
+accessibility violations. See the [room/clipboard receipt](reviews/archy-beta2-20261112/room-clipboard-evidence.json)
+and [inspected manual-copy capture](reviews/archy-beta2-20261112/pairing-copy-blocked-390.png).
+These are current-client and component results, not evidence that the exact
+embedded candidate's existing rooms, physical Android/desktop clients or human
+approval journeys have passed. Those remain live/maintainer acceptance steps.

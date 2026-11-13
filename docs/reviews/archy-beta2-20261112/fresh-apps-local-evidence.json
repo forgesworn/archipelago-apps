@@ -1,0 +1,43 @@
+{
+  "passed": true,
+  "scope": "fresh-debian-rootless-podman-local-image-install",
+  "backendSha256": "9a5fde6fc0555f3675f052b9e3d8a141bda21e7b4f0e5bf94256a17b97deb5b7",
+  "frontendSha256": "75eb02bab32700e73b038fb5fabe57118b9a36972be7ff43c3b080804f53f19d",
+  "generatedIdentity": true,
+  "externalNetwork": false,
+  "localImageTransport": true,
+  "signedCatalogueDistribution": false,
+  "registryPullQualification": false,
+  "physicalClients": false,
+  "payments": false,
+  "apps": {
+    "wildbloom-node": {
+      "installed": true,
+      "running": true,
+      "image": "ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-2",
+      "imageId": "5f371102f1007221ff15d7d619117e003e1b4f271399345b6a1de7a59cc50fd5",
+      "ready": true
+    },
+    "wildbloom": {
+      "installed": true,
+      "running": true,
+      "image": "ghcr.io/forgesworn/wildbloom:0.0.1-ee21ed5-5",
+      "imageId": "216cbbcb15f25125ebbbe845bdeceeba43f7d69f142442c1e01a4cc528a9a7ff",
+      "ready": true
+    },
+    "spry": {
+      "installed": true,
+      "running": true,
+      "image": "ghcr.io/forgesworn/spry:0.1.0-6b34f06-4",
+      "imageId": "b3be7082ca1ef3876f47069f486a0d454662c8e8be1eb236686374f66f086083",
+      "ready": true
+    },
+    "kithmoot-node": {
+      "installed": true,
+      "running": true,
+      "image": "localhost/kithmoot-node:group-headroom-20261110-db34017b49e3",
+      "imageId": "bc57a79baf111d3e2bc4a5c2c15bebb91c96469bca96dda49ceb32d51461cd86",
+      "ready": true
+    }
+  }
+}

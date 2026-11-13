@@ -66,6 +66,11 @@ class FreshInstallTests(unittest.TestCase):
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assertTrue(read)
 
+    def test_podman_network_install_includes_nftables(self):
+        packages = next(line for line in INSTALLER.read_text().splitlines()
+                        if 'runtime_packages=(podman' in line)
+        self.assertIn('nftables', packages.split())
+
 
 if __name__ == "__main__":
     unittest.main()
