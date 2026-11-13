@@ -34,8 +34,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - { runner: ubuntu-24.04, arch: amd64 }
-          - { runner: ubuntu-24.04-arm, arch: arm64 }
+          - { runner: ubuntu-24.04, arch: amd64, previous: ghcr.io/forgesworn/wildbloom-node:0.2.2-b3b254b-2 }
+          - { runner: ubuntu-24.04-arm, arch: arm64, previous: '' }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -55,7 +55,7 @@ jobs:
           build-args: WILDBLOOM_NODE_REF=${{ needs.wildbloom-node-plan.outputs.ref }}
           load: true
           tags: ${{ needs.wildbloom-node-plan.outputs.tag }}-${{ matrix.arch }}
-      - run: tests/smoke/wildbloom-node.sh "${{ needs.wildbloom-node-plan.outputs.tag }}-${{ matrix.arch }}" ghcr.io/forgesworn/wildbloom-node:0.2.2-b3b254b-2
+      - run: tests/smoke/wildbloom-node.sh "${{ needs.wildbloom-node-plan.outputs.tag }}-${{ matrix.arch }}" "${{ matrix.previous }}"
       - run: |
           sudo apt-get update && sudo apt-get install -y python3-yaml
           node tests/smoke/seller-capacity.mjs "${{ needs.wildbloom-node-plan.outputs.tag }}-${{ matrix.arch }}"
