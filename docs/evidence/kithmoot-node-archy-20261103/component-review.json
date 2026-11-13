@@ -1,0 +1,54 @@
+{
+  "schema": "kithmoot-node-ui-component/1",
+  "passed": true,
+  "actualController": true,
+  "fixtureSigner": true,
+  "fixtureNodeAdapter": true,
+  "actualHostGate": false,
+  "actualTurn": false,
+  "uiMaintainerApproval": false,
+  "zat": "pending",
+  "screenshots": [
+    "01-sign-in-390.png",
+    "02-setup-390.png",
+    "03-setup-320.png",
+    "00-delete-before-setup.png",
+    "04-status-390.png",
+    "05-status-768.png",
+    "06-status-1440.png",
+    "07-status-large-text.png",
+    "08-pairing-390.png",
+    "09-paused-390.png",
+    "10-delete-390.png",
+    "11-delete-prepared-390.png",
+    "12-embedded-390.png",
+    "13-landscape.png"
+  ],
+  "accessibility": [
+    {
+      "name": "sign-in",
+      "violations": []
+    },
+    {
+      "name": "setup",
+      "violations": []
+    },
+    {
+      "name": "unconfigured-deletion",
+      "violations": []
+    },
+    {
+      "name": "status",
+      "violations": []
+    },
+    {
+      "name": "pairing",
+      "violations": []
+    },
+    {
+      "name": "delete",
+      "violations": []
+    }
+  ],
+  "pageErrors": []
+}

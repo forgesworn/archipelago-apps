@@ -1,0 +1,33 @@
+{
+  "v": 1,
+  "base": "5e71b503592df60f94f54833187c17f8648860ed",
+  "files": [
+    {
+      "path": "experimental/kithmoot-node/client.mjs",
+      "sha256": "960d3186d27added39c10375c8e89799b3ad4da6e481419eafce0f7f29790bef"
+    },
+    {
+      "path": "experimental/kithmoot-node/server.mjs",
+      "sha256": "35f2a8b44fccc9f66f424f95a3d1221553eb6dbdca61a11293ab9ddd58831f50"
+    },
+    {
+      "path": "experimental/kithmoot-node/entrypoint.mjs",
+      "sha256": "94c8b4340108be1e258e9a978d586f552098bd67a784fb671a4e43472df61a99"
+    },
+    {
+      "path": "scripts/node-management-tunnel.sh",
+      "sha256": "cdc9ab24d10cc653e4ebaab0b780df5ae9f3dd04d79762995a45f00805901ea0"
+    }
+  ],
+  "changes": [
+    "Plain-language account and device pairing instructions",
+    "Named private management connection errors and recovery",
+    "Self-reconnecting loopback-only SSH tunnel",
+    "Thirty-minute idle controls session with eight-hour absolute limit; polling does not renew it",
+    "Server-side sign-out revocation; rooms and five-minute TURN policy unchanged",
+    "Device-access count distinguished from current room presence"
+  ],
+  "officialArchyZAT": "pending",
+  "maintainerContacted": false,
+  "controlsTestsPassed": 17
+}

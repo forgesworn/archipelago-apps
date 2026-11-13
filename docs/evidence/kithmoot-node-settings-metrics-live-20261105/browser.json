@@ -1,0 +1,113 @@
+{
+  "passed": true,
+  "sourceRevision": "6c27156de8f4744c08cf7fefde76b41763c0910d",
+  "actualDashboardGate": true,
+  "actualLinkedSigner": true,
+  "actualBackends": true,
+  "normalPublicTls": true,
+  "embeddedAuthenticated": true,
+  "standaloneSignIn": true,
+  "widths": [
+    1440,
+    390
+  ],
+  "physicalDevice": false,
+  "mediaCallTest": false,
+  "mutatingNodeActions": true,
+  "settingsSaveStartRestoreStart": true,
+  "screenshots": [
+    "settings-editor-390.png",
+    "settings-saved-paused-390.png",
+    "settings-restored-paused-390.png",
+    "overview-1440.png",
+    "overview-1440-bottom.png",
+    "connections-1440.png",
+    "connections-1440-bottom.png",
+    "usage-1440.png",
+    "usage-1440-bottom.png",
+    "settings-1440.png",
+    "settings-1440-bottom.png",
+    "diagnostics-1440.png",
+    "diagnostics-1440-bottom.png",
+    "overview-390.png",
+    "overview-390-bottom.png",
+    "connections-390.png",
+    "connections-390-bottom.png",
+    "usage-390.png",
+    "usage-390-bottom.png",
+    "settings-390.png",
+    "settings-390-bottom.png",
+    "diagnostics-390.png",
+    "diagnostics-390-bottom.png",
+    "standalone-sign-in-390.png"
+  ],
+  "accessibility": [
+    {
+      "view": "Overview",
+      "violations": [
+        {
+          "id": "meta-viewport",
+          "targets": [
+            [
+              "meta[name=\"viewport\"]"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "view": "Connections",
+      "violations": [
+        {
+          "id": "meta-viewport",
+          "targets": [
+            [
+              "meta[name=\"viewport\"]"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "view": "Usage",
+      "violations": [
+        {
+          "id": "meta-viewport",
+          "targets": [
+            [
+              "meta[name=\"viewport\"]"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "view": "Settings",
+      "violations": [
+        {
+          "id": "meta-viewport",
+          "targets": [
+            [
+              "meta[name=\"viewport\"]"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "view": "Diagnostics",
+      "violations": [
+        {
+          "id": "meta-viewport",
+          "targets": [
+            [
+              "meta[name=\"viewport\"]"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "pageErrors": [],
+  "zat": "pending"
+}

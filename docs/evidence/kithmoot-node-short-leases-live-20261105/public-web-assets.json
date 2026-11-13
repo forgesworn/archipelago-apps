@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "tlsVerified": true,
+  "exactBeforeAndAfter": true,
+  "files": [
+    {
+      "path": "/j/",
+      "sha256": "85981eaa95555d2f946efb24cbb60180b33d86c261a0ca9d28583c5c7b56fc79"
+    },
+    {
+      "path": "/j/assets/index-BcARsGXD.js",
+      "sha256": "2f646087e552f4ec95897fbe1a7821f849273c767da76f1808fc171281e237a6"
+    },
+    {
+      "path": "/j/assets/main-C6LOhDuG.js",
+      "sha256": "894e6aa5bc85d1e1a42617a01e0a9141507bf2cfc5d77601b37455cd0bedca7e"
+    }
+  ]
+}

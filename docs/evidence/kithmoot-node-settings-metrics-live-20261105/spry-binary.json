@@ -1,0 +1,7 @@
+{
+  "sourceRevision": "aa366bb",
+  "sha256": "862de7cdbba2fff0e433be1781e078babf83452dab22bce9ef2cf8fb3eb3bcc2",
+  "bytes": 5148792,
+  "builder": "docker.io/library/rust@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b",
+  "seconds": 138.5
+}

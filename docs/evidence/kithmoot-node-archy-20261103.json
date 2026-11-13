@@ -1,0 +1,244 @@
+{
+  "schema": "kithmoot-node-archy-candidate/1",
+  "date": "2026-11-03",
+  "distribution": "private-candidate",
+  "uiReview": "ZAT pending",
+  "uiMaintainerApproval": false,
+  "hostSource": "fa356d36c3910867dbea17c7494c90a984aa10c6",
+  "hostQualificationSource": "fa356d36c3910867dbea17c7494c90a984aa10c6",
+  "bundleSha256": "3e7f78635f9c69e7e281fb943e707328857c492038f6e1c87b2995215dd54a65",
+  "image": {
+    "schema": "kithmoot-node-archy-image/2",
+    "passed": true,
+    "uid": 1000,
+    "gid": 1000,
+    "dataMode": 448,
+    "readOnlyRoot": true,
+    "noCapabilities": true,
+    "noNewPrivileges": true,
+    "cookieOnlyRefused": true,
+    "unconfiguredHostCommand": true,
+    "deletionFreezeAcrossContainerRestart": true,
+    "actualNodeConfigured": false,
+    "network": "none",
+    "memoryLimitBytes": 268435456,
+    "cleanup": "own container and volume removed in finally",
+    "name": "localhost/kithmoot-node:0.1.0-rc.1-f6c9c23f04d3",
+    "id": "sha256:afcbfec16663a90bf079689a304e278ef380f3c7069d54a2e676f06a05670e55",
+    "actualController": true
+  },
+  "controller": {
+    "actualProductionSupervisor": true,
+    "actualPrivateBackends": true,
+    "signedSetup": true,
+    "signedStatus": true,
+    "privatePairingQr": true,
+    "pauseRestart": true,
+    "prepareCancelDeletion": true,
+    "cookieOnlyRefused": true,
+    "securityTests": 14,
+    "privatePackagingTests": 5,
+    "unconfiguredDeletionFreezeSurvivesRestart": true,
+    "partialInitDeletionAndSecretPreservingResume": true
+  },
+  "componentReview": "kithmoot-node-archy-20261103/component-review.json",
+  "hostIntegration": {
+    "schema": "archy-node-ingress/1",
+    "result": "passed",
+    "offline": true,
+    "actualPrivateController": true,
+    "unconfiguredDeletionFreezeSurvivesRestart": true,
+    "partialInitDeletionAndSecretPreservingResume": true,
+    "actualNginx": true,
+    "actualGateTlsSource": true,
+    "actualNativeRelaySource": true,
+    "normalCertificateAndHostnameVerification": true,
+    "privateDashboardBeforeAfter": true,
+    "externalDashboardRefusedBeforeAfter": true,
+    "forgedForwardedSourceRefused": true,
+    "nodeHostnamePrivateDashboardAndSignerRetained": true,
+    "nodeHostnamePublicDashboardAndSignerRefused": true,
+    "httpAndWebsocketHostCredentialsStripped": true,
+    "unknownRoutesRefused": true,
+    "failedApplyRestored": true,
+    "killedApplyRecovered": true,
+    "operatorChangesPreserved": true,
+    "incompleteRenewalPreservesLastGoodPair": true,
+    "renewedHttpsAndTurnCertificatesReadBack": true,
+    "bootRuntimeRuleInstalled": true,
+    "actualSystemReboot": false,
+    "hostKeyDeniedToApplication": true,
+    "activeDeleteRefused": true,
+    "nodeActivityAccessLogUnchanged": true,
+    "existingSpryHttpAndTurnPreserved": true,
+    "privatePeerPortReserved": true,
+    "internalNodePorts": [
+      3750,
+      3751,
+      3752
+    ],
+    "journey": {
+      "schema": "kithmoot-node-installed/1",
+      "result": "passed",
+      "isolatedLinux": true,
+      "ownerPairing": true,
+      "manualAdmission": true,
+      "freshRoot": true,
+      "encryptedChat": true,
+      "activeUninstallRefused": null,
+      "hostProfile": true,
+      "liveUpdate": false,
+      "authenticatedTurn": [
+        "udp34790",
+        "tcp34790",
+        "tls53499",
+        "tls443"
+      ],
+      "cachedAccessRevoked": true,
+      "closeDelivered": true,
+      "callsRevoked": true,
+      "relayPurged": true,
+      "signedCompletion": true,
+      "coldPublicProof": true,
+      "deletionFreeze": true,
+      "counts": {
+        "v": 1,
+        "ready": true,
+        "paired": true,
+        "rooms": 0,
+        "devices": 0,
+        "pending": 0
+      }
+    },
+    "actualFullArchyDaemon": false,
+    "actualFipsPeer": false,
+    "publicNetwork": false,
+    "physicalGrapheneOS": false
+  },
+  "manifestChecks": {
+    "canonicalRustParser": true,
+    "shellValidator": {
+      "passed": 18,
+      "failed": 0,
+      "warnings": 0
+    },
+    "relayUdpPorts": [
+      49192,
+      49223
+    ]
+  },
+  "assets": [
+    {
+      "path": "controller.mjs",
+      "sha256": "9a17fad3e6f99c1a543c7445a18d0c08acc3c0e00ff80313ca01553ad11ae281"
+    },
+    {
+      "path": "public/index.html",
+      "sha256": "c9a550158f8fe11c3596246312a34f32ff97e8872b4e53145bce7a5908585abf"
+    },
+    {
+      "path": "public/client.js",
+      "sha256": "7c3c9d7e7a42e8d5dcedd40c6becc29edf33a2fb15601f06dcb8e624c1b1c215"
+    },
+    {
+      "path": "public/style.css",
+      "sha256": "46481dbad9b207cbe817f24201765acf126e7651ef8b7ff34def3a6b34e713d3"
+    },
+    {
+      "path": "public/nostr-provider.js",
+      "sha256": "2e54e883c6840bddaa631f1a0aab974a4f2511be855fef0e645414f3095210aa"
+    }
+  ],
+  "sourceFiles": [
+    {
+      "path": "experimental/kithmoot-node/browser-review.mjs",
+      "sha256": "da0acb94ed04772187be8bc188f4445d8cd5b1aff557c6ab87a6315338becaf2"
+    },
+    {
+      "path": "experimental/kithmoot-node/build.mjs",
+      "sha256": "d1ca84f38967dd659e520c845759f262d53e98a529efb8b96ca52a10d87a1458"
+    },
+    {
+      "path": "experimental/kithmoot-node/client.mjs",
+      "sha256": "eb8cf1cfaafba3a5e75d2713c5599a3761de3d5caca5fa23f963f583afb7cc54"
+    },
+    {
+      "path": "experimental/kithmoot-node/controller-driver.mjs",
+      "sha256": "a3a251dc0965ab2ea6534bf95edd0ce59194dee18a1caa4da5a76e9c4157fe35"
+    },
+    {
+      "path": "experimental/kithmoot-node/entrypoint.mjs",
+      "sha256": "94c8b4340108be1e258e9a978d586f552098bd67a784fb671a4e43472df61a99"
+    },
+    {
+      "path": "experimental/kithmoot-node/local-control.mjs",
+      "sha256": "9b59d41aa7b6a209763c9da3e24396ba558627a7f90b7e79484609acbeb9edfd"
+    },
+    {
+      "path": "experimental/kithmoot-node/local-control.test.mjs",
+      "sha256": "6039ed450c8451044bb9cbf981dc5d4a6ed6b5a031af628aa1cce1896f2be37e"
+    },
+    {
+      "path": "experimental/kithmoot-node/package.json",
+      "sha256": "ea2f02d48aff9fed3227568b4bb0021882efebbb8d3e8eb1af11de843f6d5c41"
+    },
+    {
+      "path": "experimental/kithmoot-node/server.mjs",
+      "sha256": "d4b33ae1d296dac5fbef47314dca9fd554b15b70f56198c9c13cb4bc1fb1e1a8"
+    },
+    {
+      "path": "experimental/kithmoot-node/server.test.mjs",
+      "sha256": "58e353af5721906c7a71ecf58a19ea29648ea459293c41616c73a029a9bb954e"
+    }
+  ],
+  "logs": [
+    {
+      "name": "kithmoot-node-archy-controller-deletion-proof-20261103.log",
+      "sha256": "067a331cb3b38de78270f671c1f062638217bbd929c63ba6694717436a4d2351"
+    },
+    {
+      "name": "kithmoot-node-archy-manifest-delete-20261103.log",
+      "sha256": "70d49a73edf723b1c7d3e9327b4046e73034942da1bde3d63a2db4ac121c9660"
+    },
+    {
+      "name": "kithmoot-node-archy-manifest-delete-shell-20261103.log",
+      "sha256": "77d3536cfd566bcfe5fa7d794a22d1d31ac40d62b8cb9d436573ff3b678962db"
+    },
+    {
+      "name": "kithmoot-node-archy-browser-deletion-proof-20261103.log",
+      "sha256": "c981163002e3df842c79fd7c760723bb7778a5c36799761fee64de21dbfdb8d7"
+    },
+    {
+      "name": "kithmoot-node-archy-control-tests-20261103.log",
+      "sha256": "f3ec3689cebe413b4200505e9defd6b9748a07b425dfc6e1abc01974a840d48c"
+    }
+  ],
+  "limits": [
+    "No complete Archy daemon runtime or real reboot qualification",
+    "No actual Archy signer, app-gate login or FIPS proof in the component browser run",
+    "ARM64 local image only; no x64 execution",
+    "No public CA or separate-network reachability proof",
+    "No physical GrapheneOS acceptance",
+    "No public signed node or Shelter release; no Shelter source publication",
+    "No live node deployment or UI approval"
+  ],
+  "cleanup": {
+    "offlineHostFixtureRemoved": true,
+    "imageFixtureRemoved": true,
+    "browserStopped": true,
+    "taskServersLeftRunning": false,
+    "supersededPrivateBuildContextsRemoved": true,
+    "supersededPrivateImagesRemoved": true
+  },
+  "hostedCi": {
+    "sourceCommit": "66f7573ae8ae0e95409450c3d2451b5af1950002",
+    "backendRun": 41578160185,
+    "passed": 13,
+    "intentionallySkipped": 3,
+    "backend": "success",
+    "frontend": "success",
+    "manifests": "success",
+    "privateImagePublished": false
+  },
+  "localBuildLimit": "Final local full-daemon cargo check exceeded its3GiB container limit; same patched source passed final hosted backend CI"
+}

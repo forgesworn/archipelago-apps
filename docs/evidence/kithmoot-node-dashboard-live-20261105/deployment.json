@@ -1,0 +1,68 @@
+{
+  "passed": true,
+  "sourceRevision": "3d10482dd04bd163d44ff230bdb6ea71f61070c4",
+  "image": "localhost/kithmoot-node:0.1.0-rc.1-dashboard-2cf9031abeb4",
+  "imageId": "cae02bafcc5aa2720b637330ba0d9fdd7e7c372d30dac2a733d1abab948fbb9c",
+  "parentImage": "localhost/kithmoot-node:0.1.0-rc.1-8961b322e310",
+  "parentId": "9257b8f7b94ad858da0db89fdd643d65139277b30c003483408d44428814d4a0",
+  "activeRelaySocketsBeforeSwitch": 0,
+  "ownerPreserved": true,
+  "savedRoomsPreserved": true,
+  "settingsAndSecretsUnchanged": true,
+  "otherFiveContainersUnchanged": true,
+  "hostBinaryAndNginxUnchanged": true,
+  "backendBytesUnchanged": true,
+  "runtimeAssetsExact": true,
+  "status": {
+    "ready": true,
+    "rooms": 1,
+    "devices": 10,
+    "pending": 0,
+    "paired": true
+  },
+  "rollbackImageRetained": true,
+  "zat": "pending",
+  "schema": "kithmoot-node-dashboard-live/1",
+  "recordedAt": "2026-11-05T08:28:34.189362+00:00",
+  "operatorUi": "https://demo.forgesworn.dev:3753/",
+  "dashboard": "https://demo.forgesworn.dev/dashboard",
+  "managementAccess": "Existing private connection or SSH SOCKS tunnel",
+  "actualLinkedSigner": true,
+  "authenticatedEmbeddedViews": true,
+  "phoneAndDesktopWidths": [
+    390,
+    1440
+  ],
+  "physicalDevice": false,
+  "newMediaCallQualification": false,
+  "uiMaintainerApproval": false,
+  "accessibility": {
+    "appFrameViolations": 0,
+    "existingHostFindings": [
+      "meta-viewport disables zoom"
+    ],
+    "scans": 5
+  },
+  "runtimeAssets": [
+    {
+      "path": "dist/controller.mjs",
+      "sha256": "9778834de015d8557112105a7f56fd3d65328a58ede0d9d9a76bc296779a1e86"
+    },
+    {
+      "path": "dist/public/client.js",
+      "sha256": "f53c2eac5ea180da2aa4518441395dee8ea872d8679be54db33e6d91c90aea6e"
+    },
+    {
+      "path": "dist/public/style.css",
+      "sha256": "79c8c6f4687faa53415de0ef3347d379741c7c890d9e1884d6019496f716f398"
+    },
+    {
+      "path": "dist/public/index.html",
+      "sha256": "c9a550158f8fe11c3596246312a34f32ff97e8872b4e53145bce7a5908585abf"
+    },
+    {
+      "path": "dist/public/nostr-provider.js",
+      "sha256": "2e54e883c6840bddaa631f1a0aab974a4f2511be855fef0e645414f3095210aa"
+    }
+  ]
+}

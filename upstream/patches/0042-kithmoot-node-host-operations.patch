@@ -1,0 +1,79 @@
+From e30ac32024cbb96c484b1c515281664f6bab3533 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 08:49:37 +0000
+Subject: [PATCH] fix: run node host operations outside the service sandbox
+
+---
+ .../src/container/kithmoot_node.rs            | 49 +++++++++++--------
+ 1 file changed, 29 insertions(+), 20 deletions(-)
+
+diff --git a/core/archipelago/src/container/kithmoot_node.rs b/core/archipelago/src/container/kithmoot_node.rs
+index a713bed..d2afa02 100644
+--- a/core/archipelago/src/container/kithmoot_node.rs
++++ b/core/archipelago/src/container/kithmoot_node.rs
+@@ -51,21 +51,20 @@ async fn ensure_helper() -> Result<()> {
+         file.sync_all().await?;
+         let output = tokio::time::timeout(
+             Duration::from_secs(15),
+-            tokio::process::Command::new("sudo")
+-                .args([
+-                    "-n",
+-                    "install",
+-                    "-D",
+-                    "-m",
+-                    "0755",
+-                    "--",
+-                    stage
+-                        .to_str()
+-                        .ok_or_else(|| anyhow!("Invalid host stage path"))?,
+-                    HELPER,
+-                ])
+-                .kill_on_drop(true)
+-                .output(),
++            crate::update::host_sudo_output(&[
++                "timeout",
++                "--kill-after=2s",
++                "10s",
++                "install",
++                "-D",
++                "-m",
++                "0755",
++                "--",
++                stage
++                    .to_str()
++                    .ok_or_else(|| anyhow!("Invalid host stage path"))?,
++                HELPER,
++            ]),
+         )
+         .await??;
+         ensure!(
+@@ -127,11 +126,21 @@ fn configuration(config: &crate::config::Config) -> Result<[String; 6]> {
+ async fn helper(command: &str, args: &[String]) -> Result<()> {
+     let output = tokio::time::timeout(
+         Duration::from_secs(60),
+-        tokio::process::Command::new("sudo")
+-            .args(["-n", "python3", HELPER, command])
+-            .args(args)
+-            .kill_on_drop(true)
+-            .output(),
++        // Plain sudo inherits ProtectSystem=strict from archipelago.service.
++        // Use the platform's host namespace path; the inner deadline bounds the
++        // transient unit even if the caller is cancelled or times out.
++        crate::update::host_sudo_output(&{
++            let mut values = vec![
++                "timeout",
++                "--kill-after=5s",
++                "50s",
++                "python3",
++                HELPER,
++                command,
++            ];
++            values.extend(args.iter().map(String::as_str));
++            values
++        }),
+     )
+     .await
+     .map_err(|_| anyhow!("Node host ingress timed out; preserve its recovery journal"))??;
+-- 
+2.39.5 (Apple Git-154)
+

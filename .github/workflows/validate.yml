@@ -18,6 +18,19 @@ jobs:
       - run: python3 -m unittest discover -s tests -p test_dashboard_recovery.py -v
       - run: python3 -m unittest discover -s tests -p test_payment_recovery.py -v
       - run: python3 -m unittest discover -s tests -p test_node_bundle_update.py -v
+      - run: python3 -m unittest discover -s tests -p test_kithmoot_node.py -v
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm, cache-dependency-path: experimental/kithmoot-node/package-lock.json }
+      - run: npm ci --ignore-scripts --no-audit --no-fund && npm test && npm run build
+        working-directory: experimental/kithmoot-node
       - run: scripts/fetch-archy.sh
       - run: scripts/apply-patches.sh
       - run: scripts/validate.sh
+      - name: Validate private node manifest metadata without private inputs
+        run: |
+          node_check=$(mktemp -d)
+          trap 'rm -r "$node_check"' EXIT
+          mkdir "$node_check/kithmoot-node"
+          python3 scripts/prepare-kithmoot-node.py --manifest-template > "$node_check/kithmoot-node/manifest.yml"
+          .cache/archy/scripts/validate-app-manifest.sh "$node_check/kithmoot-node/manifest.yml"
+          cargo run -q --manifest-path tools/manifest-check/Cargo.toml -- "$node_check/kithmoot-node/manifest.yml"

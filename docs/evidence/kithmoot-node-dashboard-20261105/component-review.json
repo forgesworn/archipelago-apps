@@ -1,0 +1,193 @@
+{
+  "schema": "kithmoot-node-ui-component/1",
+  "passed": true,
+  "actualController": true,
+  "sourceRevision": "3d10482dd04bd163d44ff230bdb6ea71f61070c4",
+  "sourceFiles": [
+    {
+      "path": "client.mjs",
+      "sha256": "90ffac2b93f64b99650a4b9ae54e35b0d3c5210b40d4b2b6ca332512b3ee58fe"
+    },
+    {
+      "path": "dashboard.mjs",
+      "sha256": "cb86496aa3faebf3ff7ab9916945b2a6efbf1c9b41a76dd464e6fa4749dd79ab"
+    },
+    {
+      "path": "server.mjs",
+      "sha256": "2180991a1e113a76c55c2577d336e64e378a9226e2739b52a4d081755299e003"
+    },
+    {
+      "path": "observability.mjs",
+      "sha256": "b93451a502e21f36bfb6d06f8f1f76c4692644e4878d08f994155fe2ca431900"
+    },
+    {
+      "path": "build.mjs",
+      "sha256": "d1ca84f38967dd659e520c845759f262d53e98a529efb8b96ca52a10d87a1458"
+    },
+    {
+      "path": "browser-review.mjs",
+      "sha256": "eb8b80604cd65d69dfb490046211e492b8398f22c58fa69e1171008a1d2feb7f"
+    },
+    {
+      "path": "package.json",
+      "sha256": "a7dff08783eaeb4cbd77d05401760283d66a4d71f1908ab167a9861666793a52"
+    },
+    {
+      "path": "public/style.css",
+      "sha256": "79c8c6f4687faa53415de0ef3347d379741c7c890d9e1884d6019496f716f398"
+    },
+    {
+      "path": "public/index.html",
+      "sha256": "c9a550158f8fe11c3596246312a34f32ff97e8872b4e53145bce7a5908585abf"
+    }
+  ],
+  "builtFiles": [
+    {
+      "path": "dist/controller.mjs",
+      "sha256": "9778834de015d8557112105a7f56fd3d65328a58ede0d9d9a76bc296779a1e86"
+    },
+    {
+      "path": "dist/public/client.js",
+      "sha256": "f53c2eac5ea180da2aa4518441395dee8ea872d8679be54db33e6d91c90aea6e"
+    },
+    {
+      "path": "dist/public/style.css",
+      "sha256": "79c8c6f4687faa53415de0ef3347d379741c7c890d9e1884d6019496f716f398"
+    },
+    {
+      "path": "dist/public/index.html",
+      "sha256": "c9a550158f8fe11c3596246312a34f32ff97e8872b4e53145bce7a5908585abf"
+    },
+    {
+      "path": "dist/public/nostr-provider.js",
+      "sha256": "2e54e883c6840bddaa631f1a0aab974a4f2511be855fef0e645414f3095210aa"
+    }
+  ],
+  "fixtureSigner": true,
+  "fixtureNodeAdapter": true,
+  "embeddedHostFixture": true,
+  "actualHostGate": false,
+  "actualTurn": false,
+  "uiMaintainerApproval": false,
+  "zat": "pending",
+  "screenshots": [
+    "01-sign-in-390.png",
+    "02-setup-390.png",
+    "03-setup-320.png",
+    "00-delete-before-setup.png",
+    "04-status-390.png",
+    "05-status-768.png",
+    "06-status-1440.png",
+    "07-status-large-text.png",
+    "14-controls-connection-lost-390.png",
+    "dashboard-connections-320.png",
+    "dashboard-connections-390.png",
+    "dashboard-connections-768.png",
+    "dashboard-connections-1440.png",
+    "dashboard-connections-844.png",
+    "dashboard-connections-large-text.png",
+    "dashboard-usage-320.png",
+    "dashboard-usage-390.png",
+    "dashboard-usage-768.png",
+    "dashboard-usage-1440.png",
+    "dashboard-usage-844.png",
+    "dashboard-usage-large-text.png",
+    "dashboard-settings-320.png",
+    "dashboard-settings-390.png",
+    "dashboard-settings-768.png",
+    "dashboard-settings-1440.png",
+    "dashboard-settings-844.png",
+    "dashboard-settings-large-text.png",
+    "dashboard-diagnostics-320.png",
+    "dashboard-diagnostics-390.png",
+    "dashboard-diagnostics-768.png",
+    "dashboard-diagnostics-1440.png",
+    "dashboard-diagnostics-844.png",
+    "dashboard-diagnostics-large-text.png",
+    "dashboard-diagnostics-failed-443.png",
+    "dashboard-usage-unavailable.png",
+    "08-pairing-390.png",
+    "09-paused-390.png",
+    "10-delete-390.png",
+    "11-delete-prepared-390.png",
+    "13-landscape.png",
+    "dashboard-diagnostics-no-blur.png",
+    "dashboard-session-expired.png",
+    "dashboard-overview-embedded-390.png",
+    "dashboard-connections-embedded-390.png",
+    "dashboard-usage-embedded-390.png",
+    "dashboard-settings-embedded-390.png",
+    "dashboard-diagnostics-embedded-390.png"
+  ],
+  "accessibility": [
+    {
+      "name": "sign-in",
+      "violations": []
+    },
+    {
+      "name": "setup",
+      "violations": []
+    },
+    {
+      "name": "unconfigured-deletion",
+      "violations": []
+    },
+    {
+      "name": "status",
+      "violations": []
+    },
+    {
+      "name": "connections",
+      "violations": []
+    },
+    {
+      "name": "usage",
+      "violations": []
+    },
+    {
+      "name": "settings",
+      "violations": []
+    },
+    {
+      "name": "diagnostics",
+      "violations": []
+    },
+    {
+      "name": "failed-check",
+      "violations": []
+    },
+    {
+      "name": "pairing",
+      "violations": []
+    },
+    {
+      "name": "delete",
+      "violations": []
+    },
+    {
+      "name": "standalone-no-blur",
+      "violations": []
+    },
+    {
+      "name": "embedded-overview",
+      "violations": []
+    },
+    {
+      "name": "embedded-connections",
+      "violations": []
+    },
+    {
+      "name": "embedded-usage",
+      "violations": []
+    },
+    {
+      "name": "embedded-settings",
+      "violations": []
+    },
+    {
+      "name": "embedded-diagnostics",
+      "violations": []
+    }
+  ],
+  "pageErrors": []
+}
