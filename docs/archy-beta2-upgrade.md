@@ -760,6 +760,19 @@ Publish and cosign the exact public artefacts, sign the compatible catalogue
 with the authorised release root, decide authenticated private KithMoot
 delivery, then repeat fresh installation through that authenticated route.
 
+Multi-platform release preparation subsequently passed native amd64/arm64
+Wildbloom and Wildbloom Node build/smoke jobs in run 43525691004. Wildbloom
+Node's new multi-platform package is `0.3.5-b9a7cf4-3`; `-2` remains accepted
+for existing sales/recovery compatibility. Frontend run 43524870915 passed from
+a hash-pinned copy of the retained upstream base and produced patch-level-3
+frontend `92a5aba6ff9c1253ee0e3db3fb64ffeeacf9d30c78505f679b3c8939552dac70`.
+Only three provenance/metadata JSON files differ from the integrated p2
+frontend; all 1,277 other files are byte-identical. No repository signing
+secrets/workflows exist, and a read-only live check found no
+`/etc/archipelago/cosign.pub`. The owner must select a cosign key holder and
+provision the corresponding public key through the reviewed path; this work did
+not invent a trust root or change live configuration.
+
 ## Linked signer, room and clipboard integration evidence, 13 November
 
 A real `nak` NIP-46 signer and loopback relay passed against the exact ARM64

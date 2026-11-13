@@ -32,6 +32,21 @@ the password dialog, and external networking was blocked throughout. These
 checks do not constitute maintainer approval or physical-client acceptance.
 Do not approve the older pair.
 
+**Multi-platform packaging update, 13 November:** the assembled patch source is
+now `09c92087ca40e37a0ce881dcf4cd7e76f493f676`. Frontend run
+[43524870915](https://github.com/forgesworn/archipelago-apps/actions/runs/43524870915)
+passed and produced patch-level-3 archive
+`.cache/beta2-ui-release-frontend-p3/frontend.tar.gz`, SHA-256
+`92a5aba6ff9c1253ee0e3db3fb64ffeeacf9d30c78505f679b3c8939552dac70`.
+Only `NATIVE-AIUI.json`, `FORGESWORN-BUNDLE.json` and `RELEASE-PAYLOAD.json`
+changed from the integrated patch-level-2 archive above; all 1,277 other files
+are byte-identical. The final patch-level-3 ARM64 backend hash must be recorded
+from its passing release run before core ZAT. Multi-platform image run
+[43525691004](https://github.com/forgesworn/archipelago-apps/actions/runs/43525691004)
+passed native Wildbloom and Wildbloom Node build/smoke jobs on amd64 and arm64.
+These release changes add no new UI flow; final approval must still identify the
+resulting frontend/backend pair.
+
 **Linked integration evidence, 13 November:** a real `nak` NIP-46 signer and
 loopback relay passed linked identity creation, secret-free export,
 fresh-authorised event signing, login-signer enrolment and signer login on the
