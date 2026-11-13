@@ -13,6 +13,9 @@ are still required. Follow the [beta assessment](docs/archy-beta2-upgrade.md)
 before changing an existing server. The fresh-host installer refuses existing
 nodes, and the alpha updater is not a beta migration path.
 
+For the next actions, work locations and completion gates, follow the
+[beta upgrade goals and handover](docs/archy-beta2-goals.md).
+
 | App | What it is |
 |---|---|
 | `wildbloom-node` | Blossom storage owned by your node identities |

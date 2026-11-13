@@ -5,6 +5,9 @@ fixture; **not approved for a live upgrade**.
 Scope: the owner confirmed only `demo.forgesworn.dev` (`95.216.164.146`).
 No live services, data, firewall rules or credentials were changed by this task.
 
+The [goals and handover](archy-beta2-goals.md) identify the remaining work,
+its locations and completion gates. This document retains the supporting evidence.
+
 ## Candidate and source baseline
 
 - Upstream release: `v2.1.0-beta.2`, published 10 November 2026.
