@@ -13,8 +13,13 @@ permissions:
   contents: read
   packages: write
 jobs:
-  wildbloom-node:
+  wildbloom-node-plan:
     runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      push: ${{ steps.plan.outputs.push }}
+      tag: ${{ steps.plan.outputs.tag }}
+      ref: ${{ steps.plan.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -23,11 +28,20 @@ jobs:
       # tag is built and pushed; a published one is never replaced.
       - id: plan
         run: scripts/image-plan.sh wildbloom-node "${{ github.event.before }}" "${{ github.event_name }}"
+  wildbloom-node:
+    needs: wildbloom-node-plan
+    if: needs.wildbloom-node-plan.outputs.build == 'true'
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        if: steps.plan.outputs.build == 'true'
         with: { node-version: "24" }
       - uses: docker/setup-buildx-action@v3
-        if: steps.plan.outputs.build == 'true'
         with:
           # GitHub's shared Docker Hub egress can be rate-limited before a
           # build starts. BuildKit still verifies and uses the official image;
@@ -36,53 +50,115 @@ jobs:
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
       - uses: docker/build-push-action@v6
-        if: steps.plan.outputs.build == 'true'
         with:
           context: apps/wildbloom-node
-          build-args: WILDBLOOM_NODE_REF=${{ steps.plan.outputs.ref }}
+          build-args: WILDBLOOM_NODE_REF=${{ needs.wildbloom-node-plan.outputs.ref }}
           load: true
-          tags: ${{ steps.plan.outputs.tag }}
-      - if: steps.plan.outputs.build == 'true'
-        run: tests/smoke/wildbloom-node.sh "${{ steps.plan.outputs.tag }}" ghcr.io/forgesworn/wildbloom-node:0.2.2-b3b254b-2
-      - if: steps.plan.outputs.build == 'true'
-        run: |
+          tags: ${{ needs.wildbloom-node-plan.outputs.tag }}-${{ matrix.arch }}
+      - run: tests/smoke/wildbloom-node.sh "${{ needs.wildbloom-node-plan.outputs.tag }}-${{ matrix.arch }}" ghcr.io/forgesworn/wildbloom-node:0.2.2-b3b254b-2
+      - run: |
           sudo apt-get update && sudo apt-get install -y python3-yaml
-          node tests/smoke/seller-capacity.mjs "${{ steps.plan.outputs.tag }}"
-      - if: steps.plan.outputs.push == 'true' && github.ref == 'refs/heads/main'
+          node tests/smoke/seller-capacity.mjs "${{ needs.wildbloom-node-plan.outputs.tag }}-${{ matrix.arch }}"
+      - name: Publish immutable architecture image
+        if: needs.wildbloom-node-plan.outputs.push == 'true' && github.ref == 'refs/heads/main'
         run: |
+          tag='${{ needs.wildbloom-node-plan.outputs.tag }}-${{ matrix.arch }}'
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker push "${{ steps.plan.outputs.tag }}"
-  wildbloom:
+          if docker manifest inspect "$tag" >/dev/null 2>"$RUNNER_TEMP/registry-error"; then
+            echo "Image already exists; bump WILDBLOOM_NODE_PKG_REV instead of replacing it" >&2
+            exit 1
+          fi
+          if ! grep -Eqi 'manifest unknown|no such manifest' "$RUNNER_TEMP/registry-error"; then
+            cat "$RUNNER_TEMP/registry-error" >&2; exit 1
+          fi
+          docker push "$tag"
+  wildbloom-node-publish:
+    needs: [wildbloom-node-plan, wildbloom-node]
+    if: needs.wildbloom-node-plan.outputs.push == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          tag='${{ needs.wildbloom-node-plan.outputs.tag }}'
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          if docker manifest inspect "$tag" >/dev/null 2>"$RUNNER_TEMP/registry-error"; then
+            echo "Image already exists; bump WILDBLOOM_NODE_PKG_REV instead of replacing it" >&2
+            exit 1
+          fi
+          if ! grep -Eqi 'manifest unknown|no such manifest' "$RUNNER_TEMP/registry-error"; then
+            cat "$RUNNER_TEMP/registry-error" >&2; exit 1
+          fi
+          docker manifest create "$tag" "$tag-amd64" "$tag-arm64"
+          docker manifest push "$tag"
+  wildbloom-plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      push: ${{ steps.plan.outputs.push }}
+      tag: ${{ steps.plan.outputs.tag }}
+      ref: ${{ steps.plan.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - run: python3 -m unittest discover -s tests -p test_image_plan.py
-      - uses: actions/setup-node@v4
-        with: { node-version: "24" }
       # Ask the registry first, then the diff (see the script): an unpublished
       # tag is built and pushed; a published one is never replaced.
       - id: plan
         run: scripts/image-plan.sh wildbloom "${{ github.event.before }}" "${{ github.event_name }}"
+  wildbloom:
+    needs: wildbloom-plan
+    if: needs.wildbloom-plan.outputs.build == 'true'
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
       - uses: docker/setup-buildx-action@v3
-        if: steps.plan.outputs.build == 'true'
         with:
           buildkitd-config-inline: |
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
       - uses: docker/build-push-action@v6
-        if: steps.plan.outputs.build == 'true'
         with:
           context: apps/wildbloom
-          build-args: WILDBLOOM_REF=${{ steps.plan.outputs.ref }}
+          build-args: WILDBLOOM_REF=${{ needs.wildbloom-plan.outputs.ref }}
           load: true
-          tags: ${{ steps.plan.outputs.tag }}
-      - if: steps.plan.outputs.build == 'true'
-        run: |
+          tags: ${{ needs.wildbloom-plan.outputs.tag }}-${{ matrix.arch }}
+      - run: |
           npm ci --prefix tests/smoke --ignore-scripts
           cd tests/smoke && npx playwright-core install --with-deps chromium
-          cd ../.. && tests/smoke/wildbloom.sh "${{ steps.plan.outputs.tag }}"
-      - if: steps.plan.outputs.push == 'true' && github.ref == 'refs/heads/main'
+          cd ../.. && tests/smoke/wildbloom.sh "${{ needs.wildbloom-plan.outputs.tag }}-${{ matrix.arch }}"
+      - name: Publish immutable architecture image
+        if: needs.wildbloom-plan.outputs.push == 'true' && github.ref == 'refs/heads/main'
         run: |
+          tag='${{ needs.wildbloom-plan.outputs.tag }}-${{ matrix.arch }}'
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker push "${{ steps.plan.outputs.tag }}"
+          if docker manifest inspect "$tag" >/dev/null 2>"$RUNNER_TEMP/registry-error"; then
+            echo "Image already exists; bump WILDBLOOM_PKG_REV instead of replacing it" >&2
+            exit 1
+          fi
+          if ! grep -Eqi 'manifest unknown|no such manifest' "$RUNNER_TEMP/registry-error"; then
+            cat "$RUNNER_TEMP/registry-error" >&2; exit 1
+          fi
+          docker push "$tag"
+  wildbloom-publish:
+    needs: [wildbloom-plan, wildbloom]
+    if: needs.wildbloom-plan.outputs.push == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          tag='${{ needs.wildbloom-plan.outputs.tag }}'
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          if docker manifest inspect "$tag" >/dev/null 2>"$RUNNER_TEMP/registry-error"; then
+            echo "Image already exists; bump WILDBLOOM_PKG_REV instead of replacing it" >&2
+            exit 1
+          fi
+          if ! grep -Eqi 'manifest unknown|no such manifest' "$RUNNER_TEMP/registry-error"; then
+            cat "$RUNNER_TEMP/registry-error" >&2; exit 1
+          fi
+          docker manifest create "$tag" "$tag-amd64" "$tag-arm64"
+          docker manifest push "$tag"

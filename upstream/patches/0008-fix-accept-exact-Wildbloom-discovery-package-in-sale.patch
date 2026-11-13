@@ -7,8 +7,8 @@ Subject: [PATCH 08/32] fix: accept exact Wildbloom discovery package in sales
 ---
  core/archipelago/src/api/rpc/wildbloom.rs     |  4 +--
  .../src/container/prod_orchestrator.rs        |  8 ++++--
- .../src/settings/wildbloom_storage.rs         | 25 +++++++++++++++++++
- 3 files changed, 33 insertions(+), 4 deletions(-)
+ .../src/settings/wildbloom_storage.rs         | 29 +++++++++++++++++++++++++++++
+ 3 files changed, 37 insertions(+), 4 deletions(-)
 
 diff --git a/core/archipelago/src/api/rpc/wildbloom.rs b/core/archipelago/src/api/rpc/wildbloom.rs
 index 6ab2f50..1258741 100644
@@ -55,7 +55,7 @@ diff --git a/core/archipelago/src/settings/wildbloom_storage.rs b/core/archipela
 index 2150ff8..69fc7d6 100644
 --- a/core/archipelago/src/settings/wildbloom_storage.rs
 +++ b/core/archipelago/src/settings/wildbloom_storage.rs
-@@ -12,6 +12,15 @@ pub const REFERENCE_KEY: &str =
+@@ -12,6 +12,16 @@ pub const REFERENCE_KEY: &str =
      "027f06257d0e9af2dbef2c1c64d03962a9240a65a987eb90b36000c64de34baa6d";
  pub static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
  
@@ -65,13 +65,14 @@ index 2150ff8..69fc7d6 100644
 +        image,
 +        "ghcr.io/forgesworn/wildbloom-node:0.3.5-4474ce1-2"
 +            | "ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-2"
++            | "ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-3"
 +    )
 +}
 +
  #[derive(Clone, Copy, Debug)]
  pub struct Issuer {
      pub id: &'static str,
-@@ -583,4 +592,20 @@ mod tests {
+@@ -583,4 +593,23 @@ mod tests {
          prepare_profile(dir.path(), &a).unwrap();
          assert!(!dir.path().join("operator/checkout").exists());
      }
@@ -83,9 +84,12 @@ index 2150ff8..69fc7d6 100644
 +        assert!(compatible_node_image(
 +            "ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-2"
 +        ));
++        assert!(compatible_node_image(
++            "ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-3"
++        ));
 +        for image in [
 +            "ghcr.io/forgesworn/wildbloom-node:latest",
-+            "ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-3",
++            "ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-4",
 +            "unrelated:0.3.5-b9a7cf4-2",
 +        ] {
 +            assert!(!compatible_node_image(image));

@@ -24,8 +24,9 @@ import uuid
 
 ROOT = Path('/var/lib/archipelago/wildbloom-node')
 SETTINGS = Path('/var/lib/archipelago/settings/wildbloom-storage/settings.json')
-IMAGE = 'ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-2'
-COMPATIBLE_IMAGES = frozenset((IMAGE, 'ghcr.io/forgesworn/wildbloom-node:0.3.5-4474ce1-2'))
+IMAGE = 'ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-3'
+COMPATIBLE_IMAGES = frozenset((IMAGE, 'ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-2',
+                               'ghcr.io/forgesworn/wildbloom-node:0.3.5-4474ce1-2'))
 SERVICE = 'wildbloom-node.service'
 CONTAINER = 'wildbloom-payment-recovery'
 MAX = 9_007_199_254_740_991

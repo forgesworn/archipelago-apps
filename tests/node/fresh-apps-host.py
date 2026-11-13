@@ -22,7 +22,7 @@ PUBLIC_HOST = 'fresh.archipelago.test'
 IMAGES = {
     'spry': 'ghcr.io/forgesworn/spry:0.1.0-6b34f06-4',
     'wildbloom': 'ghcr.io/forgesworn/wildbloom:0.0.1-ee21ed5-5',
-    'wildbloom-node': 'ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-2',
+    'wildbloom-node': 'ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-3',
     'kithmoot-node': 'localhost/kithmoot-node:group-headroom-20261110-db34017b49e3',
 }
 
