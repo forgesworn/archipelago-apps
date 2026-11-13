@@ -212,3 +212,36 @@ and wrote no candidate. Six unit tests cover immutable rewriting, private-OCI
 hashing/no-upload, missing authority, output preservation, required platforms
 and cosign failure. Publication, private-key operations and the final signed
 fresh-install rehearsal remain pending.
+
+## Multi-platform release preparation, 13 November
+
+The images workflow now builds and tests Wildbloom and Wildbloom Node natively
+on amd64 and arm64, guards each architecture tag against replacement, and only
+then creates the multi-platform tag. Wildbloom Node's existing
+`0.3.5-b9a7cf4-2` amd64 tag is preserved; the multi-platform package is
+`0.3.5-b9a7cf4-3`. Sales controls and payment recovery accept both package tags.
+The amd64 job retains the old-version volume-upgrade check; arm64 runs the full
+native smoke suite without trying to execute the old amd64-only fixture.
+Corrected branch run [43525691004](https://github.com/forgesworn/archipelago-apps/actions/runs/43525691004)
+passed all four native build/smoke jobs. These branch jobs did not publish.
+
+The upstream beta frontend base URL returned 404 when the patch-level-3 build
+ran. The retained unmodified upstream archive, SHA-256
+`c2ef014b5ce3c660c5c0f09a552202923d1425e63610a4976745b50bd5340195`, is now
+published as a [hash-pinned fallback base](https://github.com/forgesworn/archipelago-apps/releases/tag/frontend-base-v2.1.0-beta.2).
+It is not a patched frontend. Frontend run
+[43524870915](https://github.com/forgesworn/archipelago-apps/actions/runs/43524870915)
+passed with that base and produced patch-level-3 frontend SHA-256
+`92a5aba6ff9c1253ee0e3db3fb64ffeeacf9d30c78505f679b3c8939552dac70`.
+Only `NATIVE-AIUI.json`, `FORGESWORN-BUNDLE.json` and `RELEASE-PAYLOAD.json`
+changed from the reviewed patch-level-2 archive; all 1,277 other files are
+byte-identical. The new assembled patch source is
+`09c92087ca40e37a0ce881dcf4cd7e76f493f676`.
+
+No repository signing secrets or signing workflows are configured. A read-only
+check of the owner node also found no `/etc/archipelago/cosign.pub`. Therefore
+there is no existing node-pinned cosign trust root to reuse, and this work must
+not generate or provision one implicitly. The owner must select the cosign key
+holder and provision its public key through the reviewed installation/migration
+path before authenticated pulls can pass. Release-root catalogue signing and
+KithMoot's private-distribution decision remain separate requirements.
