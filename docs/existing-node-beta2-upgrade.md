@@ -230,12 +230,27 @@ both pass. Preserve the earlier recovery copies as well.
 Install the staged inputs and migration scripts on the node:
 
 ```sh
+tar -xOf frontend.tar.gz ./archipelago-runtime/scripts/kithmoot-node-ingress.py \
+  > kithmoot-node-ingress.py
 ssh "$NODE" 'test ! -e /root/archy-beta2-p4 && \
   install -d -m 700 /root/archy-beta2-p4'
-scp "$BACKEND_ASSET" frontend.tar.gz migrate-node.py migration-startup-guard.py \
-  "$NODE:/root/archy-beta2-p4/"
+scp "$BACKEND_ASSET" frontend.tar.gz kithmoot-node-ingress.py \
+  migrate-node.py migration-startup-guard.py "$NODE:/root/archy-beta2-p4/"
 ssh "$NODE" 'chmod 755 /root/archy-beta2-p4/migrate-node.py \
   /root/archy-beta2-p4/migration-startup-guard.py'
+```
+
+For an existing KithMoot host-ingress installation, install the helper from the
+same frontend archive and check it before promotion. This keeps its bytes
+matched to the backend's embedded copy. Do not replace an active helper from a
+different release:
+
+```sh
+ssh "$NODE" 'if test -f /var/lib/archipelago-kithmoot-node-ingress/installation.json; then
+  install -m 755 /root/archy-beta2-p4/kithmoot-node-ingress.py \
+    /usr/lib/archipelago/kithmoot-node-ingress.py
+  python3 /usr/lib/archipelago/kithmoot-node-ingress.py status
+fi'
 ```
 
 Set the expected hashes from the verified downloads and record the installed
@@ -269,6 +284,16 @@ The transaction preserves observed Quadlets, environment, command, labels,
 mounts, network/port settings, image/container IDs, recipe hashes and anonymous
 volumes. It checks all of them after both beta starts and installs a persistent
 guard against starting a mixed backend/frontend pair.
+
+For a later upgrade after a completed migration, start a new reviewed operation
+rather than rerunning the old state with different hashes. Preserve the old
+`/etc/archipelago/node-migration.json` and
+`/var/lib/archipelago/update-transactions/installed-units/` under a migration
+history directory before creating the new state. Never mix one operation's
+preserved-unit records with another's. Stop the manager first and pass
+`--manager-stopped` with the exact current backend hash. If no candidate was
+started, restore those control records if promotion fails; once candidate
+startup is attempted, keep recovery forward-only.
 
 If interrupted **before** candidate startup, its recovery restores the old code
 pair without starting alpha reconciliation. After beta startup has been

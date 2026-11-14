@@ -1,9 +1,11 @@
 # Archy 2.1.0-beta.2 compatibility and node preservation
 
-Status: compatibility candidate passes backend/frontend CI and the fresh-host
-fixture; **not approved for a live upgrade**.
+Status: the published patch-level-4 pair is deployed on the owner node and
+passes automated preservation, recovery and transport checks. Authenticated new
+installs, physical clients/signer and maintainer acceptance remain separate gates.
 Scope: the owner confirmed only `demo.forgesworn.dev` (`95.216.164.146`).
-No live services, data, firewall rules or credentials were changed by this task.
+The 14 November controlled backup and migration are recorded below; no other
+node, payment or core Archipelago submission was involved.
 
 The [goals and handover](archy-beta2-goals.md) identify the remaining work,
 its locations and completion gates. This document retains the supporting evidence.
@@ -797,3 +799,70 @@ and [inspected manual-copy capture](reviews/archy-beta2-20261112/pairing-copy-bl
 These are current-client and component results, not evidence that the exact
 embedded candidate's existing rooms, physical Android/desktop clients or human
 approval journeys have passed. Those remain live/maintainer acceptance steps.
+
+
+## Controlled live upgrade and patch-level-4 result, 14 November
+
+The existing-node procedure is now published as the
+[existing-node beta2 upgrade recipe](existing-node-beta2-upgrade.md). It pins the
+release and staged helpers, requires a fresh encrypted coherent backup and
+isolated restore, and preserves operation history for later upgrades.
+
+The live preflight matched the original alpha backend and all six original
+container IDs, images, mounts and start times. The initial 5,161,041,920-byte
+coherent archive had SHA-256
+`6ece37db987ced6f5c7ca56a6a6ee3f771994ad0c48bf0a9ca705c3c73055396` and a
+44.328-second application pause. Its age-encrypted off-host copy passed
+authenticated readback, and an isolated restore matched 102,819 entries and
+59,617 regular-file hashes with no unexpected paths. Operation
+`0918e6fc-41a7-4c18-a933-1c60b5db29f2` then activated p3.
+
+Independent p3 verification found the NPM bridge failing closed: beta had added
+five dashboard-origin/CSP/maintenance directives to the active site while
+retaining the KithMoot ingress, but the older host helper accepted only its
+original exact site hash. Patch 37 admits only those five additive directives,
+requires every original line and occurrence in order, and leaves rollback and
+other drift strict. Twelve ingress tests and 23 dashboard guard tests passed in
+isolated Linux, the clean 37-patch replay passed 106 repository tests, and the
+exact live nginx fixture passed the intended manager-status path. PR58 merged as
+`6358efc41ad6913bb7268b06026c7a6fc9ded45e`.
+
+Before p4 activation, a fresh 5,471,621,120-byte coherent archive was captured
+with a 44.007-second pause. Its plaintext SHA-256 is
+`93fca97ed1a2742a5f00e050016a78e53a972be2508070772b92ac9f54f3048e`; the
+age-encrypted copy is
+`dd76f726c84fb8a7a411f757288e64cef5b003ab94d8331fa118c0c91a2dd41b`.
+Authenticated off-host readback passed all 11 selected SQLite databases. A new
+isolated restore matched 104,679 entries and 61,222 regular-file hashes before
+and after copied-database application checks, with no unexpected paths. It
+retained seven room databases and 3,609 events, 17 Wildbloom blobs, five paid
+sales, both anonymous volumes, File Browser settings and Fedimint RocksDB state.
+
+The published p4 artefacts are:
+
+- x86-64 backend `60c161b285c9458daf79528b2daeece6c06c6bdfa9b12a6f722a8e63bcbcfb4a`;
+- ARM64 backend `048daabea25ca9847fa85b470f0d288be31b9bd3f5efd323a0f9e49a02a6e28f`;
+- frontend `69fc037b5650c02b2f220238fad6f0e70556c0a3a92238e7ba4025c26cc5ad49`;
+- assembled source `f46f9bd54818f0c8d3cb3634b6101b7334f1962f`, tree
+  `a615625d42b0f3e9069eb0d4d3507d325721bbd8`;
+- backend input receipt `a3942254b9663e39c2c898ccefc05c9eb053a1a687d0403ac70cb4607eaacf66`;
+- frontend input receipt `312ad9a0388d144009d881890a618a68d29dc871160cd4dc0b9cb8f4bd819283`.
+
+Public release bytes match the reviewed CI artefacts. Operation
+`8a0ebdd9-6f22-4009-a6e2-1e574b40b4f7` is active. The first attempted p4
+operation stopped before candidate startup because the completed p3 operation
+still owned the preserved-unit records; its control state was recovered without
+restoring application data. A new operation with archived history then passed
+both starts and all six application fingerprints.
+
+Final readback confirms exact deployed hashes, healthy manager and NPM timer,
+ready host ingress, all six original running containers and three healthy app
+health checks. Wildbloom Node, Spry pairing and KithMoot local endpoints return
+200. External TURN TCP and trusted TLS certificate verification pass. External
+reachability of app ports 3742 and 3753 was not established from this Mac and is
+not presented as a failure or as public-client acceptance. Physical desktop,
+Android/web clients, physical signer and embedded visual acceptance remain
+pending. The public receipt is
+[live-p4-verification.json](reviews/archy-beta2-20261112/live-p4-verification.json).
+Private archives and full inventories remain outside Git under
+`~/Backups/archy-demo-20261112/cutover-20261114*/`.

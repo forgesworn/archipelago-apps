@@ -56,6 +56,33 @@ passed native Wildbloom and Wildbloom Node build/smoke jobs on amd64 and arm64.
 These release changes add no new UI flow; final approval must still identify the
 resulting frontend/backend pair.
 
+**Patch-level-4 and live deployment, 14 November:** PR58 merged as
+`6358efc41ad6913bb7268b06026c7a6fc9ded45e`; assembled source is
+`f46f9bd54818f0c8d3cb3634b6101b7334f1962f`, tree
+`a615625d42b0f3e9069eb0d4d3507d325721bbd8`. Patch 37 accepts only the five
+reviewed beta nginx additions during host-ingress status/check/sync; rollback
+and unrelated drift remain strict. This adds no UI flow or screen change.
+The [published frontend p4](https://github.com/forgesworn/archipelago-apps/releases/tag/frontend-v2.1.0-beta.2-p4)
+has SHA-256 `69fc037b5650c02b2f220238fad6f0e70556c0a3a92238e7ba4025c26cc5ad49`;
+the [published backend p4](https://github.com/forgesworn/archipelago-apps/releases/tag/backend-v2.1.0-beta.2-p4)
+contains x86-64 `60c161b285c9458daf79528b2daeece6c06c6bdfa9b12a6f722a8e63bcbcfb4a`
+and ARM64 `048daabea25ca9847fa85b470f0d288be31b9bd3f5efd323a0f9e49a02a6e28f`.
+Public downloads are byte-identical to the reviewed CI artefacts. Backend input
+receipt `a3942254b9663e39c2c898ccefc05c9eb053a1a687d0403ac70cb4607eaacf66`;
+frontend input receipt `312ad9a0388d144009d881890a618a68d29dc871160cd4dc0b9cb8f4bd819283`.
+The p4 pair supersedes p3 for exact-candidate review.
+
+Live operation `8a0ebdd9-6f22-4009-a6e2-1e574b40b4f7` is active on
+`demo.forgesworn.dev`. The fresh pre-p4 coherent archive passed authenticated
+off-host readback and two full isolated filesystem comparisons around
+copied-database checks. All six original containers, images, mounts and start
+times are preserved; manager/NPM health, three app health checks and local app
+endpoints pass. Seven rooms with 3,609 events, 17 blobs, five paid sales,
+File Browser settings and Fedimint RocksDB state remain. External TURN TCP and
+trusted TLS pass. See the [live verification receipt](live-p4-verification.json).
+Physical clients, physical signer, embedded visual acceptance and ZAT remain
+pending; automated deployment evidence does not replace them.
+
 **Linked integration evidence, 13 November:** a real `nak` NIP-46 signer and
 loopback relay passed linked identity creation, secret-free export,
 fresh-authorised event signing, login-signer enrolment and signer login on the
