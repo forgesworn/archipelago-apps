@@ -21,11 +21,11 @@ WILDBLOOM_NODE_PKG_REV=3
 SPRY_REF=6b34f061ab25cac402bfaa833ce6ef95e98d0621
 SPRY_PKG_REV=4
 # Bumped whenever upstream/patches changes; names the backend release asset.
-BACKEND_PATCH_LEVEL=3
+BACKEND_PATCH_LEVEL=4
 # Frontend build: bumped whenever upstream/patches or the build recipe changes;
 # names the frontend release asset. Beta's locked Vitest/vue-i18n require newer
 # Node than upstream's stale Node 20 CI setting; use the qualified Node 24 line.
-FRONTEND_PATCH_LEVEL=3
+FRONTEND_PATCH_LEVEL=4
 FRONTEND_NODE_MAJOR=24
 # Ingle (game hosting on a Keep: Stampede and Twang rooms on one port): hand-loaded into the node's podman, not built or pushed by CI.
 # Bump to the new build's tag whenever the image changes: the node never re-pulls a tag it has.

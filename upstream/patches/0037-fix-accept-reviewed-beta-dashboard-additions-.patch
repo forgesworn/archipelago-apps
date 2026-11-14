@@ -1,0 +1,189 @@
+From 8c4a2c39110b616eef64a37dbfb509b25941dedd Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 09:08:39 +0000
+Subject: [PATCH] fix: accept reviewed beta dashboard additions
+
+---
+ scripts/kithmoot-node-ingress.py            | 47 +++++++++++++--
+ scripts/tests/test_kithmoot_node_ingress.py | 65 +++++++++++++++++++++
+ 2 files changed, 106 insertions(+), 6 deletions(-)
+
+diff --git a/scripts/kithmoot-node-ingress.py b/scripts/kithmoot-node-ingress.py
+index 2722baa84bec409b6c37704c69c7a51ad61f0831..f0978420f21a09c26fc3e2cbb3f0ec39f51683c0 100644
+--- a/scripts/kithmoot-node-ingress.py
++++ b/scripts/kithmoot-node-ingress.py
+@@ -6,6 +6,8 @@ No app receives the host key. Only the exact node API and TURN alias are public;
+ the existing dashboard keeps its source guard and original client addresses.
+ """
+ import argparse
++import collections
++import difflib
+ import fcntl
+ import hashlib
+ import ipaddress
+@@ -342,7 +344,37 @@ def save(value):
+     atomic(STATE / 'installation.json', (json.dumps(value, sort_keys=True) + '\n').encode(), 0o600)
+ 
+ 
+-def owned_files(value, allow_original=False):
++MANAGER_SITE_ADDITIONS = {
++    '        # LP-CRED-01: force an opaque origin in frames and top-level tabs.',
++    '        add_header Content-Security-Policy "sandbox allow-scripts allow-forms allow-downloads allow-modals allow-popups allow-popups-to-escape-sandbox" always;',
++    '        if (-f /var/lib/archipelago/app-maintenance/indeedhub) { return 503; }',
++    '        proxy_hide_header Content-Security-Policy;',
++    '        proxy_set_header X-Archipelago-Dashboard-Origin $scheme://$http_host;',
++}
++
++
++def manager_site_compatible(value, actual):
++    original = read_protected(STATE / 'original.conf')
++    expected = plan(original.decode(), value['host'], value['certificate'], value['key'])['site']
++    if digest(expected) != value['hashes']['site']:
++        raise ValueError('Invalid host ingress recovery plan')
++    before = expected.decode().splitlines()
++    after = actual.decode().splitlines()
++    before_counts = collections.Counter(before)
++    after_counts = collections.Counter(after)
++    if any(after_counts[line] < count for line, count in before_counts.items()):
++        return False
++    for operation, start, end, new_start, new_end in difflib.SequenceMatcher(
++            a=before, b=after, autojunk=False).get_opcodes():
++        if operation == 'equal':
++            continue
++        if operation != 'insert' or any(
++                line not in MANAGER_SITE_ADDITIONS for line in after[new_start:new_end]):
++            return False
++    return True
++
++
++def owned_files(value, allow_original=False, allow_manager_site=False):
+     files = {'site': Path(value['source']), 'stream': STREAM, 'public': PUBLIC, 'tmpfiles': TMPFILES}
+     for name, path in files.items():
+         if name != 'site' and not os.path.lexists(path) and allow_original:
+@@ -350,7 +382,10 @@ def owned_files(value, allow_original=False):
+         accepted = {value['hashes'][name]}
+         if name == 'site' and allow_original:
+             accepted.add(value['original'])
+-        if digest(read_protected(path)) not in accepted:
++        actual = read_protected(path)
++        if digest(actual) not in accepted:
++            if name == 'site' and allow_manager_site and manager_site_compatible(value, actual):
++                continue
+             raise ValueError('Modified host ingress configuration needs operator review')
+     return files
+ 
+@@ -381,7 +416,7 @@ def install(host, certificate, key):
+     if os.path.lexists(STATE / 'installation.json'):
+         previous = journal_read()
+         if previous['phase'] == 'ready':
+-            owned_files(previous)
++            owned_files(previous, allow_manager_site=True)
+             if (previous['host'], previous['certificate'], previous['key']) != (host, certificate, key):
+                 raise ValueError('Remove the existing ingress before changing its hostname or certificate paths')
+             reload_checked()  # also activates an operator-renewed certificate
+@@ -442,7 +477,7 @@ def check(host, certificate, key):
+     host = hostname(host); certificate = certificate_path(certificate); key = certificate_path(key)
+     validate_certificates(certificate, key, host)
+     if os.path.lexists(STATE):
+-        value = journal_read(); owned_files(value)
++        value = journal_read(); owned_files(value, allow_manager_site=True)
+         if value['phase'] != 'ready' or (value['host'], value['certificate'], value['key']) != (host, certificate, key):
+             raise ValueError('Host ingress recovery or configuration review is required')
+     else:
+@@ -460,7 +495,7 @@ def check(host, certificate, key):
+ 
+ 
+ def sync():
+-    value = journal_read(); owned_files(value)
++    value = journal_read(); owned_files(value, allow_manager_site=True)
+     if value['phase'] != 'ready':
+         raise ValueError('Host ingress recovery is pending')
+     validate_certificates(value['certificate'], value['key'], value['host'])
+@@ -493,7 +528,7 @@ def main():
+         elif args.command == 'sync':
+             sync()
+         else:
+-            value = journal_read(); owned_files(value)
++            value = journal_read(); owned_files(value, allow_manager_site=True)
+             if value['phase'] != 'ready':
+                 raise ValueError('Host ingress recovery is pending')
+         print(json.dumps({'v': 1, 'ready': True, 'operation': args.command}))
+diff --git a/scripts/tests/test_kithmoot_node_ingress.py b/scripts/tests/test_kithmoot_node_ingress.py
+index 98625ef5efb6be8a98b79da60fa5a13dc2a52293..7d261237e96d81538a76ad6910379891e26cf616 100644
+--- a/scripts/tests/test_kithmoot_node_ingress.py
++++ b/scripts/tests/test_kithmoot_node_ingress.py
+@@ -70,6 +70,71 @@ class HostIngress(unittest.TestCase):
+         self.assertIn(b'd /run/archipelago-kithmoot-node 0750 root www-data -\n', result['tmpfiles'])
+         self.assertNotIn(b'1000', result['tmpfiles'])
+ 
++    def manager_journal(self, before, rendered):
++        return {
++            'host': 'node.example',
++            'certificate': '/etc/archipelago/ssl/public/cert.pem',
++            'key': '/etc/archipelago/ssl/public/key.pem',
++            'hashes': {'site': INGRESS.digest(rendered['site'])},
++        }
++
++    def test_only_reviewed_beta_dashboard_additions_are_compatible(self):
++        before = site()
++        rendered = self.render(before)
++        value = self.manager_journal(before, rendered)
++        additions = '\n'.join(sorted(INGRESS.MANAGER_SITE_ADDITIONS))
++        changed = rendered['site'].decode().replace(
++            '        proxy_set_header Host $host;',
++            '        proxy_set_header Host $host;\n' + additions, 1,
++        ).encode()
++        with patch.object(INGRESS, 'read_protected', return_value=before.encode()):
++            self.assertTrue(INGRESS.manager_site_compatible(value, changed))
++
++    def test_manager_site_rejects_unreviewed_additions_and_removed_ingress(self):
++        before = site()
++        rendered = self.render(before)
++        value = self.manager_journal(before, rendered)
++        changed = rendered['site'].decode()
++        cases = [
++            changed.replace('\n    real_ip_header proxy_protocol;\n', '\n', 1),
++            changed.replace('        proxy_set_header Host $host;',
++                            '        proxy_set_header Host $host;\n        return 404;', 1),
++        ]
++        with patch.object(INGRESS, 'read_protected', return_value=before.encode()):
++            for candidate in cases:
++                with self.subTest(candidate=candidate[-100:]):
++                    self.assertFalse(INGRESS.manager_site_compatible(value, candidate.encode()))
++
++    def test_manager_site_requires_the_original_recovery_plan(self):
++        before = site()
++        rendered = self.render(before)
++        value = self.manager_journal(before, rendered)
++        value['hashes']['site'] = '0' * 64
++        with patch.object(INGRESS, 'read_protected', return_value=before.encode()):
++            with self.assertRaises(ValueError):
++                INGRESS.manager_site_compatible(value, rendered['site'])
++
++    def test_owned_files_manager_site_requires_explicit_opt_in(self):
++        with tempfile.TemporaryDirectory() as temporary:
++            root = Path(temporary)
++            paths = {name: root / name for name in ('site', 'stream', 'public', 'tmpfiles')}
++            for path in paths.values():
++                path.write_bytes(b'current')
++            value = {
++                'source': str(paths['site']),
++                'original': INGRESS.digest(b'original'),
++                'hashes': {name: INGRESS.digest(b'current') for name in paths},
++            }
++            value['hashes']['site'] = INGRESS.digest(b'expected')
++            with patch.object(INGRESS, 'STREAM', paths['stream']), \
++                    patch.object(INGRESS, 'PUBLIC', paths['public']), \
++                    patch.object(INGRESS, 'TMPFILES', paths['tmpfiles']), \
++                    patch.object(INGRESS, 'read_protected', side_effect=lambda path, *args: Path(path).read_bytes()), \
++                    patch.object(INGRESS, 'manager_site_compatible', return_value=True):
++                with self.assertRaises(ValueError):
++                    INGRESS.owned_files(value)
++                self.assertEqual(INGRESS.owned_files(value, allow_manager_site=True), paths)
++
+ 
+ @unittest.skipUnless(sys.platform == 'linux', 'Host OpenSSL checks require the supported Linux Archy platform')
+ class CertificateNames(unittest.TestCase):
+-- 
+2.39.5 (Apple Git-154)
+

@@ -1,5 +1,10 @@
 # Update an existing ForgeSworn 1.9.1 node
 
+For the guarded **2.1.0-beta.2** migration with a coherent backup and preserved
+application runtime, use the separate [existing-node beta2 upgrade
+recipe](existing-node-beta2-upgrade.md). Do not use this 1.9.1 updater for that
+beta path.
+
 Backend **p3** and catalogue **p5** are an in-place node update. The updater
 supports the published ForgeSworn 1.9.1 p1/p2/p3 backend and the existing
 directory-based `web-ui` layout. Other versions or custom backend binaries
