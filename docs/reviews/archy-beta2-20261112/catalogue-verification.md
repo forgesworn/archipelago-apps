@@ -245,3 +245,27 @@ not generate or provision one implicitly. The owner must select the cosign key
 holder and provision its public key through the reviewed installation/migration
 path before authenticated pulls can pass. Release-root catalogue signing and
 KithMoot's private-distribution decision remain separate requirements.
+
+## Public image publication, 14 November
+
+PR55 merged as `00e2472aede6f555223f08fdb762e9fafe9ca27a`. Its normal `main`
+publication jobs passed: Spry run 43534996468 and Wildbloom/Wildbloom Node run
+43534996456. Direct GHCR reads verified multi-platform manifest lists with both
+`linux/amd64` and `linux/arm64` entries:
+
+- `ghcr.io/forgesworn/spry:0.1.0-6b34f06-4` at
+  `sha256:9b48efbe0a21dc104157b78c86fed45dfcb887b46ffb169631de2480bb60d9f0`;
+- `ghcr.io/forgesworn/wildbloom:0.0.1-ee21ed5-5` at
+  `sha256:0880fd96c5836c8efeb98a0d8e8714af301cfda41847d9daafc3246e5719ae07`;
+- `ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-3` at
+  `sha256:b4ffdc02b2b44eabd55096301a358aafd0965bb0f69c73768526085f2cdebcd2`.
+
+These are publication and platform facts, not signature claims. Running the
+preparer for both architectures resolved Spry's digest and reached cosign, then
+failed because the deliberately absent authorised public-key path could not be
+loaded. It wrote no `.cache/app-catalog-distribution-candidate.json`. The owner
+must supply/provision the selected cosign public key and have the corresponding
+private-key holder sign these exact digests before rerunning the preparer. The
+release-root holder must then sign the complete catalogue; KithMoot remains
+excluded until its private-distribution route is explicitly selected. No signed
+App Store installation has been qualified.
