@@ -1,0 +1,199 @@
+From 36d4a58e956e4a2c9c8de670f479860d17c2a2f1 Mon Sep 17 00:00:00 2001
+From: ForgeSworn <ci@invalid>
+Date: Fri, 13 Nov 2026 11:16:00 +0000
+Subject: [PATCH 36/36] Restore reviewed ingress for external Wildbloom apps
+
+---
+ core/archipelago/src/appgate/identity.rs | 173 +++++++++++++++++++++++
+ 1 file changed, 173 insertions(+)
+
+diff --git a/core/archipelago/src/appgate/identity.rs b/core/archipelago/src/appgate/identity.rs
+index ef1ef03..00e4e81 100644
+--- a/core/archipelago/src/appgate/identity.rs
++++ b/core/archipelago/src/appgate/identity.rs
+@@ -218,6 +218,24 @@ pub fn build_port_map() -> PortMap {
+         }
+     }
+ 
++    let data_dir = std::env::var_os("ARCHIPELAGO_DATA_DIR")
++        .map(PathBuf::from)
++        .unwrap_or_else(|| PathBuf::from("/var/lib/archipelago"));
++    for (app_id, app_name, port, auth_enabled) in [
++        ("wildbloom", "Wildbloom", 3743, true),
++        ("wildbloom-node", "Wildbloom Node", 3742, false),
++    ] {
++        classify_retained_external(
++            &data_dir,
++            app_id,
++            app_name,
++            port,
++            auth_enabled,
++            &seen_apps,
++            &mut map,
++        );
++    }
++
+     // The operator's runtime override wins over the manifest default, in
+     // both directions: un-gate an app that fronts its own login, or force
+     // the challenge back onto an `auth: open` port. Overrides only toggle
+@@ -234,6 +252,67 @@ pub fn build_port_map() -> PortMap {
+     map
+ }
+ 
++fn classify_retained_external(
++    data_dir: &std::path::Path,
++    app_id: &str,
++    app_name: &str,
++    port: u16,
++    auth_enabled: bool,
++    seen_apps: &std::collections::HashSet<String>,
++    map: &mut PortMap,
++) {
++    if seen_apps.contains(app_id) {
++        return;
++    }
++    let result = (|| -> anyhow::Result<()> {
++        let Some((body, _)) =
++            crate::container::supervised_update::installed_unit(data_dir, app_id)?
++        else {
++            return Ok(());
++        };
++        anyhow::ensure!(
++            body.lines()
++                .any(|line| line.trim() == format!("ContainerName={app_id}")),
++            "Preserved unit has a different container name"
++        );
++        let expected = format!("127.0.0.1:{port}:{port}/tcp");
++        let publishes: Vec<_> = body
++            .lines()
++            .filter_map(|line| line.trim().strip_prefix("PublishPort="))
++            .collect();
++        anyhow::ensure!(
++            publishes.len() == 1 && publishes[0] == expected,
++            "Preserved unit does not have the reviewed loopback-only UI publish"
++        );
++        map.declared_auth.insert(
++            (app_id.to_string(), port),
++            if auth_enabled {
++                PortAuth::Gated
++            } else {
++                PortAuth::Open
++            },
++        );
++        map.gated.insert(
++            port,
++            GatedPort {
++                guest_access: false,
++                port,
++                app_id: app_id.to_string(),
++                app_name: app_name.to_string(),
++                icon: None,
++                declared: true,
++                session_passthrough: false,
++                auth_enabled,
++                turn_upstream: None,
++            },
++        );
++        Ok(())
++    })();
++    if let Err(error) = result {
++        tracing::warn!(app_id, error = %error, "Cannot restore reviewed external app ingress");
++    }
++}
++
+ #[cfg(test)]
+ pub(super) fn test_port_map(port: GatedPort) -> PortMap {
+     let mut map = PortMap::default();
+@@ -473,6 +552,89 @@ mod tests {
+         assert_eq!(map.declared_auth("otherapp", 8090), None);
+     }
+ 
++    fn retained_record(root: &std::path::Path, app_id: &str, publish: &str) {
++        let directory = root.join("update-transactions/installed-units");
++        std::fs::create_dir_all(&directory).unwrap();
++        let body = format!("[Container]\nContainerName={app_id}\n{publish}\n");
++        std::fs::write(
++            directory.join(format!("{app_id}.json")),
++            serde_json::to_vec(&serde_json::json!({
++                "schema": 1,
++                "operation": "00000000-0000-0000-0000-000000000000",
++                "name": app_id,
++                "body": body,
++                "mode": 0o600,
++            }))
++            .unwrap(),
++        )
++        .unwrap();
++    }
++
++    #[test]
++    fn retained_external_apps_restore_only_their_reviewed_ingress() {
++        let root = tempfile::tempdir().unwrap();
++        retained_record(
++            root.path(),
++            "wildbloom",
++            "PublishPort=127.0.0.1:3743:3743/tcp",
++        );
++        retained_record(
++            root.path(),
++            "wildbloom-node",
++            "PublishPort=127.0.0.1:3742:3742/tcp",
++        );
++        let mut map = PortMap::default();
++        let seen = std::collections::HashSet::new();
++        classify_retained_external(
++            root.path(),
++            "wildbloom",
++            "Wildbloom",
++            3743,
++            true,
++            &seen,
++            &mut map,
++        );
++        classify_retained_external(
++            root.path(),
++            "wildbloom-node",
++            "Wildbloom Node",
++            3742,
++            false,
++            &seen,
++            &mut map,
++        );
++        let ui = map.gated(3743).unwrap();
++        assert!(ui.declared && ui.auth_enabled);
++        assert_eq!(map.declared_auth("wildbloom", 3743), Some("gated"));
++        let api = map.gated(3742).unwrap();
++        assert!(api.declared && !api.auth_enabled);
++        assert_eq!(map.declared_auth("wildbloom-node", 3742), Some("open"));
++    }
++
++    #[test]
++    fn retained_external_apps_refuse_changed_or_ambiguous_publishes() {
++        for publish in [
++            "PublishPort=0.0.0.0:3743:3743/tcp",
++            "PublishPort=127.0.0.1:3743:80/tcp",
++            "PublishPort=127.0.0.1:3743:3743/tcp\nPublishPort=127.0.0.1:8080:8080/tcp",
++        ] {
++            let root = tempfile::tempdir().unwrap();
++            retained_record(root.path(), "wildbloom", publish);
++            let mut map = PortMap::default();
++            classify_retained_external(
++                root.path(),
++                "wildbloom",
++                "Wildbloom",
++                3743,
++                true,
++                &std::collections::HashSet::new(),
++                &mut map,
++            );
++            assert!(map.gated(3743).is_none());
++            assert_eq!(map.declared_auth("wildbloom", 3743), None);
++        }
++    }
++
+     fn manifest(yaml: &str) -> AppManifest {
+         AppManifest::parse(yaml).expect("test manifest must parse")
+     }
+-- 
+2.52.0
+

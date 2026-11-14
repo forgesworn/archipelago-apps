@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the dashboard frontend from the patched archy tree and repack it as
-# upstream's own release tarball, with only the neode-ui build replaced.
+# upstream's release layout, replacing the dashboard and patched runtime helpers.
 #
 # Usage: scripts/build-frontend.sh [archy-dir]
 #   archy-dir  a full checkout already at ARCHY_REF with upstream/patches applied
@@ -9,9 +9,8 @@
 #        frontend.sha256 and inputs.sha256.
 #
 # Upstream's tarball (FRONTEND_SHA256) is flat: ./index.html, ./assets/..., plus
-# payload that is not neode-ui's build: aiui/ (scripts/build-aiui.sh) and
-# archipelago-runtime/ (apps, scripts, docker, radio tools). We keep those from
-# the verified upstream asset and replace everything neode-ui's build produces.
+# runtime payload (apps, scripts, docker, radio tools). Beta's AIUI is compiled
+# into the dashboard. Stage runtime helpers from the patched backend source.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 . "$root/PINS"
@@ -21,6 +20,8 @@ case $(cd "$archy" && pwd) in "$root/.cache/archy") echo "refusing to build in .
 patches=("$root"/upstream/patches/*.patch)
 [ "$(git -C "$archy" rev-list --count "$ARCHY_REF..HEAD")" = "${#patches[@]}" ] \
   || { echo "$archy is not $ARCHY_REF plus exactly upstream/patches" >&2; exit 1; }
+[ -z "$(git -C "$archy" status --porcelain --untracked-files=all)" ] \
+  || { echo "frontend source must be clean for native AIUI provenance" >&2; exit 1; }
 node_major=$(node -p 'process.versions.node.split(".")[0]')
 [ "$node_major" = "$FRONTEND_NODE_MAJOR" ] \
   || echo "warning: node $node_major, release builds use $FRONTEND_NODE_MAJOR" >&2
@@ -42,9 +43,9 @@ if ! { [ -f "$cache" ] && echo "$FRONTEND_SHA256  $cache" | sha256sum -c - >/dev
     rm -f "$cache.part"
     [ -n "$FRONTEND_FALLBACK_URL" ] && [ -n "$FRONTEND_FALLBACK_SHA256" ] \
       || { echo "upstream asset unavailable and no fallback pinned for $ARCHY_RELEASE" >&2; exit 1; }
-    # A previous ForgeSworn frontend release retains aiui/ and
-    # archipelago-runtime/ from this exact, hash-pinned upstream release. Only
-    # those directories survive the overlay below; the dashboard is rebuilt.
+    # An explicitly qualified fallback must retain the exact hash-pinned
+    # upstream built runtime assets. Only archipelago-runtime survives the
+    # overlay below; the dashboard and native AIUI are rebuilt.
     base=$root/.cache/frontend-fallback-${FRONTEND_FALLBACK_SHA256}.tar.gz
     if ! { [ -f "$base" ] && echo "$FRONTEND_FALLBACK_SHA256  $base" | sha256sum -c - >/dev/null 2>&1; }; then
       curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
@@ -60,13 +61,13 @@ else
 fi
 mkdir "$work/tree"; tar -xzf "$base" -C "$work/tree"
 
-# 2. Build neode-ui as upstream's scripts/create-release.sh does (npm run build
-# into web/dist/neode-ui); the same staleness check on the embedded version.
-# Use the existing community catalogue extension point as well as the runtime
-# manifest: an app with only the latter cannot be found in the App Store.
+# 2. Build from clean source and verify beta's native AIUI chunk receipt.
+# Community metadata is a packaging overlay. Never dirty the source tree or
+# imply that unsigned metadata authorises a new app installation in beta.
+cp "$archy/app-catalog/catalog.json" "$work/catalog.json"
 python3 "$root/scripts/include-bundle-app.py" \
-  --catalogue "$archy/app-catalog/catalog.json" --manifest "$root/apps/spry/manifest.yml"
-catalogue_revision=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$archy/app-catalog/catalog.json")
+  --catalogue "$work/catalog.json" --manifest "$root/apps/spry/manifest.yml"
+catalogue_revision=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$work/catalog.json")
 rm -rf "$archy/web/dist/neode-ui"
 (cd "$archy/neode-ui" && npm ci --no-audit --no-fund && VITE_CATALOGUE_REVISION="$catalogue_revision" npm run build)
 dist=$archy/web/dist/neode-ui
@@ -74,30 +75,38 @@ test -f "$dist/index.html"
 # npm's prebuild copies the source catalogue into public/. Check the shipped
 # file too, so that a later upstream hook cannot silently remove the listing.
 cmp "$archy/app-catalog/catalog.json" "$dist/catalog.json"
-grep -rqo "${ARCHY_RELEASE#v}" "$dist"/assets/*.js \
-  || { echo "$dist does not embed ${ARCHY_RELEASE#v}: build no-opped or is stale" >&2; exit 1; }
-for kept in aiui archipelago-runtime; do
+python3 "$archy/scripts/release_payload.py" ui "$dist" --commit "$(git -C "$archy" rev-parse HEAD)"
+cp "$work/catalog.json" "$dist/catalog.json"
+for kept in archipelago-runtime; do
   ! [ -e "$dist/$kept" ] || { echo "neode-ui build now produces $kept/; the overlay needs rethinking" >&2; exit 1; }
   test -d "$work/tree/$kept" || { echo "upstream asset has no $kept/" >&2; exit 1; }
 done
 
-# 3. Overlay: everything at the top level except aiui/ and archipelago-runtime/
+# 3. Overlay: everything at the top level except archipelago-runtime/
 # is neode-ui's build output, so drop upstream's copy (an orphan such as a
 # differently hashed workbox-*.js must not survive) and copy the fresh build in.
-# Note: all files end up 644, so a future runtime payload file that needs an
-# execute bit would lose it here; revisit the repack modes if one ever does.
+# Upstream's archive contract requires 755 directories and 644 regular files.
 for entry in "$work"/tree/* "$work"/tree/.[!.]*; do
   [ -e "$entry" ] || continue
-  case $(basename "$entry") in aiui|archipelago-runtime) ;; *) rm -rf "$entry" ;; esac
+  case $(basename "$entry") in archipelago-runtime) ;; *) rm -rf "$entry" ;; esac
 done
 for entry in "$dist"/* "$dist"/.[!.]*; do
   [ -e "$entry" ] || continue
   cp -R "$entry" "$work/tree/"
 done
 
-# Include installable Spry in the runtime catalogue promoted by Archipelago.
+# Include Spry's runtime definition. The verified catalogue still controls
+# whether the beta App Store permits a new installation.
 mkdir -p "$work/tree/archipelago-runtime/apps/spry"
 cp "$root/apps/spry/manifest.yml" "$work/tree/archipelago-runtime/apps/spry/manifest.yml"
+
+# Beta runtime and backend helpers are one compatibility unit. Retaining the
+# upstream copies here would omit our ingress/lifecycle fixes. Regenerate the
+# upstream byte declaration and label this derivative separately.
+patch_digest=$(cat "${patches[@]}" | sha256sum | awk '{print $1}')
+python3 "$root/scripts/stage-runtime-payload.py" "$archy" "$work/tree" \
+  --version "${ARCHY_RELEASE#v}" --commit "$(git -C "$archy" rev-parse HEAD)" \
+  --patches-sha256 "$patch_digest"
 
 # 4. Deterministic repack: sorted names, root:root, fixed mtime, 755/644, no
 # gzip timestamp, "./" prefixes and a "./" root entry as upstream's tar writes.
@@ -131,6 +140,8 @@ repack "$work/second.tar.gz"
 cmp "$OUT_DIR/frontend.tar.gz.part" "$work/second.tar.gz" \
   || { echo "repack is not deterministic: two packs of one tree differ" >&2; exit 1; }
 mv "$OUT_DIR/frontend.tar.gz.part" "$OUT_DIR/frontend.tar.gz"
+python3 "$archy/scripts/release_payload.py" archive "$OUT_DIR/frontend.tar.gz" \
+  --version "${ARCHY_RELEASE#v}" --commit "$(git -C "$archy" rev-parse HEAD)"
 (cd "$OUT_DIR" && sha256sum frontend.tar.gz | awk '{print $1"  frontend.tar.gz"}' > frontend.sha256)
 "$root/scripts/frontend-inputs.sh" > "$OUT_DIR/inputs.sha256"
 # inputs.sha256 pins the recipe's inputs, not the Node minor, npm, Python/zlib or runner image.

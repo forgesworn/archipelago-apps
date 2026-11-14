@@ -24,6 +24,10 @@ on:
 concurrency:
   group: backend-${{ github.ref }}
   cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_TEST_DEBUG: 0
+  CARGO_PROFILE_TEST_OPT_LEVEL: 0
 permissions:
   contents: write
 jobs:
@@ -48,12 +52,36 @@ jobs:
         run: ARCHY_FULL=1 scripts/fetch-archy.sh
       - if: steps.plan.outputs.skip != 'true'
         run: scripts/apply-patches.sh
-      # Plain cargo test: this crate has no host-operation tests, and its
-      # lan_address tests find apps/ through CARGO_MANIFEST_DIR, which only cargo sets.
+      - uses: actions/setup-go@v5
+        if: steps.plan.outputs.skip != 'true'
+        with: { go-version: '1.24.x', cache: false }
+      - name: Fetch the Podman 5.4.2 generator source for Debian 13 fixtures
+        if: steps.plan.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: containers/podman
+          ref: be85287fcf4590961614ee37be65eeb315e5d9ff
+          path: .cache/ci-quadlet
+      - name: Prepare offline Tor and Quadlet test prerequisites
+        if: steps.plan.outputs.skip != 'true'
+        run: |
+          # Tor runs only inside the harness's offline, disposable namespace.
+          sudo systemctl mask tor.service tor@default.service
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tor
+          # Ubuntu 24's Podman 4.9 generator rejects StopTimeout. Qualify the
+          # generated units with the real Podman 5 generator, not a mock or skip.
+          (cd .cache/ci-quadlet && CGO_ENABLED=0 go build -mod=vendor -p 2 -o "$RUNNER_TEMP/quadlet" ./cmd/quadlet)
+          sudo install -d /usr/local/lib/archy-ci /usr/lib/systemd/system-generators
+          sudo install -m 0755 "$RUNNER_TEMP/quadlet" /usr/local/lib/archy-ci/quadlet-v5.4.2
+          sudo ln -sfn /usr/local/lib/archy-ci/quadlet-v5.4.2 /usr/lib/systemd/system-generators/podman-system-generator
+          /usr/lib/systemd/system-generators/podman-system-generator --version
+          /usr/bin/tor --version
+      # Exercise the container crate in the same isolated namespace.
       - name: Container tests
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy
-        run: cargo test --manifest-path core/Cargo.toml -p archipelago-container --locked
+        run: ARCHY_TEST_PACKAGE=archipelago-container scripts/test-backend-isolated.sh
       - name: Node ingress production TLS source tests
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy
@@ -64,29 +92,14 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts/tests -p test_kithmoot_node_ingress.py -v
           python3 -m unittest discover -s scripts/tests -p test_dashboard_public_guard.py -v
-      # Plain cargo test (default features, as the harness uses): several tests
-      # read the real apps/*/manifest.yml through CARGO_MANIFEST_DIR, which the
-      # harness does not set. --exact makes each --skip match one full test path.
-      # Host-operation tests, run in the next step under upstream's harness:
-      #   install_* (3), manifest_generated_files_* (2), bootstrap's executable
-      #   sync (sudo mv) and the ecash two-process fixture (ARCHY_TEST_ISOLATED).
-      # Skipped, both unrelated to the patch (see docs/upstream-notes.md):
-      # - quadlet: the runner's Podman 4.9 generator predates StopTimeout;
-      #   Archipelago targets Debian 13's Podman 5.
-      # - wallet ordering: reads the node's real Bitcoin RPC secret, which no
-      #   CI host has.
-      # From v1.9.1-alpha every authenticated request first loads
-      # /var/lib/archipelago/remember_secret, so login-path tests (upstream's
-      # csrf_recovery_tests and ours) need that directory. An empty, runner-owned
-      # one is what the isolated harness provides too.
-      - name: Writable node data directory
-        if: steps.plan.outputs.skip != 'true'
-        run: sudo install -d -o "$(id -u)" -g "$(id -g)" /var/lib/archipelago
+      # Beta host-operation tests run in the upstream isolated namespace.
+      # Compile the complete suite and keep the existing unrelated exclusions;
+      # installed-node and physical-client acceptance remain separate gates.
       - name: Archipelago tests
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy
         run: >-
-          cargo test --manifest-path core/Cargo.toml -p archipelago --locked -- --exact
+          scripts/test-backend-isolated.sh --exact
           --skip bootstrap::tests::executable_sync_replaces_stale_payload_and_repairs_mode_idempotently
           --skip wallet::ecash::payment_tests::process_fixture::committed_settlement_reply_loss_recovers_after_both_processes_restart
           --skip container::prod_orchestrator::tests::install_applies_data_uid_chown_before_create
@@ -94,7 +107,6 @@ jobs:
           --skip container::prod_orchestrator::tests::install_writes_manifest_generated_files_before_create
           --skip container::prod_orchestrator::tests::manifest_generated_files_can_overwrite_when_declared
           --skip container::prod_orchestrator::tests::manifest_generated_files_do_not_overwrite_by_default
-          --skip container::quadlet::tests::actual_quadlet_generator_stops_before_forced_removal
           --skip container::prod_orchestrator::tests::reconcile_wallet_start_precedes_unrelated_failed_image_pull
       # Upstream's harness gives these a private /var/lib/archipelago. Only they
       # run here; the count check fails the step if a rename leaves it vacuous.
@@ -117,12 +129,12 @@ jobs:
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy
         run: |
-          cargo test --manifest-path core/Cargo.toml -p archipelago-container --locked --lib -- --exact \
+          ARCHY_TEST_PACKAGE=archipelago-container scripts/test-backend-isolated.sh --exact \
             manifest::tests::mesh_host_placeholder_is_accepted_and_rendered \
             manifest::tests::node_identity_pubkeys_placeholder_is_accepted \
             manifest::tests::resolve_derived_env_renders_node_identity_pubkeys | tee "$RUNNER_TEMP/container.log"
           grep -q 'test result: ok. 3 passed;' "$RUNNER_TEMP/container.log"
-          cargo test --manifest-path core/Cargo.toml -p archipelago --locked --bin archipelago -- --exact \
+          scripts/test-backend-isolated.sh --exact \
             identity_manager::tests::is_node_identity_matches_only_the_node_pubkey \
             identity_manager::tests::is_hidden_from_app_signer_mirrors_the_picker_rules \
             identity_manager::tests::app_signable_nostr_pubkeys_mirror_the_identity_picker \
@@ -132,38 +144,35 @@ jobs:
             container::prod_orchestrator::tests::node_identity_pubkeys_placeholder_needs_the_node_key_and_never_creates_it \
             container::prod_orchestrator::tests::host_port_wait_tries_each_local_address_and_refuses_a_closed_target | tee "$RUNNER_TEMP/archipelago.log"
           grep -q 'test result: ok. 8 passed;' "$RUNNER_TEMP/archipelago.log"
-      # Linked signers and signer login (patches 0003-0006), one module
-      # filter at a time (filters are substring matches: signer_login::tests::
-      # also counts api::rpc::signer_login::tests::). Each count covers the whole module, upstream's tests
-      # included, so a dropped or renamed test changes it. Re-count after an
-      # ARCHY_REF bump.
+      # Linked signers are now upstream. Run each complete beta module;
+      # reject empty selections instead of asserting obsolete 1.9.1 counts.
       - name: Patch tests (linked signers)
         if: steps.plan.outputs.skip != 'true'
         working-directory: .cache/archy
         run: |
           check() {
-            cargo test --manifest-path core/Cargo.toml -p archipelago --locked --bin archipelago -- "$1" \
+            scripts/test-backend-isolated.sh "$1" \
               | tee "$RUNNER_TEMP/patch.log"
-            grep -q "test result: ok. $2 passed; 0 failed" "$RUNNER_TEMP/patch.log" \
-              || { echo "::error::$1: expected $2 passed"; exit 1; }
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed' "$RUNNER_TEMP/patch.log" \
+              || { echo "::error::$1: expected a non-empty passing beta test module"; exit 1; }
           }
-          check remote_signer::tests:: 39
-          check identity_manager::tests:: 35
-          check api::rpc::nostr_signing_origin_tests:: 4
-          check api::rpc::middleware::sanitize_tests:: 10
-          check rate_limit::tests:: 10
-          check api::rpc::identity::handlers::tests:: 2
-          check signer_login::tests:: 49
-          check api::rpc::signer_login::tests:: 3
-          check api::rpc::signer_login_tests:: 17
-          check appgate::identity::tests:: 14
-          check container::spry_network::tests:: 1
-          check auth::tests:: 21
-          check public_host 7
-          check wildbloom 25
-          check storage_crypto::tests:: 6
-          # Patch 0034 (install port probe): its parser test, by name.
-          check host_port_probe_takes_the_first_tcp_line 1
+          check remote_signer::tests::
+          check identity_manager::tests::
+          check api::rpc::nostr_signing_origin_tests::
+          check api::rpc::middleware::sanitize_tests::
+          check rate_limit::tests::
+          check api::rpc::identity::handlers::tests::
+          check signer_login::tests::
+          check api::rpc::signer_login::tests::
+          check api::rpc::signer_login_tests::
+          check appgate::identity::tests::
+          check container::spry_network::tests::
+          check auth::tests::
+          check public_host
+          check wildbloom
+          check storage_crypto::tests::
+          # Install port probe: its parser test, by name.
+          check host_port_probe_takes_the_first_tcp_line
       - uses: docker/setup-buildx-action@v3
         if: steps.plan.outputs.skip != 'true'
         with:
@@ -186,13 +195,34 @@ jobs:
         run: cargo build --release -p archipelago
       - uses: actions/setup-node@v4
         if: steps.plan.outputs.skip != 'true'
-        with: { node-version: 20 }
+        with: { node-version: 24 }
       - name: Build matching catalogue for the Docker host fixture
         if: steps.plan.outputs.skip != 'true'
         run: |
           ARCHY_FULL=1 scripts/fetch-archy.sh .cache/archy-docker-host
           scripts/apply-patches.sh .cache/archy-docker-host
+          npm install --global corepack
           OUT_DIR=.cache/docker-host-frontend scripts/build-frontend.sh .cache/archy-docker-host
+      - name: Record exact backend candidate
+        if: steps.plan.outputs.skip != 'true'
+        run: |
+          mkdir -p .cache/backend-review
+          cp .cache/archy/core/target/release/archipelago .cache/backend-review/
+          (cd .cache/backend-review && sha256sum archipelago > archipelago.sha256)
+          scripts/backend-inputs.sh > .cache/backend-review/inputs.sha256
+          git -C .cache/archy rev-parse HEAD > .cache/backend-review/source-commit.txt
+          git -C .cache/archy rev-parse 'HEAD^{tree}' > .cache/backend-review/source-tree.txt
+          cat .cache/backend-review/archipelago.sha256 .cache/docker-host-frontend/frontend.sha256
+      - name: Retain matching node candidate for review and rehearsal
+        if: steps.plan.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-review-${{ github.sha }}
+          path: |
+            .cache/backend-review/
+            .cache/docker-host-frontend/
+          if-no-files-found: error
+          retention-days: 14
       - name: Fresh Debian host with the existing Docker runtime
         if: steps.plan.outputs.skip != 'true'
         env: { GH_TOKEN: "${{ github.token }}" }

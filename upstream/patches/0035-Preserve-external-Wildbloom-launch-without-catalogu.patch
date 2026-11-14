@@ -1,0 +1,50 @@
+From 35f8c4ae45c345b0b7d380db27f509c2197cb42f Mon Sep 17 00:00:00 2001
+From: ForgeSworn <ci@invalid>
+Date: Fri, 13 Nov 2026 11:04:00 +0000
+Subject: [PATCH 35/36] Preserve external Wildbloom launch without catalogue
+
+---
+ neode-ui/src/views/appSession/__tests__/appSessionConfig.test.ts | 9 +++++++++
+ neode-ui/src/views/appSession/appSessionConfig.ts                | 2 ++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/neode-ui/src/views/appSession/__tests__/appSessionConfig.test.ts b/neode-ui/src/views/appSession/__tests__/appSessionConfig.test.ts
+index b5798bd..3337353 100644
+--- a/neode-ui/src/views/appSession/__tests__/appSessionConfig.test.ts
++++ b/neode-ui/src/views/appSession/__tests__/appSessionConfig.test.ts
+@@ -181,4 +181,13 @@ describe('appSessionConfig', () => {
+     expect(resolveAppUrl('archipelago-source', '/search'))
+       .toBe('/app/archipelago-source/search')
+   })
++
++  it('launches externally managed Wildbloom without runtime or signed catalogue data', () => {
++    stubLocation({ hostname: '192.0.2.10', protocol: 'http:' })
++    __setSignedCatalogForTests(null as never)
++
++    expect(resolveAppUrl('wildbloom')).toBe('http://192.0.2.10:3743')
++    stubLocation({ hostname: '192.0.2.10', protocol: 'https:' })
++    expect(resolveAppUrl('wildbloom')).toBe('https://192.0.2.10:3743')
++  })
+ })
+diff --git a/neode-ui/src/views/appSession/appSessionConfig.ts b/neode-ui/src/views/appSession/appSessionConfig.ts
+index e2043a0..4e4ee1b 100644
+--- a/neode-ui/src/views/appSession/appSessionConfig.ts
++++ b/neode-ui/src/views/appSession/appSessionConfig.ts
+@@ -52,6 +52,7 @@ export const APP_PORTS: Record<string, number> = {
+   'tailscale':     8240,
+   'fedimintd':     8175,
+   'fedimint-gateway': 8176,
++  'wildbloom':     3743,
+   'endurain':      8080,
+ }
+ 
+@@ -82,5 +83,6 @@ const PRE_CATALOG_GATED_PORTS: Partial<Record<string, number>> = {
+   'archipelago-source': 8337,
+   'blossom': GENERATED_APP_PORTS.blossom,
++  'wildbloom': 3743,
+ }
+ 
+ export function appPortIsGateFronted(appId: string, port: number | string, reportedAuth?: string | null): boolean {
+-- 
+2.52.0
+

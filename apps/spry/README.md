@@ -27,6 +27,8 @@ or publisher-operated directory is installed.
 The people in a private-only call need access to their own paired nodes. A
 publicly reachable standalone Spry can also share TURN access with guests
 who have no node. Spry's public HTTPS access protocol remains supported.
+For a dedicated, unlisted VPS without Archipelago, use the
+[standalone STUN/TURN relay recipe](../../docs/spry-relay-vps.md).
 
 ## Libraries and host boundaries
 

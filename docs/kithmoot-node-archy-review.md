@@ -4,13 +4,15 @@ The 5 November dashboard and limit controls are ready for review at UI/controlle
 source `6c27156de8f4744c08cf7fefde76b41763c0910d`. Its new screens, exact assets,
 captures, setup and expected results are in the
 [dashboard review pack](kithmoot-node-dashboard-review.md). The expanded dashboard is now on the authorised private demo with actual
-linked-signer and live-metric evidence. It remains unmerged pending ZAT.
+linked-signer and live-metric evidence.
 
 **Maintainer must review and approve UI work on the Archy install, launch,
 pairing hand-off, delete-everything, Overview, Connections, Usage, Settings and
-Diagnostics screens before merging or approval. ZAT pending.** No maintainer
-approval has been recorded and no maintainer message has been sent. General
-ship instructions and automated checks do not satisfy this gate.
+Diagnostics screens before any PR is accepted into core Archipelago or final
+core approval. ZAT pending.** No maintainer approval has been recorded and no
+maintainer message has been sent. General ship instructions and automated checks
+do not satisfy this gate. The owner clarified on 13 November that it does not
+gate the ForgeSworn PR53–PR55 chain.
 
 ## Exact candidate
 

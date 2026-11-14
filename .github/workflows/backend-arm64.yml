@@ -1,0 +1,89 @@
+name: backend-arm64
+on:
+  push:
+    branches: ['**']
+    paths:
+      - upstream/patches/**
+      - PINS
+      - scripts/fetch-archy.sh
+      - scripts/apply-patches.sh
+      - scripts/backend-inputs.sh
+      - scripts/lib/patches.bash
+      - scripts/wait-backend-release.sh
+      - .github/workflows/backend-arm64.yml
+  workflow_dispatch:
+concurrency:
+  group: backend-arm64-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_INCREMENTAL: 0
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          source PINS
+          tag="backend-${ARCHY_RELEASE}-p${BACKEND_PATCH_LEVEL}"
+          expected=$(scripts/backend-inputs.sh)
+          work=$(mktemp -d)
+          if gh release download "$tag" --pattern inputs.sha256 --pattern archipelago-arm64.sha256 --dir "$work" 2>/dev/null \
+              && [ "$(cat "$work/inputs.sha256")" = "$expected" ] \
+              && [ -s "$work/archipelago-arm64.sha256" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Matching ARM64 backend is already published" >&2
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        if: steps.plan.outputs.skip != 'true'
+        with: { toolchain: stable, rustflags: "", cache: false }
+      - if: steps.plan.outputs.skip != 'true'
+        run: ARCHY_FULL=1 scripts/fetch-archy.sh .cache/archy-arm64
+      - if: steps.plan.outputs.skip != 'true'
+        run: scripts/apply-patches.sh .cache/archy-arm64
+      - name: Build native ARM64 backend
+        if: steps.plan.outputs.skip != 'true'
+        working-directory: .cache/archy-arm64/core
+        run: cargo build --locked --release -p archipelago
+      - name: Record native ARM64 candidate
+        if: steps.plan.outputs.skip != 'true'
+        run: |
+          mkdir -p .cache/backend-arm64-review
+          cp .cache/archy-arm64/core/target/release/archipelago .cache/backend-arm64-review/archipelago-arm64
+          chmod 0755 .cache/backend-arm64-review/archipelago-arm64
+          .cache/backend-arm64-review/archipelago-arm64 --help >/dev/null
+          (cd .cache/backend-arm64-review && sha256sum archipelago-arm64 > archipelago-arm64.sha256)
+          scripts/backend-inputs.sh > .cache/backend-arm64-review/inputs.sha256
+          git -C .cache/archy-arm64 rev-parse HEAD > .cache/backend-arm64-review/source-commit.txt
+          git -C .cache/archy-arm64 rev-parse 'HEAD^{tree}' > .cache/backend-arm64-review/source-tree.txt
+          cat .cache/backend-arm64-review/archipelago-arm64.sha256
+      - uses: actions/upload-artifact@v4
+        if: steps.plan.outputs.skip != 'true'
+        with:
+          name: node-review-arm64-${{ github.sha }}
+          path: .cache/backend-arm64-review/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Wait for the matching x86-64 release
+        if: steps.plan.outputs.skip != 'true' && github.ref == 'refs/heads/main'
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: scripts/wait-backend-release.sh
+      - name: Publish native ARM64 release asset
+        if: steps.plan.outputs.skip != 'true' && github.ref == 'refs/heads/main'
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          source PINS
+          tag="backend-${ARCHY_RELEASE}-p${BACKEND_PATCH_LEVEL}"
+          if gh release download "$tag" --pattern archipelago-arm64.sha256 --dir "$(mktemp -d)" 2>/dev/null; then
+            echo "ARM64 asset already exists; bump BACKEND_PATCH_LEVEL instead of replacing it" >&2
+            exit 1
+          fi
+          gh release upload "$tag" \
+            .cache/backend-arm64-review/archipelago-arm64 \
+            .cache/backend-arm64-review/archipelago-arm64.sha256

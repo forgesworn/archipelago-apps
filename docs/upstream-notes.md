@@ -4,6 +4,14 @@ Observations about Archipelago (archy) made while packaging apps, kept here so
 they can be offered to the maintainers. Each entry names the archy commit it was
 checked against.
 
+## Beta 2 rebasing (archy `5aac0d2`)
+
+The active patch stack now targets `v2.1.0-beta.2`. Patch numbers below are
+historical references for their named alpha revisions. See
+[the beta preparation and recovery record](archy-beta2-upgrade.md) for current
+compatibility evidence, unresolved gates and the mapping of integrated work.
+Old qualification notes retained inside patches do not establish beta acceptance.
+
 ## Manifest lifecycle controls on Docker (archy `7f0318c`)
 
 The production orchestrator already selects Docker from the node configuration,

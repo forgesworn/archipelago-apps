@@ -12,6 +12,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with: { toolchain: stable, cache: false }
       - run: sudo apt-get update && sudo apt-get install -y python3-yaml
+      - run: python3 -m unittest discover -s tests -p test_fresh_install.py -v
       - run: python3 tests/test-sales-config.py
       - run: python3 tests/test-discovery-config.py
       - run: python3 -m unittest discover -s tests -p 'test_spry*.py' -v
@@ -23,7 +24,7 @@ jobs:
         with: { node-version: 24, cache: npm, cache-dependency-path: experimental/kithmoot-node/package-lock.json }
       - run: npm ci --ignore-scripts --no-audit --no-fund && npm test && npm run build
         working-directory: experimental/kithmoot-node
-      - run: scripts/fetch-archy.sh
+      - run: ARCHY_FULL=1 scripts/fetch-archy.sh
       - run: scripts/apply-patches.sh
       - run: scripts/validate.sh
       - name: Validate private node manifest metadata without private inputs

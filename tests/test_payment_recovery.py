@@ -48,7 +48,7 @@ class RecoveryTests(unittest.TestCase):
             self.image = image
             r.configuration(self.root, self.settings, self.execute)
         for image in ['ghcr.io/forgesworn/wildbloom-node:latest',
-                      'ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-3']:
+                      'ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-4']:
             self.image = image
             with self.assertRaises(r.Refused):
                 r.configuration(self.root, self.settings, self.execute)

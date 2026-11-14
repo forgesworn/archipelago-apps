@@ -1,0 +1,54 @@
+name: beta migration rehearsal
+on:
+  push:
+    branches: ['feat/archy-beta2-compat-20261112']
+    paths:
+      - .github/workflows/beta-migration.yml
+      - tests/migration/**
+      - scripts/test-beta-migration.sh
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: beta-migration-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  installed-node:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Offline preparation regressions
+        run: python3 -W error::ResourceWarning -m unittest discover -s tests/migration -p 'test_*.py' -v
+      - name: Download exact retained beta candidate
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          gh run download 43268204623 --name node-review-664be6ce144931625c9e09ff66245c77914f186e --dir .cache/migration-beta
+          echo 'e887b68d4232523bbf48a722b906b4759e9bf3270b98cc604630d8d92f57124d  .cache/migration-beta/backend-review/archipelago' | sha256sum -c -
+          echo '45b440d1896a0c51e4b71aba64c768a82e6487f4e0cb84a26e9d9ebadd839793  .cache/migration-beta/docker-host-frontend/frontend.tar.gz' | sha256sum -c -
+      - name: Prepare released alpha baseline
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: |
+          mkdir -p .cache/migration-alpha
+          gh release download backend-v1.9.1-alpha-p3 --pattern archipelago --dir .cache/migration-alpha
+          gh release download frontend-v1.9.1-alpha-p5 --pattern frontend.tar.gz --dir .cache/migration-alpha
+          echo 'e6158a4a34641562b77a1cbe754e60168caa07a6d558cb1fa9d7fdf1d3e7d94e  .cache/migration-alpha/archipelago' | sha256sum -c -
+          echo 'c7b8ad9bf2407cfcf2e83941d7360fca6ba0a4f309a989307b8d23e3c76bbfb3  .cache/migration-alpha/frontend.tar.gz' | sha256sum -c -
+          git worktree add --detach .cache/migration-alpha-source 3b295e3e79e228ef1fdacd221feed85191932a28
+          cd .cache/migration-alpha-source
+          ARCHY_FULL=1 scripts/fetch-archy.sh
+          scripts/apply-patches.sh
+      - name: Existing rootless Podman node rehearsal
+        env: {GH_TOKEN: '${{ github.token }}'}
+        run: scripts/test-beta-migration.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: beta-migration-${{ github.sha }}
+          path: |
+            .local/beta-migration-result.json
+            .local/beta-migration-journal.log
+          if-no-files-found: ignore
+          retention-days: 14

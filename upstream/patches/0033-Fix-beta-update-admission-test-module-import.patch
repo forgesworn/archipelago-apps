@@ -1,0 +1,22 @@
+From 3f0b5e0645896af238364d77402f02086979b6b4 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 16:02:17 +0000
+Subject: [PATCH] Fix beta update admission test module import
+
+---
+ core/archipelago/src/update/public_admission.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/core/archipelago/src/update/public_admission.rs b/core/archipelago/src/update/public_admission.rs
+index eb0fc17..78a7868 100644
+--- a/core/archipelago/src/update/public_admission.rs
++++ b/core/archipelago/src/update/public_admission.rs
+@@ -587,7 +587,7 @@ mod tests {
+ 
+     #[tokio::test]
+     async fn public_admission_discovery_download_preserves_signed_origin_and_checks_bytes() {
+-        use super::super as update;
++        use crate::update;
+         use sha2::{Digest, Sha256};
+         use tokio::io::{AsyncReadExt, AsyncWriteExt};
+ 

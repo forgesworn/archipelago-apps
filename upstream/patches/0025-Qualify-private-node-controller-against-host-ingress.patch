@@ -1,0 +1,54 @@
+From 80eef4baf238efd09373da905b1400ad89e37669 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 02:42:09 +0000
+Subject: [PATCH 25/32] Qualify private node controller against host ingress
+
+---
+ scripts/qualification/kithmoot-node-nginx.py | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+diff --git a/scripts/qualification/kithmoot-node-nginx.py b/scripts/qualification/kithmoot-node-nginx.py
+index 7954dc2..4713407 100644
+--- a/scripts/qualification/kithmoot-node-nginx.py
++++ b/scripts/qualification/kithmoot-node-nginx.py
+@@ -255,9 +255,19 @@ try:
+     environment = {name: secrets.token_hex(32) for name in ['KITHMOOT_NODE_SERVICE_KEY', 'KITHMOOT_NODE_TURN_SECRET', 'KITHMOOT_NODE_STATE_SALT']}
+     denied = subprocess.run([sys.executable, '-c', "open('/etc/archipelago/ssl/public/key.pem','rb')"], user=1000, group=1000, extra_groups=(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+     assert denied.returncode != 0
+-    run([BASE + '/kithmoot-node', 'init', '--state', str(directory), '--configuration', '/fixture/app.json'], user=1000, group=1000, extra_groups=(), env=environment)
+-    child([BASE + '/kithmoot-node', 'run', '--state', str(directory)], user=1000, group=1000, extra_groups=(), env=environment)
+     child(['/source/core/target/debug/node-ingress-fixture'], env={**os.environ, 'E2E_ARCHY_NODE_INGRESS': 'disposable-offline-nginx'})
++    controller = os.environ.get('E2E_ARCHY_NODE_CONTROLLER') == 'private-controller'
++    if controller:
++        assert Path('/controller/controller.mjs').is_file() and Path('/fixture/controller-driver.mjs').is_file()
++        child([BASE + '/runtime/bin/node', '/controller/controller.mjs'], user=1000, group=1000, extra_groups=(), env={
++            **environment, 'PUBLIC_HOST': 'node.example', 'HOST_IP': '1.2.3.4', 'HOST_MDNS': 'archy.local',
++            'NODE_IDENTITY_PUBKEYS': '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',
++            'NODE_EXTRA_CA_CERTS': '/fixture/client-ca.pem'})
++        wait(lambda: listening(3753), 'private controller')
++        run([BASE + '/runtime/bin/node', '/fixture/controller-driver.mjs', 'setup'], timeout=60)
++    else:
++        run([BASE + '/kithmoot-node', 'init', '--state', str(directory), '--configuration', '/fixture/app.json'], user=1000, group=1000, extra_groups=(), env=environment)
++        child([BASE + '/kithmoot-node', 'run', '--state', str(directory)], user=1000, group=1000, extra_groups=(), env=environment)
+     legacy = Path('/fixture/legacy'); legacy.mkdir(mode=0o700); os.chown(legacy, 1001, 1001)
+     run(['openssl', 'ecparam', '-name', 'secp256k1', '-genkey', '-noout', '-out', '/fixture/private/legacy-owner.key'])
+     owner = run(['openssl', 'ec', '-in', '/fixture/private/legacy-owner.key', '-pubout', '-conv_form', 'compressed', '-outform', 'DER'])[-32:].hex()
+@@ -276,6 +286,9 @@ try:
+         peer = socket.socket(); peer.bind(('127.0.0.1', 3745)); peer.listen()
+     wait(lambda: listening(3744) and listening(3745), 'existing private Spry ports')
+     assert request('node.example', '/node/v1/info')[0] == 200
++    if controller:
++        run([BASE + '/runtime/bin/node', '/fixture/controller-driver.mjs', 'pair-restart'], timeout=90)
++        progress('real private controller signed setup, pairing, pause and restart passed')
+     # Normal certificate/hostname verification through actual Rust TLS.
+     context = ssl.create_default_context(cafile='/fixture/client-ca.pem')
+     def binding(port, name):
+@@ -350,6 +363,8 @@ try:
+ 
+     prepared = json.loads(run([BASE + '/kithmoot-node', 'prepare-delete', '--state', str(directory)], user=1000, group=1000, extra_groups=()))
+     assert prepared == {'ok': True, 'result': {'deleteReady': True}}
++    if controller:
++        run([BASE + '/runtime/bin/node', '/fixture/controller-driver.mjs', 'delete'], timeout=60)
+     ingress.restore(ingress.journal_read())
+     assert source.read_bytes() == original and not ingress.STREAM.exists() and not ingress.PUBLIC.exists()
+     assert request('archy.local')[0] == 200 and request('archy.local', source='1.2.3.5')[0] == 404

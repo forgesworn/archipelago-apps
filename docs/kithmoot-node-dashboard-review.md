@@ -7,19 +7,21 @@ active TURN allocations and stream connections; none is a count of people.
 
 **Maintainer must review and approve UI work on the Archy KithMoot Node
 Overview, Connections, Usage, Settings and Change node limits, Diagnostics,
-pairing hand-off and delete-everything screens before merging or approval.
-ZAT pending.** No reviewed-revision approval is recorded. PR53 remains draft;
-no maintainer has been contacted.
+pairing hand-off and delete-everything screens before any PR is accepted into
+core Archipelago or final core approval. ZAT pending.** No reviewed-revision
+approval is recorded and no maintainer has been contacted. The owner clarified
+on 13 November that this does not gate the ForgeSworn PR53–PR55 chain.
 
 ## 8 November 2026: pairing copy under a blocked clipboard policy
 
-Review candidate only; this fix is unmerged and not deployed to Archy. The affected screen is **KithMoot Node → Settings → Pair with KithMoot →
+The affected screen is **KithMoot Node → Settings → Pair with KithMoot →
 pairing hand-off**, also reachable from Overview. The Diagnostics copy button
 is outside this change.
 
 **Maintainer must review and approve UI work on the Archy KithMoot Node pairing
-hand-off screen before merging or approval. ZAT pending.** No maintainer has
-been contacted and no approval of this candidate is recorded.
+hand-off screen before any PR is accepted into core Archipelago or final core
+approval. ZAT pending.** No maintainer has been contacted and no approval of
+this candidate is recorded.
 
 ### Candidate and setup
 
