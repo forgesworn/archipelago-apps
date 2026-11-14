@@ -219,18 +219,18 @@ client behaviour are recorded, with no unresolved loss or access regression.
 
 ## Next action
 
-Complete the ForgeSworn PR53–PR55 chain and publish the exact public images
-through its normal `main` workflows. The owner has authorised that work and
-clarified that it is not a core Archipelago merge. Goal 3 remains unqualified
-at authenticated distribution: the public catalogue signature is invalid, all
-four entries are missing, and beta requires immutable cosign-verified images.
-After publication, the authorised key holders must cosign the image digests and
-sign the compatible catalogue with the release root; KithMoot's private-image
-route still needs an explicit decision. Then rerun the unchanged verifier and
-install/start/check each app through that route on an isolated fresh node. The
-separate local four-app installation and real NIP-46 signer rehearsals passed,
-as did 20 current room/clipboard browser checks; do not mislabel them as
-signed-registry, human-device or embedded acceptance. The owner can separately
-pass the existing exact UI review pack to the maintainer for ZAT before any
-core Archipelago PR acceptance. No live backup, restart, cutover or maintainer
-contact is authorised by this clarification.
+The ForgeSworn PR53–PR55 chain is merged, and all three exact public images are
+published with verified amd64/arm64 manifest indexes. Goal 3 remains unqualified
+at authenticated distribution: the public catalogue signature is invalid, its
+entries are absent, and no authorised cosign public key or signing workflow is
+provisioned. The owner must select the cosign key holder, provision the public
+key through the reviewed path and have the private-key holder sign the immutable
+digests in the catalogue report. The release-root holder must sign the complete
+catalogue; KithMoot's private-image route still needs an explicit decision.
+Then rerun the unchanged verifier and install/start/check each app through that
+route on an isolated fresh node. The fail-closed preparer reached cosign and
+wrote no candidate without the key. Local four-app installation and real NIP-46
+signer rehearsals are not signed-registry, human-device or embedded acceptance.
+The owner can separately pass the exact UI review pack to the maintainer for ZAT
+before any core Archipelago PR acceptance. No live backup, restart, cutover or
+maintainer contact is authorised by publication.
