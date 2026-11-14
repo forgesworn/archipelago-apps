@@ -30,7 +30,7 @@ function fixture(t, rooms = 2) {
 }
 
 test('paused limits save atomically, preserve other configuration/keys/rooms, and restore without starting services', async t => {
-  const f = fixture(t), beforeLedger = readFileSync(join(f.state, 'ledger.sqlite')), next = { ...limits, maxRooms: 8, aggregateBytesPerSecond: 5000000 }
+  const f = fixture(t), beforeLedger = readFileSync(join(f.state, 'ledger.sqlite')), next = { ...limits, maxRooms: 64, aggregateBytesPerSecond: 5000000 }
   const result = await f.node.changeSettings({ revision: f.revision, limits: next })
   assert.equal(result.paused, true); assert.notEqual(result.revision, f.revision)
   assert.deepEqual(f.saved(), { ...f.configuration, ...next })
@@ -49,7 +49,7 @@ test('paused limits save atomically, preserve other configuration/keys/rooms, an
 
 test('two tabs cannot overwrite a changed revision; rejected or malformed changes preserve the last configuration', async t => {
   const f = fixture(t)
-  for (const invalid of [{ revision: f.revision, limits: { ...limits, maxRooms: 64 } }, { revision: f.revision, limits: { ...limits, spryBinary: '/elsewhere' } },
+  for (const invalid of [{ revision: f.revision, limits: { ...limits, maxRooms: 65 } }, { revision: f.revision, limits: { ...limits, spryBinary: '/elsewhere' } },
     { revision: f.revision, limits, restart: true }, { revision: 'bad', limits }, { revision: f.revision, limits: [] }]) {
     await assert.rejects(f.node.changeSettings(invalid), /invalid-settings/); assert.deepEqual(f.saved(), f.configuration)
   }
