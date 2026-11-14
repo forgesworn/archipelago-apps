@@ -136,13 +136,14 @@ Check for an earlier migration:
 
 ```sh
 ssh "$NODE" 'test ! -e /etc/archipelago/node-migration.json || \
-  /opt/archipelago/scripts/migrate-node.py status'
+  python3 /root/archy-beta2-p4/migrate-node.py status'
 ```
 
 If a state file exists, do not delete it or start a different operation. Review
-its phase and resume only the identical reviewed command. If beta startup was
-attempted, recovery is forward-only; do not roll back to alpha or restore stale
-application data.
+its phase and resume only the identical reviewed command. If resuming an
+operation with a different staged directory, use that operation's retained
+helper instead. If beta startup was attempted, recovery is forward-only; do not
+roll back to alpha or restore stale application data.
 
 Ensure enough free space for the uncompressed coherent archive, release files
 and migration records. The reference archive was 5.16 GB and 9.8 GB was free
@@ -150,14 +151,14 @@ before promotion.
 
 ## 3. Take and verify a fresh coherent recovery set
 
-Copy and install the snapshot helper, then choose a new archive path:
+Stage the snapshot helper, then choose a new archive path. Keep using this
+staged copy: runtime promotion can replace `/opt/archipelago/scripts`.
 
 ```sh
 scp coherent-node-snapshot.py "$NODE:/root/"
-ssh "$NODE" 'install -m 700 /root/coherent-node-snapshot.py \
-  /opt/archipelago/scripts/coherent-node-snapshot.py'
+ssh "$NODE" 'chmod 700 /root/coherent-node-snapshot.py'
 SNAPSHOT=/root/archy-coherent-$(date -u +%Y%m%dT%H%M%SZ).tar
-ssh "$NODE" "/opt/archipelago/scripts/coherent-node-snapshot.py \
+ssh "$NODE" "python3 /root/coherent-node-snapshot.py \
   --output '$SNAPSHOT' --pause-budget 120"
 ```
 
@@ -229,12 +230,27 @@ both pass. Preserve the earlier recovery copies as well.
 Install the staged inputs and migration scripts on the node:
 
 ```sh
+tar -xOf frontend.tar.gz ./archipelago-runtime/scripts/kithmoot-node-ingress.py \
+  > kithmoot-node-ingress.py
 ssh "$NODE" 'test ! -e /root/archy-beta2-p4 && \
   install -d -m 700 /root/archy-beta2-p4'
-scp "$BACKEND_ASSET" frontend.tar.gz migrate-node.py migration-startup-guard.py \
-  "$NODE:/root/archy-beta2-p4/"
-ssh "$NODE" 'install -m 755 /root/archy-beta2-p4/migrate-node.py \
-  /root/archy-beta2-p4/migration-startup-guard.py /opt/archipelago/scripts/'
+scp "$BACKEND_ASSET" frontend.tar.gz kithmoot-node-ingress.py \
+  migrate-node.py migration-startup-guard.py "$NODE:/root/archy-beta2-p4/"
+ssh "$NODE" 'chmod 755 /root/archy-beta2-p4/migrate-node.py \
+  /root/archy-beta2-p4/migration-startup-guard.py'
+```
+
+For an existing KithMoot host-ingress installation, install the helper from the
+same frontend archive and check it before promotion. This keeps its bytes
+matched to the backend's embedded copy. Do not replace an active helper from a
+different release:
+
+```sh
+ssh "$NODE" 'if test -f /var/lib/archipelago-kithmoot-node-ingress/installation.json; then
+  install -m 755 /root/archy-beta2-p4/kithmoot-node-ingress.py \
+    /usr/lib/archipelago/kithmoot-node-ingress.py
+  python3 /usr/lib/archipelago/kithmoot-node-ingress.py status
+fi'
 ```
 
 Set the expected hashes from the verified downloads and record the installed
@@ -253,7 +269,7 @@ your actual installed application set.** Do not add build containers or omit an
 installed app.
 
 ```sh
-ssh "$NODE" "/opt/archipelago/scripts/migrate-node.py promote \
+ssh "$NODE" "python3 /root/archy-beta2-p4/migrate-node.py promote \
   --backend '/root/archy-beta2-p4/$BACKEND_ASSET' \
   --frontend /root/archy-beta2-p4/frontend.tar.gz \
   --backend-sha256 '$BACKEND_SHA256' \
@@ -268,6 +284,16 @@ The transaction preserves observed Quadlets, environment, command, labels,
 mounts, network/port settings, image/container IDs, recipe hashes and anonymous
 volumes. It checks all of them after both beta starts and installs a persistent
 guard against starting a mixed backend/frontend pair.
+
+For a later upgrade after a completed migration, start a new reviewed operation
+rather than rerunning the old state with different hashes. Preserve the old
+`/etc/archipelago/node-migration.json` and
+`/var/lib/archipelago/update-transactions/installed-units/` under a migration
+history directory before creating the new state. Never mix one operation's
+preserved-unit records with another's. Stop the manager first and pass
+`--manager-stopped` with the exact current backend hash. If no candidate was
+started, restore those control records if promotion fails; once candidate
+startup is attempted, keep recovery forward-only.
 
 If interrupted **before** candidate startup, its recovery restores the old code
 pair without starting alpha reconciliation. After beta startup has been

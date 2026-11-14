@@ -1,6 +1,6 @@
 # Archy beta upgrade goals and handover
 
-Updated 13 November 2026. This is the execution plan; detailed observations,
+Updated 14 November 2026. This is the execution plan; detailed observations,
 hashes and limitations remain in the [upgrade evidence](archy-beta2-upgrade.md).
 
 **Outcome:** upgrade the existing owner node to our qualified Archy
@@ -185,52 +185,73 @@ engineering once its exact candidate is ready.
 
 **Where:** the single owner node, then the existing desktop, Android and web clients.
 
-- [ ] After recovery/migration qualification and applicable approvals, agree
+- [x] After recovery/migration qualification and applicable approvals, agree
   the maintenance window and refresh live inventory, health, images and mounts.
-  Stop if the live state differs materially from the qualified baseline.
-- [ ] Take a fresh coherent recovery set using the rehearsed procedure. Keep
+  On 14 November the original alpha backend, six container IDs, images, mounts
+  and start times matched the qualified baseline before p3 promotion.
+- [x] Take a fresh coherent recovery set using the rehearsed procedure. Keep
   its encrypted off-host copy on the Mac and verify its recovery evidence
-  before activation. Preserve earlier retained recovery copies.
-- [ ] Apply only the qualified pair/runtime through the reviewed procedure.
+  before activation. Preserve earlier retained recovery copies. The initial
+  5.16-GB archive and fresh pre-p4 5.47-GB archive both passed authenticated
+  off-host readback and full isolated restore/filesystem/application checks.
+- [x] Apply only the qualified pair/runtime through the reviewed procedure.
   Preserve keys, CA/SSH identity, credentials, firewall/ingress and timer choices.
-- [ ] Verify all six actual apps: Fedimint, Wildbloom, Wildbloom Node,
-  File Browser, Spry and KithMoot Node. Check old files, identities, login,
-  pairing, room IDs/history and new message delivery without data recreation.
+  Operation `0918e6fc-41a7-4c18-a933-1c60b5db29f2` activated p3. Independent
+  verification found the older host helper rejecting beta's additive nginx
+  directives; PR58's narrow compatibility correction was published as p4 and
+  operation `8a0ebdd9-6f22-4009-a6e2-1e574b40b4f7` activated it.
+- [x] Verify all six actual apps and retained files, identity stores, room
+  IDs/history, Wildbloom blobs/sales, File Browser settings and Fedimint state
+  without data recreation. All six original container/runtime fingerprints are
+  preserved; three health checks are healthy and local app endpoints return 200.
+  Seven KithMoot rooms and 3,609 events, 17 blobs and five paid sales remain.
+  No test payment, message or room change was created by verification.
 - [ ] Keep desktop, Android and web connected to the same existing rooms for
   client acceptance. Verify TURN/TLS, certificate handling and private
   dashboard/signer restrictions; record physical evidence separately from CI.
-- [ ] If verification fails, use the tested recovery path appropriate to
+  External TURN TCP and trusted TLS pass, but physical clients, physical signer,
+  embedded visual acceptance and external app-client journeys remain open.
+- [x] If verification fails, use the tested recovery path appropriate to
   whether beta has written new state. Do not automatically restore stale data.
+  The first p4 operation stopped before candidate startup because the previous
+  operation owned the preserved units; control records were recovered without
+  restoring application data, then a new preserved operation succeeded.
 
 **Done when:** exact deployed bytes, service health, retained data and actual
 client behaviour are recorded, with no unresolved loss or access regression.
+Automated deployment checks are complete; physical client behaviour remains open.
 
 ### 6. Close delivery and clean up
 
 **Where:** PR/release records, beta worktree and task-owned test resources.
 
-- [ ] Complete the approved PR/release chain and document the supported
+- [x] Complete the approved PR/release chain and document the supported
   existing-node update procedure and any still-unqualified new-install scope.
-- [ ] Record final deployment identity, validation, recovery locations and
-  remaining physical/maintainer acceptance honestly.
-- [ ] Stop task-owned fixtures and remove task-owned scratch. Remove the beta
-  worktree only after its work is merged, clean and fully pushed. Preserve
-  named release evidence and encrypted recovery copies.
+  PR58 merged as `6358efc41ad6913bb7268b06026c7a6fc9ded45e`; the operator
+  recipe is [existing-node beta2 upgrade](existing-node-beta2-upgrade.md).
+- [x] Record final deployment identity, validation, recovery locations and
+  remaining physical/maintainer acceptance honestly. Exact p4 receipts are in
+  the [review pack](reviews/archy-beta2-20261112/README.md); private recovery
+  evidence is under `~/Backups/archy-demo-20261112/cutover-20261114*/`.
+- [x] Stop task-owned fixtures and remove task-owned scratch. The isolated VM
+  is stopped and one-off verification tools are preserved with private evidence.
+  The beta worktree remains because its pre-existing untracked dashboard capture
+  is deliberately preserved; do not commit or delete that capture. Named release
+  evidence and both encrypted recovery sets are retained.
 
 ## Next action
 
-The ForgeSworn PR53–PR55 chain is merged, and all three exact public images are
-published with verified amd64/arm64 manifest indexes. Goal 3 remains unqualified
-at authenticated distribution: the public catalogue signature is invalid, its
-entries are absent, and no authorised cosign public key or signing workflow is
-provisioned. The owner must select the cosign key holder, provision the public
-key through the reviewed path and have the private-key holder sign the immutable
-digests in the catalogue report. The release-root holder must sign the complete
-catalogue; KithMoot's private-image route still needs an explicit decision.
-Then rerun the unchanged verifier and install/start/check each app through that
-route on an isolated fresh node. The fail-closed preparer reached cosign and
-wrote no candidate without the key. Local four-app installation and real NIP-46
-signer rehearsals are not signed-registry, human-device or embedded acceptance.
-The owner can separately pass the exact UI review pack to the maintainer for ZAT
-before any core Archipelago PR acceptance. No live backup, restart, cutover or
-maintainer contact is authorised by publication.
+The live node runs the published p4 pair: backend
+`60c161b285c9458daf79528b2daeece6c06c6bdfa9b12a6f722a8e63bcbcfb4a` and
+frontend `69fc037b5650c02b2f220238fad6f0e70556c0a3a92238e7ba4025c26cc5ad49`.
+Operation `8a0ebdd9-6f22-4009-a6e2-1e574b40b4f7` is active, the NPM bridge is
+healthy and all six original applications/data sets passed independent readback.
+Both encrypted recovery sets and the named release evidence are retained. Goal 3
+remains unqualified: the owner must select the cosign key holder,
+provision the public key and have the private-key holder sign the three exact
+image digests in the catalogue report. The release-root holder must sign the
+complete catalogue; KithMoot's private-image route still needs an explicit
+decision. Then rerun the unchanged verifier and isolated signed fresh installs.
+Physical desktop/Android/web/signer acceptance and ZAT remain separate pending
+steps before any future core Archipelago submission or acceptance. No core PR
+has been created and no maintainer has been contacted.
