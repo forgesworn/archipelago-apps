@@ -233,9 +233,11 @@ Automated deployment checks are complete; physical client behaviour remains open
   remaining physical/maintainer acceptance honestly. Exact p4 receipts are in
   the [review pack](reviews/archy-beta2-20261112/README.md); private recovery
   evidence is under `~/Backups/archy-demo-20261112/cutover-20261114*/`.
-- [ ] Stop task-owned fixtures and remove task-owned scratch. Remove the beta
-  worktree only after its work is merged, clean and fully pushed. Preserve
-  named release evidence and encrypted recovery copies.
+- [x] Stop task-owned fixtures and remove task-owned scratch. The isolated VM
+  is stopped and one-off verification tools are preserved with private evidence.
+  The beta worktree remains because its pre-existing untracked dashboard capture
+  is deliberately preserved; do not commit or delete that capture. Named release
+  evidence and both encrypted recovery sets are retained.
 
 ## Next action
 
@@ -244,8 +246,8 @@ The live node runs the published p4 pair: backend
 frontend `69fc037b5650c02b2f220238fad6f0e70556c0a3a92238e7ba4025c26cc5ad49`.
 Operation `8a0ebdd9-6f22-4009-a6e2-1e574b40b4f7` is active, the NPM bridge is
 healthy and all six original applications/data sets passed independent readback.
-Finish the small documentation/cleanup PR and retain both encrypted recovery
-sets. Goal 3 remains unqualified: the owner must select the cosign key holder,
+Both encrypted recovery sets and the named release evidence are retained. Goal 3
+remains unqualified: the owner must select the cosign key holder,
 provision the public key and have the private-key holder sign the three exact
 image digests in the catalogue report. The release-root holder must sign the
 complete catalogue; KithMoot's private-image route still needs an explicit
