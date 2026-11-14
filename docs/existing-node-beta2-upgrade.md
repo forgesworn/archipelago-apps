@@ -136,13 +136,14 @@ Check for an earlier migration:
 
 ```sh
 ssh "$NODE" 'test ! -e /etc/archipelago/node-migration.json || \
-  /opt/archipelago/scripts/migrate-node.py status'
+  python3 /root/archy-beta2-p4/migrate-node.py status'
 ```
 
 If a state file exists, do not delete it or start a different operation. Review
-its phase and resume only the identical reviewed command. If beta startup was
-attempted, recovery is forward-only; do not roll back to alpha or restore stale
-application data.
+its phase and resume only the identical reviewed command. If resuming an
+operation with a different staged directory, use that operation's retained
+helper instead. If beta startup was attempted, recovery is forward-only; do not
+roll back to alpha or restore stale application data.
 
 Ensure enough free space for the uncompressed coherent archive, release files
 and migration records. The reference archive was 5.16 GB and 9.8 GB was free
@@ -150,14 +151,14 @@ before promotion.
 
 ## 3. Take and verify a fresh coherent recovery set
 
-Copy and install the snapshot helper, then choose a new archive path:
+Stage the snapshot helper, then choose a new archive path. Keep using this
+staged copy: runtime promotion can replace `/opt/archipelago/scripts`.
 
 ```sh
 scp coherent-node-snapshot.py "$NODE:/root/"
-ssh "$NODE" 'install -m 700 /root/coherent-node-snapshot.py \
-  /opt/archipelago/scripts/coherent-node-snapshot.py'
+ssh "$NODE" 'chmod 700 /root/coherent-node-snapshot.py'
 SNAPSHOT=/root/archy-coherent-$(date -u +%Y%m%dT%H%M%SZ).tar
-ssh "$NODE" "/opt/archipelago/scripts/coherent-node-snapshot.py \
+ssh "$NODE" "python3 /root/coherent-node-snapshot.py \
   --output '$SNAPSHOT' --pause-budget 120"
 ```
 
@@ -233,8 +234,8 @@ ssh "$NODE" 'test ! -e /root/archy-beta2-p4 && \
   install -d -m 700 /root/archy-beta2-p4'
 scp "$BACKEND_ASSET" frontend.tar.gz migrate-node.py migration-startup-guard.py \
   "$NODE:/root/archy-beta2-p4/"
-ssh "$NODE" 'install -m 755 /root/archy-beta2-p4/migrate-node.py \
-  /root/archy-beta2-p4/migration-startup-guard.py /opt/archipelago/scripts/'
+ssh "$NODE" 'chmod 755 /root/archy-beta2-p4/migrate-node.py \
+  /root/archy-beta2-p4/migration-startup-guard.py'
 ```
 
 Set the expected hashes from the verified downloads and record the installed
@@ -253,7 +254,7 @@ your actual installed application set.** Do not add build containers or omit an
 installed app.
 
 ```sh
-ssh "$NODE" "/opt/archipelago/scripts/migrate-node.py promote \
+ssh "$NODE" "python3 /root/archy-beta2-p4/migrate-node.py promote \
   --backend '/root/archy-beta2-p4/$BACKEND_ASSET' \
   --frontend /root/archy-beta2-p4/frontend.tar.gz \
   --backend-sha256 '$BACKEND_SHA256' \
