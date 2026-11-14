@@ -241,12 +241,14 @@ Automated deployment checks are complete; physical client behaviour remains open
 
 ## Next action
 
-The live node runs the published p4 pair: backend
-`60c161b285c9458daf79528b2daeece6c06c6bdfa9b12a6f722a8e63bcbcfb4a` and
-frontend `69fc037b5650c02b2f220238fad6f0e70556c0a3a92238e7ba4025c26cc5ad49`.
-Operation `8a0ebdd9-6f22-4009-a6e2-1e574b40b4f7` is active, the NPM bridge is
+The live node runs the published p6 pair: backend
+`e298ab2075896d85be82dd428ed0ce75f97f6406859b809e36e06ecb50e52ccf` and
+frontend `8d421246749636cbd5e4149ccdb448d8b5f8ae0b9ea159204bfeda45d985488c`.
+Operation `e319cb79-1725-478f-9a4b-570a2aff3af4` is active, the NPM bridge is
 healthy and all six original applications/data sets passed independent readback.
-Both encrypted recovery sets and the named release evidence are retained. Goal 3
+The real Wildbloom ledger and legacy completed refund render in Chrome while
+Apply remains unavailable for the externally managed container. All three
+encrypted recovery sets and the named release evidence are retained. Goal 3
 remains unqualified: the owner must select the cosign key holder,
 provision the public key and have the private-key holder sign the three exact
 image digests in the catalogue report. The release-root holder must sign the

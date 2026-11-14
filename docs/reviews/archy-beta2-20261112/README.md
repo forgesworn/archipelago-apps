@@ -83,6 +83,38 @@ trusted TLS pass. See the [live verification receipt](live-p4-verification.json)
 Physical clients, physical signer, embedded visual acceptance and ZAT remain
 pending; automated deployment evidence does not replace them.
 
+**Patch-level-6 and live acceptance, 14 November:** PR63 merged as
+`0951aa70855a11df681d84c3309b9322391abfe5`; exact assembled source is
+`f3b7c0d0c58df6f772b6ce26cd529970eb072e8d`. Patch 38 separates external
+Wildbloom sales/capacity reads from packaged apply/restart authority. Patch 39
+accepts the early completed checkout-refund shape only when it matches the
+original quote and has valid settlement evidence; partial records remain rejected.
+The [published backend p6](https://github.com/forgesworn/archipelago-apps/releases/tag/backend-v2.1.0-beta.2-p6)
+contains x86-64 `e298ab2075896d85be82dd428ed0ce75f97f6406859b809e36e06ecb50e52ccf`
+and ARM64 `7dcbeb488fa4fe6030f0bf972431b63d245226f4a1d4ce0cc7312e609ab59fd8`.
+The [published frontend p6](https://github.com/forgesworn/archipelago-apps/releases/tag/frontend-v2.1.0-beta.2-p6)
+has SHA-256 `8d421246749636cbd5e4149ccdb448d8b5f8ae0b9ea159204bfeda45d985488c`.
+Public downloads are byte-identical to the reviewed CI candidates. Backend input
+receipt `bf35ce5c6723667e220e46a458a7e4fa6b9e2f795f0ffcaa05b742cbddb35f45`;
+frontend input receipt `597b931e95f740f0a3b0996d0ef5c4cc6e31006531de442c5a4e8e26c3574ace`.
+No UI source, styling, route or text changed; the affected screens remain
+Storage & selling, Sales & customers and refund recording. This pair supersedes
+p4 and p5 for exact-candidate review.
+
+Live operation `e319cb79-1725-478f-9a4b-570a2aff3af4` is active on
+`demo.forgesworn.dev`. The fresh pre-p6 recovery set passed authenticated
+off-host readback, 12 SQLite checks and isolated restore of all 105,812 archived
+entries with zero unexpected paths. All six app fingerprints and retained data
+passed independent post-migration checks: 10 rooms with 3,680 events at read
+time, 17 blobs and five paid sales. Chrome returned seven orders, two paid orders
+and one retained customer, displayed real capacity and kept Apply unavailable
+for the externally managed node. The early refunded order rendered its matched
+settlement evidence on desktop and 390px mobile layouts with no horizontal
+overflow. No payment, message, room change or refund was submitted. See the
+[live p6 verification receipt](live-p6-verification.json). Live customer captures
+are retained privately, not published in this pack. Physical signer/client
+acceptance and ZAT remain pending.
+
 **Linked integration evidence, 13 November:** a real `nak` NIP-46 signer and
 loopback relay passed linked identity creation, secret-free export,
 fresh-authorised event signing, login-signer enrolment and signer login on the
