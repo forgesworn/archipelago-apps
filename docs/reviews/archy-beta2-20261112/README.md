@@ -45,8 +45,12 @@ are byte-identical. Native ARM64 backend run
 passed and produced `.cache/beta2-ui-release-backend-p3/archipelago-arm64`,
 SHA-256 `ef2917fd030548fa1b0492f3694042e892480ed8dea472f99ff2ddd35c41dad3`.
 The downloaded hash matches its receipt and the file is an AArch64 Linux
-executable. The final patch-level-3 x86-64 release hash must still be recorded
-from its passing CI run. Multi-platform image run
+executable. The [published frontend release](https://github.com/forgesworn/archipelago-apps/releases/tag/frontend-v2.1.0-beta.2-p3)
+is byte-identical to the archive above. The [published backend release](https://github.com/forgesworn/archipelago-apps/releases/tag/backend-v2.1.0-beta.2-p3)
+contains the same ARM64 binary and x86-64 `archipelago`, SHA-256
+`642fab8ebb78d8a7446f817cf5018e06ce0890f4c55dfb78d4451168df4e62ef`.
+Downloaded release hashes, architectures and input receipts all match.
+Multi-platform image run
 [43525691004](https://github.com/forgesworn/archipelago-apps/actions/runs/43525691004)
 passed native Wildbloom and Wildbloom Node build/smoke jobs on amd64 and arm64.
 These release changes add no new UI flow; final approval must still identify the
