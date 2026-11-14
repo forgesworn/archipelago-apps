@@ -1,0 +1,189 @@
+From 3afa18524ae212eb9b1945a95faf7d66dc0308b5 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 14:01:01 +0000
+Subject: [PATCH] Read external Wildbloom sales without apply access
+
+---
+ core/archipelago/src/api/rpc/wildbloom.rs     | 36 +++++++++-
+ .../src/container/prod_orchestrator.rs        | 66 +++++++++++++++++++
+ core/archipelago/src/container/traits.rs      |  6 ++
+ 3 files changed, 105 insertions(+), 3 deletions(-)
+
+diff --git a/core/archipelago/src/api/rpc/wildbloom.rs b/core/archipelago/src/api/rpc/wildbloom.rs
+index 1258741..ecb100d 100644
+--- a/core/archipelago/src/api/rpc/wildbloom.rs
++++ b/core/archipelago/src/api/rpc/wildbloom.rs
+@@ -207,7 +207,7 @@ impl RpcHandler {
+             .orchestrator
+             .as_ref()
+             .context("Wildbloom container management is unavailable")?
+-            .wildbloom_settings_root()
++            .wildbloom_read_root()
+             .await?;
+         // Synchronous SQLite reads are bounded and never run on a Tokio worker.
+         // No ledger opener, schema migration, issuer transport or daemon restart.
+@@ -224,13 +224,17 @@ impl RpcHandler {
+         let record = storage::load(&self.config.data_dir)?;
+         let runtime = runtime().await.ok();
+         let root = match &self.orchestrator {
+-            Some(o) => o.wildbloom_settings_root().await.ok(),
++            Some(o) => o.wildbloom_read_root().await.ok(),
+             None => None,
+         };
+         let disk = match &root {
+             Some(root) => disk(root).await.ok(),
+             None => None,
+         };
++        let apply_root = match &self.orchestrator {
++            Some(o) => o.wildbloom_settings_root().await.ok(),
++            None => None,
++        };
+         let mut defaults =
+             Settings::defaults(runtime.as_ref().map(|r| r.quota_bytes).unwrap_or(200 * GIB));
+         if let Some(r) = &runtime {
+@@ -260,7 +264,7 @@ impl RpcHandler {
+         Ok(
+             json!({"revision": record.revision, "settings": settings, "active": record.active,
+             "has_draft": record.draft.is_some(), "applied": applied, "runtime": runtime, "external_configuration": external,
+-            "can_apply": root.is_some() && disk.is_some() && !external && self.config.public_host.is_some()
++            "can_apply": apply_root.is_some() && disk.is_some() && !external && self.config.public_host.is_some()
+                 && runtime.as_ref().is_some_and(|r| storage::compatible_node_image(&r.image)),
+             "issuer_choices": storage::issuer_choices(),
+             "origin": self.config.public_host.as_ref().map(|h| format!("https://{h}:3742")),
+@@ -450,6 +454,32 @@ mod tests {
+         headers.remove("origin");
+         assert!(origin_allowed(&headers, false)); // Authenticated CLI still needs CSRF.
+     }
++    #[test]
++    fn external_wildbloom_root_requires_exact_image_and_data_mount() {
++        let row = json!({
++            "Name": "/wildbloom-node",
++            "ImageName": "ghcr.io/forgesworn/wildbloom-node:0.3.5-b9a7cf4-2",
++            "Mounts": [{"Type": "bind", "Source": "/var/lib/archipelago/wildbloom-node",
++                "Destination": "/data", "RW": true}],
++        });
++        let root =
++            crate::container::prod_orchestrator::external_wildbloom_settings_root(&row).unwrap();
++        assert_eq!(root, Path::new("/var/lib/archipelago/wildbloom-node"));
++        for invalid in [
++            json!({"Name": "/other", "ImageName": row["ImageName"].clone(), "Mounts": row["Mounts"].clone()}),
++            json!({"Name": "/wildbloom-node", "ImageName": "ghcr.io/forgesworn/wildbloom-node:latest", "Mounts": row["Mounts"].clone()}),
++            json!({"Name": "/wildbloom-node", "ImageName": row["ImageName"].clone(),
++                "Mounts": [{"Type": "bind", "Source": "/var/lib/other", "Destination": "/data", "RW": true}]}),
++            json!({"Name": "/wildbloom-node", "ImageName": row["ImageName"].clone(),
++                "Mounts": [{"Type": "bind", "Source": "/var/lib/archipelago/wildbloom-node", "Destination": "/data", "RW": false}]}),
++        ] {
++            assert!(
++                crate::container::prod_orchestrator::external_wildbloom_settings_root(&invalid)
++                    .is_err()
++            );
++        }
++    }
++
+     #[test]
+     fn disk_probe_uses_available_blocks_not_total_minus_used() {
+         assert_eq!(disk_values("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/a 100 20 70 22% /data\n").unwrap(), (70*1024,100*1024));
+diff --git a/core/archipelago/src/container/prod_orchestrator.rs b/core/archipelago/src/container/prod_orchestrator.rs
+index cd28d39..ca8ba19 100644
+--- a/core/archipelago/src/container/prod_orchestrator.rs
++++ b/core/archipelago/src/container/prod_orchestrator.rs
+@@ -5538,6 +5538,62 @@ enum HookOutcome {
+     Unchanged,
+ }
+ 
++pub(crate) fn external_wildbloom_settings_root(row: &serde_json::Value) -> Result<PathBuf> {
++    anyhow::ensure!(
++        row.get("Name")
++            .and_then(|v| v.as_str())
++            .map(|name| name.trim_start_matches('/'))
++            == Some("wildbloom-node"),
++        "Wildbloom read-only settings require the existing node container"
++    );
++    let image = row
++        .get("ImageName")
++        .and_then(|v| v.as_str())
++        .context("Wildbloom image is unavailable")?;
++    anyhow::ensure!(
++        crate::settings::wildbloom_storage::compatible_node_image(image),
++        "Wildbloom read-only settings require a compatible node package"
++    );
++    let root = PathBuf::from("/var/lib/archipelago/wildbloom-node");
++    let mounted = row
++        .get("Mounts")
++        .and_then(|v| v.as_array())
++        .into_iter()
++        .flatten()
++        .any(|mount| {
++            mount.get("Type").and_then(|v| v.as_str()) == Some("bind")
++                && mount.get("Source").and_then(|v| v.as_str()) == root.to_str()
++                && mount.get("Destination").and_then(|v| v.as_str()) == Some("/data")
++                && mount.get("RW").and_then(|v| v.as_bool()) == Some(true)
++        });
++    anyhow::ensure!(
++        mounted,
++        "Wildbloom read-only settings require the packaged data mount"
++    );
++    Ok(root)
++}
++
++async fn external_wildbloom_read_root() -> Result<PathBuf> {
++    let mut command = tokio::process::Command::new("podman");
++    command
++        .args(["inspect", "wildbloom-node"])
++        .kill_on_drop(true);
++    let output =
++        tokio::time::timeout(std::time::Duration::from_secs(5), command.output()).await??;
++    anyhow::ensure!(
++        output.status.success(),
++        "Wildbloom node cannot be inspected"
++    );
++    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout)?;
++    let row = rows.first().context("Wildbloom inspection is empty")?;
++    let root = external_wildbloom_settings_root(row)?;
++    anyhow::ensure!(
++        tokio::fs::symlink_metadata(&root).await?.is_dir(),
++        "Wildbloom data directory is unavailable"
++    );
++    Ok(root)
++}
++
+ // ---------------------------------------------------------------------------
+ // Trait impl (Step 4): the shared ContainerOrchestrator surface.
+ // This IS the public RPC-facing API; there are no duplicate inherent methods.
+@@ -5940,6 +5996,16 @@ impl ContainerOrchestrator for ProdContainerOrchestrator {
+         }
+     }
+ 
++    async fn wildbloom_read_root(&self) -> Result<PathBuf> {
++        match self.wildbloom_settings_root().await {
++            Ok(root) => Ok(root),
++            Err(error) if error.to_string().contains("unknown app_id: wildbloom-node") => {
++                external_wildbloom_read_root().await
++            }
++            Err(error) => Err(error),
++        }
++    }
++
+     async fn wildbloom_settings_root(&self) -> Result<PathBuf> {
+         let lm = self.loaded("wildbloom-node").await?;
+         anyhow::ensure!(
+diff --git a/core/archipelago/src/container/traits.rs b/core/archipelago/src/container/traits.rs
+index 6a6c9b5..6a40314 100644
+--- a/core/archipelago/src/container/traits.rs
++++ b/core/archipelago/src/container/traits.rs
+@@ -74,6 +74,12 @@ pub trait ContainerOrchestrator: Send + Sync {
+         self.validate_start(app_id).await
+     }
+ 
++    /// Read-only data root for sales and capacity views. Production also admits
++    /// the exact externally managed Wildbloom container, without apply/restart rights.
++    async fn wildbloom_read_root(&self) -> Result<std::path::PathBuf> {
++        self.wildbloom_settings_root().await
++    }
++
+     /// Private data root for the explicitly supported Wildbloom package.
+     /// Refuses other runtimes instead of claiming a plain restart applies env.
+     async fn wildbloom_settings_root(&self) -> Result<std::path::PathBuf> {
+-- 
+2.39.5 (Apple Git-154)
+
