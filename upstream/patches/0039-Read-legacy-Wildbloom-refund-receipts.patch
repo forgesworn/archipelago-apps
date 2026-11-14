@@ -1,0 +1,91 @@
+From 0958901340649507bd9be530a6d1c913dc3e17f1 Mon Sep 17 00:00:00 2001
+From: TheCryptoDonkey <TheCryptoDonkey@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 16:41:57 +0000
+Subject: [PATCH] Read legacy Wildbloom refund receipts
+
+---
+ .../src/settings/wildbloom_sales.rs           | 46 +++++++++++++++----
+ 1 file changed, 38 insertions(+), 8 deletions(-)
+
+diff --git a/core/archipelago/src/settings/wildbloom_sales.rs b/core/archipelago/src/settings/wildbloom_sales.rs
+index 6e9043a..93eb186 100644
+--- a/core/archipelago/src/settings/wildbloom_sales.rs
++++ b/core/archipelago/src/settings/wildbloom_sales.rs
+@@ -146,8 +146,8 @@ struct Receipt {
+ }
+ #[derive(Deserialize)]
+ struct CheckoutRefund {
+-    status: String,
+-    amount_msat: u64,
++    status: Option<String>,
++    amount_msat: Option<u64>,
+     payment_hash: String,
+     refunded_at: Option<u64>,
+ }
+@@ -327,20 +327,25 @@ fn read_at(root: &Path, expected: bool, request: &PageRequest, now: u64) -> Resu
+             .transpose()?;
+         let automatic_refund = automatic_refund
+             .map(|refund| {
++                // Early checkout v2 completed receipts omitted duplicated status/amount.
++                let legacy = refund.status.is_none() && refund.amount_msat.is_none();
++                let status = refund.status.as_deref().unwrap_or("completed");
++                let amount_msat = refund.amount_msat.unwrap_or(quote.offer.price_msat);
+                 ensure!(
+-                    ["pending", "completed"].contains(&refund.status.as_str())
+-                        && refund.amount_msat == quote.offer.price_msat
++                    (legacy || (refund.status.is_some() && refund.amount_msat.is_some()))
++                        && ["pending", "completed"].contains(&status)
++                        && amount_msat == quote.offer.price_msat
+                         && refund.payment_hash.len() == 64
+                         && refund.payment_hash.bytes().all(|b| b.is_ascii_hexdigit())
+-                        && ((refund.status == "completed") == refund.refunded_at.is_some())
+-                        && ((state == "refunded") == (refund.status == "completed")),
++                        && ((status == "completed") == refund.refunded_at.is_some())
++                        && ((state == "refunded") == (status == "completed")),
+                     "Invalid automatic refund"
+                 );
+                 if let Some(at) = refund.refunded_at {
+                     safe(at)?;
+                 }
+-                Ok::<_, anyhow::Error>(json!({"source":"automatic","status":refund.status,
+-                    "amount_msat":refund.amount_msat,"payment_hash":refund.payment_hash,
++                Ok::<_, anyhow::Error>(json!({"source":"automatic","status":status,
++                    "amount_msat":amount_msat,"payment_hash":refund.payment_hash,
+                     "recorded_at":refund.refunded_at}))
+             })
+             .transpose()?;
+@@ -596,6 +601,31 @@ mod tests {
+         assert_eq!(completed["orders"][0]["refund"]["recorded_at"], 150);
+         assert_eq!(completed["summary"]["needs_attention"], 0);
+         assert_eq!(completed["summary"]["paid_orders"], 0);
++        f.ledger
++            .execute(
++                "UPDATE orders SET refund=?1 WHERE id='automatic'",
++                [json!({
++                    "destination":"customer@example.com","invoice":"never-project-this",
++                    "payment_hash":"cd".repeat(32),"refunded_at":175
++                })
++                .to_string()],
++            )
++            .unwrap();
++        let legacy = f.read(PageRequest::default(), 200);
++        assert_eq!(legacy["orders"][0]["refund"]["status"], "completed");
++        assert_eq!(legacy["orders"][0]["refund"]["amount_msat"], 500000);
++        assert_eq!(legacy["orders"][0]["refund"]["recorded_at"], 175);
++        assert!(!legacy.to_string().contains("never-project-this"));
++        f.ledger
++            .execute(
++                "UPDATE orders SET refund=?1 WHERE id='automatic'",
++                [
++                    json!({"status":"completed","payment_hash":"cd".repeat(32),"refunded_at":175})
++                        .to_string(),
++                ],
++            )
++            .unwrap();
++        assert!(read_at(f.root.path(), true, &PageRequest::default(), 200).is_err());
+     }
+     #[test]
+     fn sales_reject_symlinks_and_non_private_databases() {
+-- 
+2.39.5 (Apple Git-154)
+
