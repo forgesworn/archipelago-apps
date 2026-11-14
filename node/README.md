@@ -106,8 +106,9 @@ selection, TLS, tracked firewall changes and private per-device profiles.
    This installer is for a fresh host only. It refuses existing Archipelago
    state before making changes. Do not re-run it to upgrade: it resets the
    firewall and regenerates SSH host keys. For an existing server, retain its
-   data, configuration and host identity and use a separately qualified upgrade
-   with a verified recovery path. See the [beta compatibility assessment](../docs/archy-beta2-upgrade.md).
+   data, configuration and host identity and use the [guarded beta2 upgrade
+   recipe](../docs/existing-node-beta2-upgrade.md), with a verified recovery
+   path. See the [beta compatibility assessment](../docs/archy-beta2-upgrade.md).
    The installer never recursively chowns
    `/var/lib/archipelago`, where image layers and app volumes belong to
    subuid-mapped ids.
