@@ -1,7 +1,7 @@
 # Upgrade an existing ForgeSworn-patched node to Archy 2.1.0-beta.2
 
 This is the operator procedure for an **existing ForgeSworn-patched Archy node**
-moving to the reviewed `2.1.0-beta.2` **patch-level-5** backend, frontend and
+moving to the reviewed `2.1.0-beta.2` **patch-level-6** backend, frontend and
 runtime. It preserves the installed applications, identities, wallet state,
 files, room history, images, mounts and host configuration.
 
@@ -43,13 +43,13 @@ SSH administrator with root access on the node. Replace `root@192.0.2.10`.
 ```sh
 export NODE=root@192.0.2.10
 export ARCHY_RELEASE=v2.1.0-beta.2
-export PATCH_LEVEL=5
+export PATCH_LEVEL=6
 export ARCHY_APPS_REF=backend-${ARCHY_RELEASE}-p${PATCH_LEVEL}
 export RAW=https://raw.githubusercontent.com/forgesworn/archipelago-apps/${ARCHY_APPS_REF}
 export RELEASE=https://github.com/forgesworn/archipelago-apps/releases/download
 umask 077
-mkdir -m 700 archy-beta2-p5
-cd archy-beta2-p5
+mkdir -m 700 archy-beta2-p6
+cd archy-beta2-p6
 ```
 
 Check the node architecture and select the matching native backend:
@@ -136,7 +136,7 @@ Check for an earlier migration:
 
 ```sh
 ssh "$NODE" 'test ! -e /etc/archipelago/node-migration.json || \
-  python3 /root/archy-beta2-p5/migrate-node.py status'
+  python3 /root/archy-beta2-p6/migrate-node.py status'
 ```
 
 If a state file exists, do not delete it or start a different operation. Review
@@ -232,12 +232,12 @@ Install the staged inputs and migration scripts on the node:
 ```sh
 tar -xOf frontend.tar.gz ./archipelago-runtime/scripts/kithmoot-node-ingress.py \
   > kithmoot-node-ingress.py
-ssh "$NODE" 'test ! -e /root/archy-beta2-p5 && \
-  install -d -m 700 /root/archy-beta2-p5'
+ssh "$NODE" 'test ! -e /root/archy-beta2-p6 && \
+  install -d -m 700 /root/archy-beta2-p6'
 scp "$BACKEND_ASSET" frontend.tar.gz kithmoot-node-ingress.py \
-  migrate-node.py migration-startup-guard.py "$NODE:/root/archy-beta2-p5/"
-ssh "$NODE" 'chmod 755 /root/archy-beta2-p5/migrate-node.py \
-  /root/archy-beta2-p5/migration-startup-guard.py'
+  migrate-node.py migration-startup-guard.py "$NODE:/root/archy-beta2-p6/"
+ssh "$NODE" 'chmod 755 /root/archy-beta2-p6/migrate-node.py \
+  /root/archy-beta2-p6/migration-startup-guard.py'
 ```
 
 For an existing KithMoot host-ingress installation, install the helper from the
@@ -247,7 +247,7 @@ different release:
 
 ```sh
 ssh "$NODE" 'if test -f /var/lib/archipelago-kithmoot-node-ingress/installation.json; then
-  install -m 755 /root/archy-beta2-p5/kithmoot-node-ingress.py \
+  install -m 755 /root/archy-beta2-p6/kithmoot-node-ingress.py \
     /usr/lib/archipelago/kithmoot-node-ingress.py
   python3 /usr/lib/archipelago/kithmoot-node-ingress.py status
 fi'
@@ -269,9 +269,9 @@ your actual installed application set.** Do not add build containers or omit an
 installed app.
 
 ```sh
-ssh "$NODE" "python3 /root/archy-beta2-p5/migrate-node.py promote \
-  --backend '/root/archy-beta2-p5/$BACKEND_ASSET' \
-  --frontend /root/archy-beta2-p5/frontend.tar.gz \
+ssh "$NODE" "python3 /root/archy-beta2-p6/migrate-node.py promote \
+  --backend '/root/archy-beta2-p6/$BACKEND_ASSET' \
+  --frontend /root/archy-beta2-p6/frontend.tar.gz \
   --backend-sha256 '$BACKEND_SHA256' \
   --old-backend-sha256 '$OLD_BACKEND_SHA256' \
   --frontend-sha256 '$FRONTEND_SHA256' \
@@ -325,12 +325,13 @@ cd / && runuser -u archipelago -- env \
 
 Expect health `status=ok`, `crash_recovery_complete=true` and version
 `2.1.0-beta.2-dev`. The NPM service is a timer-driven oneshot, so `inactive`
-after a successful run is normal; `failed` is not. With patch level 5, the
+after a successful run is normal; `failed` is not. With patch level 6, the
 KithMoot host-ingress status accepts only the reviewed beta dashboard additions;
 other configuration drift still refuses maintenance. For the exact externally
 managed Wildbloom Node, Storage & selling and Sales & customers can read real
-capacity and retained sales; Apply remains unavailable without the packaged
-Quadlet, and no lifecycle or installation permission is added.
+capacity and retained sales, including early completed checkout-refund receipts;
+Apply remains unavailable without the packaged Quadlet, and no lifecycle or
+installation permission is added.
 
 Compare every original application ID, image ID/name, mount and start time with
 the inventory. Confirm all three health-checked apps are healthy where
