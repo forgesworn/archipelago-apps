@@ -1,0 +1,153 @@
+From 359a65220bbb2b0f8ab294e7cfd379c6589dd394 Mon Sep 17 00:00:00 2001
+From: ForgeSworn <ci@invalid>
+Date: Sun, 15 Nov 2026 09:49:54 +0000
+Subject: [PATCH] Fix native app launch preflight and My Apps tabs
+
+---
+ neode-ui/src/stores/appLauncher.ts                 |  4 ++++
+ neode-ui/src/views/Apps.vue                        | 14 ++++++++------
+ .../views/appSession/generatedAppSessionConfig.ts  |  4 ++++
+ neode-ui/src/views/apps/AppIconGrid.vue            |  8 +++++---
+ .../src/views/apps/__tests__/AppIconGrid.test.ts   | 11 +++++++++++
+ .../src/views/apps/__tests__/appsConfig.test.ts    |  8 ++++++++
+ 6 files changed, 40 insertions(+), 9 deletions(-)
+
+diff --git a/neode-ui/src/stores/appLauncher.ts b/neode-ui/src/stores/appLauncher.ts
+index 4578137..68f6a2d 100644
+--- a/neode-ui/src/stores/appLauncher.ts
++++ b/neode-ui/src/stores/appLauncher.ts
+@@ -99,6 +99,10 @@ export const CREDENTIAL_INTERSTITIAL_APPS = new Set([
+   'portainer',
+ ])
+ 
++export function appNeedsCredentialPreflight(appId: string): boolean {
++  return appId === 'qortal' || CREDENTIAL_INTERSTITIAL_APPS.has(appId)
++}
++
+ interface LaunchOptions {
+   /** Basic offline launch grants no optional media integration. */
+   basicFrameOnly?: boolean
+diff --git a/neode-ui/src/views/Apps.vue b/neode-ui/src/views/Apps.vue
+index 866f76a..404546a 100644
+--- a/neode-ui/src/views/Apps.vue
++++ b/neode-ui/src/views/Apps.vue
+@@ -385,7 +385,7 @@ import { useRouter, useRoute, RouterLink } from 'vue-router'
+ import { useI18n } from 'vue-i18n'
+ import { useAppStore } from '@/stores/app'
+ import { useServerStore } from '@/stores/server'
+-import { useAppLauncherStore } from '@/stores/appLauncher'
++import { appNeedsCredentialPreflight, useAppLauncherStore } from '@/stores/appLauncher'
+ import { rpcClient } from '@/api/rpc-client'
+ import { fetchPackageCredentials } from '@/api/packageCredentials'
+ import { type AppCredential, type AppCredentialsResponse, type PackageDataEntry, type PackageState } from '@/types/api'
+@@ -658,8 +658,10 @@ function goToApp(id: string) {
+ }
+ 
+ async function launchApp(id: string) {
+-  const shown = await maybeShowCredentialsBeforeLaunch(id)
+-  if (shown) return
++  if (appNeedsCredentialPreflight(id)) {
++    const shown = await maybeShowCredentialsBeforeLaunch(id)
++    if (shown) return
++  }
+   launchAppNow(id, true)
+ }
+ 
+@@ -690,9 +692,9 @@ function launchAppNow(id: string, credentialsChecked = false) {
+   useAppLauncherStore().openSession(id, { skipCredentialPrompt: credentialsChecked })
+ }
+ 
+-// Per-app credentials memo: the pre-launch RPC could hold an Apps-tab launch
+-// hostage for its full 5s timeout over the mesh (home-card launches skip this
+-// gate entirely, which is why they always felt instant). First launch waits at
++// Per-app credentials memo for the managed interstitials and Qortal: their
++// pre-launch RPC could hold an Apps-tab launch hostage for its full 5s timeout
++// over the mesh. First launch waits at
+ // most LAUNCH_CRED_BUDGET_MS; the RPC keeps running in the background and its
+ // answer is memoized, so every later launch of that app resolves instantly.
+ const LAUNCH_CRED_BUDGET_MS = 1200
+diff --git a/neode-ui/src/views/appSession/generatedAppSessionConfig.ts b/neode-ui/src/views/appSession/generatedAppSessionConfig.ts
+index 0465977..abc6b0a 100644
+--- a/neode-ui/src/views/appSession/generatedAppSessionConfig.ts
++++ b/neode-ui/src/views/appSession/generatedAppSessionConfig.ts
+@@ -92,6 +92,10 @@ export const GENERATED_APP_TITLES: Record<string, string> = {
+   "jellyfin": "Jellyfin",
+   "justworks": "Just Works",
+   "kithmoot": "KithMoot",
++  "kithmoot-node": "KithMoot Node",
++  "spry": "Spry",
++  "wildbloom": "Wildbloom",
++  "wildbloom-node": "Wildbloom Node",
+   "llama-server": "Llama Inference Runtime",
+   "lnd": "LND",
+   "lnd-ui": "LND UI",
+diff --git a/neode-ui/src/views/apps/AppIconGrid.vue b/neode-ui/src/views/apps/AppIconGrid.vue
+index 59df6f5..ba3fc5f 100644
+--- a/neode-ui/src/views/apps/AppIconGrid.vue
++++ b/neode-ui/src/views/apps/AppIconGrid.vue
+@@ -121,7 +121,7 @@
+ import { computed, ref } from 'vue'
+ import BaseModal from '@/components/BaseModal.vue'
+ import { useServerStore } from '@/stores/server'
+-import { useAppLauncherStore } from '@/stores/appLauncher'
++import { appNeedsCredentialPreflight, useAppLauncherStore } from '@/stores/appLauncher'
+ import type { AppCredential, PackageDataEntry } from '@/types/api'
+ import { fetchPackageCredentials } from '@/api/packageCredentials'
+ import { resolveAppUrl } from '@/views/appSession/appSessionConfig'
+@@ -190,8 +190,10 @@ async function handleTap(id: string, pkg: PackageDataEntry) {
+     return
+   }
+   if (canLaunch(pkg)) {
+-    const shown = await maybeShowCredentialsBeforeLaunch(id, pkg)
+-    if (shown) return
++    if (appNeedsCredentialPreflight(id)) {
++      const shown = await maybeShowCredentialsBeforeLaunch(id, pkg)
++      if (shown) return
++    }
+     launchNow(id, pkg, true)
+   } else {
+     emit('goToApp', id)
+diff --git a/neode-ui/src/views/apps/__tests__/AppIconGrid.test.ts b/neode-ui/src/views/apps/__tests__/AppIconGrid.test.ts
+index a752c6f..6e98493 100644
+--- a/neode-ui/src/views/apps/__tests__/AppIconGrid.test.ts
++++ b/neode-ui/src/views/apps/__tests__/AppIconGrid.test.ts
+@@ -109,6 +109,17 @@ describe('AppIconGrid', () => {
+     wrapper.unmount()
+   })
+ 
++  it('launches native Nostr apps without a credential-export preflight', async () => {
++    const wrapper = mount(AppIconGrid, {
++      props: { apps: [['kithmoot-node', makePkg('kithmoot-node')]] },
++      global: { plugins: [pinia], stubs: { teleport: true } },
++    })
++    await wrapper.get('.app-icon-item').trigger('click')
++    await flushPromises()
++    expect(fetchPackageCredentials).not.toHaveBeenCalled()
++    expect(useAppLauncherStore(pinia).panelAppId).toBe('kithmoot-node')
++  })
++
+   it('still shows an actual server-provided credential card before launch', async () => {
+     vi.mocked(fetchPackageCredentials).mockResolvedValue({
+       title: 'Managed File Browser credentials',
+diff --git a/neode-ui/src/views/apps/__tests__/appsConfig.test.ts b/neode-ui/src/views/apps/__tests__/appsConfig.test.ts
+index 3d4a87b..75bd69c 100644
+--- a/neode-ui/src/views/apps/__tests__/appsConfig.test.ts
++++ b/neode-ui/src/views/apps/__tests__/appsConfig.test.ts
+@@ -138,6 +138,14 @@ describe('appsConfig service filtering', () => {
+     expect(filterEntriesForTab([['some-ui-app', uiApp]], 'services', 'frontend')).toEqual([['some-ui-app', uiApp]])
+   })
+ 
++  it.each(['kithmoot-node', 'spry', 'wildbloom', 'wildbloom-node'])('keeps %s in My Apps with a declared UI', (id) => {
++    const pkg = makePkg(id, id, 'other')
++    ;(pkg.manifest as unknown as Record<string, unknown>).interfaces = { main: { ui: 'true' } }
++    expect(isWebsitePackage(id, pkg)).toBe(false)
++    expect(filterEntriesForTab([[id, pkg]], 'apps', 'all')).toEqual([[id, pkg]])
++    expect(filterEntriesForTab([[id, pkg]], 'services', 'all')).toEqual([])
++  })
++
+   it('keeps GitWorkshop in My Apps while installing metadata is minimal', () => {
+     const installing = makePkg('archipelago-source', 'GitWorkshop', 'development')
+     installing.state = PackageState.Installing
+-- 
+2.39.5 (Apple Git-154)
+

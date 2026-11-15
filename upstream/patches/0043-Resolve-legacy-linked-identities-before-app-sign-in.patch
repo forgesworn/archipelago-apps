@@ -1,0 +1,84 @@
+From 613479a7bbda317e38609f7bcc7965bd7f54f5e1 Mon Sep 17 00:00:00 2001
+From: ForgeSworn <ci@invalid>
+Date: Sun, 15 Nov 2026 10:50:45 +0000
+Subject: [PATCH] Resolve legacy linked identities before app sign-in
+
+---
+ .../src/components/AppLauncherOverlay.vue     | 17 ++++++++++++++---
+ .../AppLauncherIndependentReview.test.ts      | 19 +++++++++++++++++++
+ 2 files changed, 33 insertions(+), 3 deletions(-)
+
+diff --git a/neode-ui/src/components/AppLauncherOverlay.vue b/neode-ui/src/components/AppLauncherOverlay.vue
+index e82676f..b44c6ae 100644
+--- a/neode-ui/src/components/AppLauncherOverlay.vue
++++ b/neode-ui/src/components/AppLauncherOverlay.vue
+@@ -340,22 +340,33 @@ function cancelIdentitySelection() {
+   iframeRef.value?.contentWindow?.postMessage({ type: 'archipelago:identity-cancelled' }, '*')
+ }
+ 
+-function usesNativeNostrIdentity(identity: SelectedIdentity): boolean {
+-  if (identity.origin !== 'linked') return false
++function isNativeNostrApp(): boolean {
+   if (store.panelAppId) return NATIVE_NOSTR_IDENTITY_APPS.has(store.panelAppId)
+   const title = store.title.toLowerCase()
+   return title.includes('wildbloom') || title.includes('spry') || title.includes('kithmoot')
+ }
+ 
++async function usesNativeNostrIdentity(identity: SelectedIdentity): Promise<boolean> {
++  if (!isNativeNostrApp()) return false
++  if (!identity.origin) {
++    const resolved = await rpcClient.call<{ origin?: 'local' | 'linked' }>({
++      method: 'identity.get', params: { id: identity.id }
++    })
++    identity.origin = resolved.origin
++  }
++  return identity.origin === 'linked'
++}
++
+ /** Send a specific identity to the iframe */
+ async function sendSelectedIdentity(identity: SelectedIdentity) {
+   try {
+-    const nativeNostr = usesNativeNostrIdentity(identity)
++    const nativeNostr = await usesNativeNostrIdentity(identity)
+     const challenge = `archipelago-identity:${Date.now()}`
+     const sigRes = nativeNostr ? null : await rpcClient.call<{ signature: string }>({
+       method: 'identity.sign',
+       params: { id: identity.id, message: challenge }
+     })
++    if (store.url) storeIdentity(store.url, identity)
+     const iframe = iframeRef.value
+     if (!iframe?.contentWindow) return
+     iframe.contentWindow.postMessage({
+diff --git a/neode-ui/src/components/__tests__/AppLauncherIndependentReview.test.ts b/neode-ui/src/components/__tests__/AppLauncherIndependentReview.test.ts
+index 3d32407..21d1f71 100644
+--- a/neode-ui/src/components/__tests__/AppLauncherIndependentReview.test.ts
++++ b/neode-ui/src/components/__tests__/AppLauncherIndependentReview.test.ts
+@@ -107,6 +107,25 @@ describe('custom launcher navigation ownership', () => {
+     expect(identity).not.toHaveProperty('challenge')
+   })
+ 
++  it('resolves a legacy stored linked identity instead of requesting a password', async () => {
++    vi.mocked(rpcClient.call).mockResolvedValue({ origin: 'linked' } as never)
++    store.open({ url: 'https://node.test:3753/', title: 'KithMoot Node' })
++    await nextTick()
++    const postMessage = vi.spyOn(iframe()!.contentWindow!, 'postMessage')
++    wrapper.findComponent(NostrIdentityPicker).vm.$emit('select', {
++      id: 'legacy-linked', name: 'Linked', did: 'did:key:zLinked', pubkey: 'ed',
++      nostr_pubkey: 'aa', nostr_npub: 'npub1linked',
++    })
++    await Promise.resolve()
++    await nextTick()
++    expect(rpcClient.call).toHaveBeenCalledOnce()
++    expect(rpcClient.call).toHaveBeenCalledWith({ method: 'identity.get', params: { id: 'legacy-linked' } })
++    expect(postMessage.mock.calls[0]![0]).toMatchObject({
++      type: 'archipelago:identity', nostr_pubkey: 'aa',
++    })
++    expect(postMessage.mock.calls[0]![0]).not.toHaveProperty('signature')
++  })
++
+   it('retains the Ed25519 identity proof for a local identity', async () => {
+     vi.mocked(rpcClient.call).mockResolvedValue({ signature: 'ed-signature' } as never)
+     store.open({ url: 'https://node.test:3753/', title: 'KithMoot Node' })
+-- 
+2.39.5 (Apple Git-154)
+

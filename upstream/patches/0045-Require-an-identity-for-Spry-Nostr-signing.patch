@@ -1,0 +1,118 @@
+From b363018ec0feef063fcf39dd16842c3cef52db15 Mon Sep 17 00:00:00 2001
+From: ForgeSworn <ci@invalid>
+Date: Sun, 15 Nov 2026 12:07:57 +0000
+Subject: [PATCH] Require an identity for Spry Nostr signing
+
+---
+ .../__tests__/useAppIdentity.test.ts          |  7 +++++++
+ .../__tests__/useNostrBridge.test.ts          | 20 +++++++++++++++++++
+ .../src/views/appSession/useAppIdentity.ts    |  6 +++++-
+ .../src/views/appSession/useNostrBridge.ts    | 11 ++++++----
+ 4 files changed, 39 insertions(+), 5 deletions(-)
+
+diff --git a/neode-ui/src/views/appSession/__tests__/useAppIdentity.test.ts b/neode-ui/src/views/appSession/__tests__/useAppIdentity.test.ts
+index cb82740..78c6e6f 100644
+--- a/neode-ui/src/views/appSession/__tests__/useAppIdentity.test.ts
++++ b/neode-ui/src/views/appSession/__tests__/useAppIdentity.test.ts
+@@ -62,6 +62,13 @@ describe('useAppIdentity explicit identity selection', () => {
+     expect(postMessage.mock.calls[0]![0]).not.toHaveProperty('signature')
+   })
+ 
++  it('offers identity selection on Spry first launch', () => {
++    const showPicker = ref(false)
++    const identity = useAppIdentity(ref('spry'), ref(null), showPicker)
++    identity.onIframeLoadIdentity()
++    expect(showPicker.value).toBe(true)
++  })
++
+   it('notifies the requesting app when the chooser is cancelled', () => {
+     const postMessage = vi.fn()
+     const frame = ref({ contentWindow: { postMessage } } as unknown as HTMLIFrameElement)
+diff --git a/neode-ui/src/views/appSession/__tests__/useNostrBridge.test.ts b/neode-ui/src/views/appSession/__tests__/useNostrBridge.test.ts
+index e93578d..8e5a206 100644
+--- a/neode-ui/src/views/appSession/__tests__/useNostrBridge.test.ts
++++ b/neode-ui/src/views/appSession/__tests__/useNostrBridge.test.ts
+@@ -1,6 +1,7 @@
+ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+ import { rpcClient } from '@/api/rpc-client'
+ import { useNostrBridge } from '../useNostrBridge'
++import { consentKey, rememberConsent } from '../nostrConsent'
+ 
+ vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn() } }))
+ 
+@@ -43,6 +44,25 @@ describe('useNostrBridge consent presentation', () => {
+     expect(bridge.showConsent.value).toBe(false)
+   })
+ 
++  it('requires a selected identity instead of falling back to Spry node signing', async () => {
++    vi.clearAllMocks()
++    const source = { postMessage: vi.fn() } as unknown as Window
++    const bridge = useNostrBridge(() => null, {
++      appId: () => 'spry', appName: () => 'Spry',
++      appUrl: () => 'https://node.test:3744/', frameWindow: () => source,
++    })
++    rememberConsent(consentKey('https://node.test:3744', 'spry', 'node-default', 'signEvent'))
++    const handling = bridge.handleNostrRequest({
++      data: { type: 'nostr-request', id: 'spry-sign', method: 'signEvent', params: { event: { kind: 27235, content: '' } } },
++      source, origin: 'https://node.test:3744',
++    } as MessageEvent)
++    await handling
++    expect(rpcClient.call).not.toHaveBeenCalled()
++    expect(source.postMessage).toHaveBeenCalledWith(expect.objectContaining({
++      type: 'nostr-response', id: 'spry-sign', error: 'Choose an identity before signing',
++    }), 'https://node.test:3744')
++  })
++
+   it('accepts only the exact opaque same-origin frame and replies with wildcard target', async () => {
+     const source = { postMessage: vi.fn() } as unknown as Window
+     const other = { postMessage: vi.fn() } as unknown as Window
+diff --git a/neode-ui/src/views/appSession/useAppIdentity.ts b/neode-ui/src/views/appSession/useAppIdentity.ts
+index 098e901..672a7a4 100644
+--- a/neode-ui/src/views/appSession/useAppIdentity.ts
++++ b/neode-ui/src/views/appSession/useAppIdentity.ts
+@@ -17,8 +17,12 @@ export interface SelectedIdentity {
+   origin?: 'local' | 'linked'
+ }
+ 
++export function appSupportsIdentitySelection(id: string): boolean {
++  return ['indeedhub', 'nostrudel', 'archipelago-source', 'wildbloom', 'wildbloom-node', 'spry', 'kithmoot-node'].includes(id)
++}
++
+ function isIdentityAwareApp(id: string): boolean {
+-  return id === 'indeedhub' || id === 'nostrudel' || id === 'archipelago-source'
++  return appSupportsIdentitySelection(id)
+ }
+ 
+ export function useAppIdentity(
+diff --git a/neode-ui/src/views/appSession/useNostrBridge.ts b/neode-ui/src/views/appSession/useNostrBridge.ts
+index 58abae5..73f71d1 100644
+--- a/neode-ui/src/views/appSession/useNostrBridge.ts
++++ b/neode-ui/src/views/appSession/useNostrBridge.ts
+@@ -2,7 +2,7 @@
+ 
+ import { ref } from 'vue'
+ import { rpcClient } from '@/api/rpc-client'
+-import type { SelectedIdentity } from './useAppIdentity'
++import { appSupportsIdentitySelection, type SelectedIdentity } from './useAppIdentity'
+ import {
+   consentKey,
+   hasRememberedConsent,
+@@ -198,9 +198,12 @@ export function useNostrBridge(
+           result = res.nostr_pubkey
+         }
+       } else if (method === 'signEvent') {
+-        result = identityId
+-          ? await rpcClient.call<unknown>({ method: 'identity.nostr-sign', params: { id: identityId, event: params.event } })
+-          : await rpcClient.call<unknown>({ method: 'node.nostr-sign', params: { event: params.event } })
++        if (identityId) {
++          result = await rpcClient.call<unknown>({ method: 'identity.nostr-sign', params: { id: identityId, event: params.event } })
++        } else {
++          if (appSupportsIdentitySelection(options.appId())) throw new Error('Choose an identity before signing')
++          result = await rpcClient.call<unknown>({ method: 'node.nostr-sign', params: { event: params.event } })
++        }
+       } else if (method === 'getRelays') {
+         const configured = await rpcClient.call<{ relays: Array<{ url: string; enabled: boolean }> }>({ method: 'nostr.list-relays' })
+         result = Object.fromEntries(configured.relays.filter(relay => relay.enabled)
+-- 
+2.39.5 (Apple Git-154)
+

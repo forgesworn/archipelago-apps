@@ -115,6 +115,253 @@ overflow. No payment, message, room change or refund was submitted. See the
 are retained privately, not published in this pack. Physical signer/client
 acceptance and ZAT remain pending.
 
+**Patch-level-7 CI candidate, 15 November:** candidate commit `2a2d0d8` on
+`fix/signer-app-launch-20261115` is based on p6 commit `14c141a`.
+Patch 40 adopts current upstream's managed-app-login exemption for File Browser,
+Datum, PhotoPrism, Grafana and Portainer. It leaves Qortal, unknown apps, key
+exports, security changes and funds operations under fresh password proof. The
+runtime recipe retains Spry, Wildbloom and Wildbloom Node manifests across
+frontend updates; it does not add catalogue installation authority.
+
+Local checks: 106 Python tests and the manifest validator pass. The production
+frontend assembled at `f095d66f1e566f8f562e3231677c267800cd1849`; archive
+SHA-256 `0366459f1fa711ca64c9787ac2df91162d022e011895fd0c72b8b015482d8c02`,
+input receipt `cfbc62cd32e09cca781e45bb18a731f4a0941ec676e5d39ee095d1b896ffe854`.
+The archive's three bundled manifests match their pinned sources byte-for-byte.
+[Frontend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43686958633)
+passed its UI and browser acceptance checks and produced byte-identical bytes.
+[Backend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43686958641)
+passed 3,123 core tests, the fresh Debian host fixture, and both new managed-login
+boundary regressions. Its x86-64 backend SHA-256 is
+`0c56ec04676f7d8d70ac098693f1f6683e2cd7effed1acafd8818459075adb29`, with
+input receipt `bf80f43517c0503fb2f198d44b9ec0ae64e21757bc2b67df0bd5720aee66773f`.
+No firewall change is part of this candidate.
+
+**Live p7 deployment, 15 November:** operation
+`48d32d2d-890a-48fb-b2af-a648f67cda3b` is active on `demo.forgesworn.dev`.
+The fresh coherent archive is SHA-256
+`3e6862587110e82d1a3104df676d20ecc3feef73044b4c9d40d263827e7036f8`;
+authenticated off-host decryption matched, and a network-isolated restore
+verified all 107,304 entries with zero unexpected paths. GNU tar independently
+passed its content/xattr/ACL comparison and all 12 selected SQLite databases
+passed integrity checks on copies. The exact historical Wildbloom and Wildbloom
+Node manifests were restored before candidate preparation, preserving their
+running images and all six original container IDs. Manager and nginx health,
+crash recovery, all three local app endpoints and the startup guard pass. The
+active frontend tree is `7a6ef1df03ed1f4689caf042f20e131a50bf9249ff5e5b3b08db2c34e980c9be`.
+No firewall or application-container change was made. The trusted dashboard
+route returns HTTP 200; untrusted external callers retain the intended private
+404. Owner acceptance then confirmed that p7 did not complete signer-only app
+authentication: linked `identity.sign` still failed. The separately requested
+KithMoot **Show application credentials** operation remains intentionally
+password-protected. See the [live p7 verification receipt](live-p7-verification.json).
+
+**Patch-level-8 CI candidate, 15 November:** patch 41 addresses the failed
+linked-identity path without adding general signer support for sensitive
+reauthentication. Wildbloom, Wildbloom Node, Spry and KithMoot Node receive the
+linked public identity without an impossible Ed25519 signature, then their real
+full-event request goes to the linked signer and its verified response is the
+fresh proof. A valid session and explicit linked identity are required. Local
+identities, raw hashes, generic `identity.sign`, credential displays/exports and
+other sensitive operations retain password grants. Five focused frontend tests,
+106 Python tests, clean patch validation and the production frontend build pass.
+The local assembled source is `1acc4e98b35b025aa305a0765d43f08fbfbf6cbc`;
+CI assembled `b0e93b58dfb8c5ae13447282e3df5a7bfb57c106` with the identical
+tree `3812aa341359ec339a4fb4275faa87ac55977023`. Local frontend
+SHA-256 is `8a5ef416a7476e15e1d28ca5146b3f44cbcf0ab112d46c0a4c83e5560df601f7`,
+with input receipt `b02037f7d33a224b733bda740ed2738bce580162210aa4e1ba9bc0ab7ae7223c`.
+[Frontend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43694458729)
+passed; its exact archive is SHA-256
+`a31cbb48682180d65db7c9cac12e89579b538fbe0b37dafcd73363d0775e6a38`.
+Only the three generated source-metadata files differ from the local archive;
+all 1,279 other files are byte-identical. [Backend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43694458769)
+passed 3,124 tests, including the linked-signing regression and its local
+password-grant control, after an unrelated container-liveness test passed on
+rerun. The exact x86-64 backend SHA-256 is
+`1347052801b735ac0c80bf57f0ae79012af8d2ff07af2a5108ef3b8a7a2b8485`,
+with input receipt `d5a0481311b9a223db08ee5701f456e75458c39ed6fc6c01ada07ac67a237b11`.
+
+**Live p8 deployment, 15 November:** operation
+`1c127f4d-0dfc-4904-80aa-9bb1293e3940` is active on `demo.forgesworn.dev`.
+The fresh recovery archive is SHA-256
+`52977be81656d9ed3716c6a7769e1c9379c7e4b930d4ce661bfa80380851ba8e`;
+authenticated off-host decryption matched, and a pristine network-isolated
+restore verified all 108,806 entries with zero unexpected paths. GNU tar passed
+its content/xattr/ACL comparison and all 12 selected SQLite checks passed on
+copies. The active frontend tree is
+`0f20b293aa8be7d702832c64ddffb232ad47afa4d21cee3343510ce915c596c1`.
+Manager health, crash recovery, the trusted dashboard and all three local app
+endpoints pass; all six original container IDs, images and manifests remain.
+No firewall or application-container change was made. Physical signer acceptance
+and post-deployment captures remain pending. See the
+[live p8 verification receipt](live-p8-verification.json).
+
+**Patch-level-9 CI candidate, 15 November:** owner acceptance showed that
+the remaining ordinary-launch password was caused by both legacy Apps launchers
+preflighting `package.credentials-authorize` for every app, not only managed
+logins. Patch 42 limits that preflight to the existing managed interstitials and
+Qortal, preserving its API-key flow. KithMoot Node, Spry, Wildbloom and Wildbloom
+Node now launch directly and are included in the generated launcher-title map,
+keeping their declared UIs under My Apps rather than Web. Credential display and
+export retain fresh password proof, and the p8 backend remains compatible. All
+107 focused launcher tests, clean patch validation and the production frontend
+build pass. The assembled source is `359a65220bbb2b0f8ab294e7cfd379c6589dd394`;
+local frontend SHA-256 is `50f2a0dacac44390ef1af9a8fbc1253716412254101cb572b3d8984887d938f7`,
+with input receipt `a6ea806da1e170241c955550a00f794b1593780b8ba15f6df1dcb747257c2284`.
+[Frontend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43701574552)
+passed. Its exact source is `23a2a58e33a3b240f9b1d5c89c54f52fc436343f`;
+archive SHA-256 is `236da86fd8cfccf58992b3382de9d7a47dd9db372af4b67666cce5727846a0c3`.
+Only the three generated source-metadata files differ from local; all 1,279
+other files are byte-identical. [Full backend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43701576985)
+also passed; deployment retains the already verified p8 backend. Physical
+acceptance is pending. Review **My Apps** in both desktop and icon-grid
+modes, direct native launches, File Browser's managed-login interstitial and
+Qortal's existing credential prompt.
+
+**Live p9 deployment, 15 November:** operation
+`6d76d777-ab55-4d70-acbd-afe76a989f4e` is active on `demo.forgesworn.dev`.
+The backend remains at the verified p8 hash. The fresh recovery archive is
+SHA-256 `b2eeff905c97f339e2414f9191ded89bb1cdc0fde4e11c2c429b4169fa56880b`;
+authenticated off-host decryption matched, and a pristine network-isolated
+restore verified all 110,293 entries with zero unexpected paths. GNU tar passed
+its content/xattr/ACL comparison and all 12 selected SQLite checks passed on
+copies. The active frontend tree is
+`645d1b3f8254efddefdb68914754dfe84bc1b28fd797ed958eb7bf78226962fc`.
+Manager health, crash recovery, the trusted dashboard and all three local app
+endpoints pass; all six original container IDs, images and manifests remain.
+No firewall or application-container change was made. Physical acceptance and
+post-deployment captures remain pending. See the
+[live p9 verification receipt](live-p9-verification.json).
+
+**Patch-level-10 CI candidate, 15 November:** owner acceptance still reached
+`identity.sign` because the saved linked identity predated the `origin` field.
+Patch 43 resolves legacy selections with authenticated `identity.get`, uses the
+native Nostr handoff only when the backend confirms `linked`, and writes the
+corrected origin back to storage. Explicit local identities retain their Ed25519
+proof. The regression and all 108 focused launcher tests, clean patch validation
+and the production frontend build pass. Assembled source is
+`613479a7bbda317e38609f7bcc7965bd7f54f5e1`; local frontend SHA-256 is
+`f5aafeb1fa8b9cbe8d6b28fa323aa0e925b742023828bec6b1cd260b08bb1153`,
+with input receipt `d73da105037ad6b1d6ab8971cd6295eea5ddad50b35799a523b23848d14559ee`.
+[Frontend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43706424327)
+passed. Its exact source is `34467c0752cc117935f1f27e03573f68b606e438`;
+archive SHA-256 is `0e2c4b6e1174b72acea7e2c4c6644c3a52a57a6db0f422e9ae9879b224e7b635`.
+Only the three generated source-metadata files differ from local; all 1,279
+other files are byte-identical. Physical acceptance is pending.
+
+**Live p10 deployment, 15 November:** operation
+`6e3c7d60-81d0-4251-9dc7-19d11fbf22d8` is active on `demo.forgesworn.dev`.
+The backend remains at the verified p8 hash. The fresh recovery archive is
+SHA-256 `2aaa83f21655da1dfba887d143fefdb3babce37cc6c10d1113e12d2cbf299f05`;
+authenticated off-host decryption matched, and a pristine network-isolated
+restore verified all 111,797 entries with zero unexpected paths. GNU tar passed
+its content/xattr/ACL comparison and all 12 selected SQLite checks passed on
+copies. The active frontend tree is
+`0a0756afbcde730de85647003430f9bf689850be306a77e2528e9e966e731cc7`.
+Manager health, crash recovery, the trusted dashboard and all three local app
+endpoints pass; all six original container IDs and images remain. No firewall
+or application-container change was made. Physical acceptance and post-deployment
+captures remain pending. See the
+[live p10 verification receipt](live-p10-verification.json).
+
+**Patch-level-11 CI candidate, 15 November:** the owner's detailed
+acceptance flow confirmed that the second App Session identity injector still
+called `identity.sign`. Patch 44 removes the app allowlist and applies the same
+rule in both injectors: linked identities never request an impossible
+node-local Ed25519 signature. Only public fields are injected; the app's real
+full Nostr event then goes to Heartwood. Local identities retain their existing
+proof, and legacy origins are resolved through `identity.get`. All 113 focused
+launcher and identity tests, clean patch validation and the production frontend
+build pass. Assembled source is `8e420b5d486d2e2a083728b6b0e481b668c3852f`;
+local frontend SHA-256 is `a143975bc4b97245dd720a4853d2208c3da5dec7c1931d87db8775185aa587eb`,
+with input receipt `1ac9ba8f9f78df954d39624ad0c1258ede1ab33ba0b3eb2cc6fe2c2e3c3abec0`.
+[Frontend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43709473971)
+passed. Its exact source is `9c97e082535510202586a6c58e3a93031958adba`;
+archive SHA-256 is `c859b90d1ae706eba349d3190516857403ab69545271ef8500210c4b9a645948`.
+Only the three generated source-metadata files differ from local; all 1,279
+other files are byte-identical. Owner acceptance passed on 15 November.
+
+**Live p11 deployment, 15 November:** operation
+`10688326-d365-43e8-a13d-b7f5d057ce14` is active on `demo.forgesworn.dev`.
+The backend remains at the verified p8 hash. The fresh recovery archive is
+SHA-256 `60a5c451539484a11c0760e8eaf50fc87f18bf76f5bfad103236f73d2f59ad9f`;
+authenticated off-host decryption matched, and a pristine network-isolated
+restore verified all 113,281 entries with zero unexpected paths. GNU tar passed
+its content/xattr/ACL comparison and all 12 selected SQLite checks passed on
+copies. The active frontend tree is
+`6ded1f80c6f7da97fafa8a51b92f3452d335a298e636223dfd43104c610e8e59`.
+Manager health, crash recovery, the trusted dashboard and all three local app
+endpoints pass; all six original container IDs and images remain. No firewall
+or application-container change was made. The owner then confirmed that launch,
+identity selection and Heartwood sign-in work without a node-password or
+authenticator prompt. Post-deployment captures and maintainer ZAT remain pending.
+See the [live p11 verification receipt](live-p11-verification.json).
+
+**Patch-level-12 CI candidate, 15 November:** Spry's `node.nostr-sign`
+fallback used the appliance key because no identity was selected. Patch 45 adds
+Spry and the other native apps to App Session's first-launch identity picker and
+refuses node signing when an identity-aware app has no selected identity. This
+preserves linked/local signing and non-identity-aware app behavior. The Spry
+regressions and all 232 App Session/launcher tests, clean patch validation and
+the production frontend build pass. Assembled source is
+`b363018ec0feef063fcf39dd16842c3cef52db15`; local frontend SHA-256 is
+`100b566c76847dea42c9e97e01d2d74088b36b01b66064b52d6343f3f67751df`,
+with input receipt `618ceac3b4674106c90110378655a9d5897131e0cb1b4b0f13a8ebc195123681`.
+[Frontend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43712780837)
+passed. Its exact source is `a31d3f521a0bf0bf6cb307f88f54bc13a404851d`;
+archive SHA-256 is `3e541b19a107878d4d64f9397f5390346a9053e8ea01f84c1537a0ece67e853a`.
+Only the three generated source-metadata files differ from local; all 1,279
+other files are byte-identical. Physical Spry acceptance is pending.
+
+**Live p12 deployment, 15 November:** operation
+`a3486af1-f816-4a7d-aecb-5844f374ea3b` is active on `demo.forgesworn.dev`.
+The backend remains at the verified p8 hash. The fresh recovery archive is
+SHA-256 `83689f97cd83586182287fc673b3423b6f2043e6a50a130b5c92afb7c07a73f0`;
+authenticated off-host decryption matched, and a pristine network-isolated
+restore verified all 114,785 entries with zero unexpected paths. GNU tar passed
+its content/xattr/ACL comparison and all 12 selected SQLite checks passed on
+copies. The active frontend tree is
+`db1fca18d2ef6cd52c151e43f004fe3bff3f390a8c4eb9d4ecb953ae76efab4b`.
+Manager health, crash recovery, the trusted dashboard and all four local app
+endpoints pass; all six original container IDs and images remain. No firewall
+or application-container change was made. Physical Spry acceptance and
+post-deployment captures remain pending. See the
+[live p12 verification receipt](live-p12-verification.json).
+
+**Spry operational statistics, live 15 November:** the Spry app now
+has a **Relay at a glance** panel with readiness, control-link health,
+private/public mode, paired-device count after loading devices, and configured
+allocation limits. It explicitly does not claim live bandwidth or connection
+counters, which the service does not expose remotely. Four focused tests pass,
+including JavaScript syntax and pairing-count updates. Synthetic browser checks
+passed at 1440px and 390px with no horizontal overflow; see
+[desktop](spry-stats-desktop.png) and [mobile](spry-stats-mobile.png) captures.
+The package revision is 5. Hosted Rust and native amd64/arm64 image checks passed.
+The exact image is loaded on demo as `704b0c469cb817ac56a5e019e36fa0d5efa9be858f6aebe2d33ce1024fd9d157`;
+only Spry was recreated, with pairing data and the other five containers preserved.
+Recovery verified 116,306 entries and 14 databases. The live status is ready and
+the stats assets are present. Physical stats acceptance and ZAT remain pending.
+See the [live Spry stats receipt](live-spry-stats-verification.json).
+**Maintainer must review and approve UI work on Spry's Relay at a glance and
+Manage paired devices screens before merging or approval. ZAT pending.**
+
+For launch review on a backed-up test node with File Browser installed and a
+login signer enrolled: sign in with the signer, open **My Apps** and launch
+**File Browser**, then continue through its managed-login interstitial. Expected:
+no second node-password demand, the existing owner session and one-use
+capability are accepted, and the app opens. Launch **Wildbloom** from the same
+page and confirm its existing HTTPS gate. Launch **KithMoot Node**, choose the
+linked identity, and approve its real Nostr sign-in event on the signer. Expected:
+no node-password demand and no impossible Ed25519 request; the signer receives
+the exact full event and the app opens. Repeat the linked sign-in on **Wildbloom**
+and **Spry**. Confirm **Show application credentials** still requests fresh
+password proof. Invalid sessions, local identities, raw hashes, CSRF and origins
+must remain refused by automated boundaries. No visual styling is changed;
+capture the identity chooser, signer consent and embedded apps after deployment.
+Maintainer must review and approve UI work on **My Apps, the File Browser launch
+interstitial and embedded app, and the KithMoot Node, Wildbloom and Spry identity
+choosers, signing consent and embedded apps** before merging or approval. ZAT pending.
+
 **Linked integration evidence, 13 November:** a real `nak` NIP-46 signer and
 loopback relay passed linked identity creation, secret-free export,
 fresh-authorised event signing, login-signer enrolment and signer login on the
@@ -231,6 +478,8 @@ they cannot establish working integrated App Store installation.
 - [Sales mobile with a light OS preference](storage-sales-mobile-os-light.png)
 - [Embedded Wildbloom](integrated-wildbloom.png)
 - [Embedded Spry](integrated-spry.png)
+- [Spry operational statistics desktop](spry-stats-desktop.png)
+- [Spry operational statistics mobile](spry-stats-mobile.png)
 - [Embedded KithMoot Node](integrated-kithmoot-node.png)
 - [Fresh-authorisation incorrect-password response](integrated-fresh-authorization-error.png)
 - [Clipboard-blocked manual pairing link](pairing-copy-blocked-390.png)

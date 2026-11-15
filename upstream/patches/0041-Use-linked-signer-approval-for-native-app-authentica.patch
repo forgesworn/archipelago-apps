@@ -1,0 +1,264 @@
+From 1acc4e98b35b025aa305a0765d43f08fbfbf6cbc Mon Sep 17 00:00:00 2001
+From: ForgeSworn <ci@invalid>
+Date: Sun, 15 Nov 2026 08:16:24 +0000
+Subject: [PATCH] Use linked signer approval for native app authentication
+
+---
+ core/archipelago/src/api/rpc/reauth.rs        | 126 ++++++++++++++++++
+ .../src/components/AppLauncherOverlay.vue     |  16 ++-
+ .../AppLauncherIndependentReview.test.ts      |  37 +++++
+ 3 files changed, 176 insertions(+), 3 deletions(-)
+
+diff --git a/core/archipelago/src/api/rpc/reauth.rs b/core/archipelago/src/api/rpc/reauth.rs
+index 121830b..93dd6bf 100644
+--- a/core/archipelago/src/api/rpc/reauth.rs
++++ b/core/archipelago/src/api/rpc/reauth.rs
+@@ -220,6 +220,28 @@ impl RpcHandler {
+             self.session_store.validate(session).await,
+             "Unauthorized: session expired"
+         );
++        // A linked identity's full-event request is itself the fresh signer
++        // approval. Local keys, raw hashes and every other protected operation
++        // still require a password grant. Fail closed if the identity cannot
++        // be resolved as linked, and mirror the handler's explicit-id path.
++        if method == "identity.nostr-sign" {
++            let id = params
++                .as_ref()
++                .and_then(|p| p.get("id"))
++                .and_then(Value::as_str);
++            let has_full_event = params
++                .as_ref()
++                .is_some_and(|p| p.get("event").is_some() && p.get("event_hash").is_none());
++            if let Some(id) = id.filter(|_| has_full_event) {
++                let manager =
++                    crate::identity_manager::IdentityManager::new(&self.config.data_dir).await?;
++                if manager.get(id).await.is_ok_and(|record| {
++                    record.origin == crate::identity_manager::IdentityOrigin::Linked
++                }) {
++                    return Ok(());
++                }
++            }
++        }
+         let token = params
+             .as_ref()
+             .and_then(|p| p.get("reauth_token"))
+@@ -491,4 +513,108 @@ mod tests {
+             assert!(protected(method, true));
+         }
+     }
++
++    #[tokio::test]
++    async fn only_linked_full_event_signing_uses_the_signer_as_fresh_proof() {
++        let (handler, directory) = test_rpc_handler().await;
++        handler
++            .auth_manager
++            .setup_user("fixture-password")
++            .await
++            .unwrap();
++        let session = Some(handler.session_store.create().await);
++        let identities = directory.path().join("identities");
++        std::fs::create_dir_all(&identities).unwrap();
++        for (id, linked) in [("linked", true), ("local", false)] {
++            let signer = linked.then(|| {
++                serde_json::json!({
++                    "remote_signer_pubkey": "22".repeat(32),
++                    "user_pubkey": "11".repeat(32),
++                    "relays": [],
++                    "client_secret_hex": "00".repeat(32),
++                    "linked_at": "2026-01-01T00:00:00Z"
++                })
++            });
++            std::fs::write(
++                identities.join(format!("{id}.json")),
++                serde_json::to_vec(&serde_json::json!({
++                    "id": id,
++                    "name": id,
++                    "purpose": "personal",
++                    "secret_key": [0],
++                    "pubkey_hex": "00".repeat(32),
++                    "did": "did:key:zFixture",
++                    "created_at": "2026-01-01T00:00:00Z",
++                    "nostr_pubkey_hex": "11".repeat(32),
++                    "profile": {},
++                    "linked_signer": signer
++                }))
++                .unwrap(),
++            )
++            .unwrap();
++        }
++        let event = serde_json::json!({"kind": 1, "content": "fixture", "tags": []});
++        handler
++            .enforce_fresh_authorization(
++                "identity.nostr-sign",
++                &mut Some(serde_json::json!({"id": "linked", "event": event})),
++                &session,
++            )
++            .await
++            .unwrap();
++        for (method, params) in [
++            ("identity.nostr-sign", serde_json::json!({"event": event})),
++            (
++                "identity.nostr-sign",
++                serde_json::json!({"id": "local", "event": event}),
++            ),
++            (
++                "identity.nostr-sign",
++                serde_json::json!({"id": "missing", "event": event}),
++            ),
++            (
++                "identity.nostr-sign",
++                serde_json::json!({"id": "linked", "event_hash": "00"}),
++            ),
++            (
++                "identity.sign",
++                serde_json::json!({"id": "linked", "message": "fixture"}),
++            ),
++            (
++                "node.nostr-sign",
++                serde_json::json!({"id": "linked", "event": event}),
++            ),
++        ] {
++            assert!(handler
++                .enforce_fresh_authorization(method, &mut Some(params), &session)
++                .await
++                .is_err());
++        }
++        let target = serde_json::json!({"id": "local", "event": event});
++        let grant = handler
++            .handle_reauthenticate(
++                Some(serde_json::json!({
++                    "method": "identity.nostr-sign",
++                    "params": target,
++                    "password": "fixture-password"
++                })),
++                &session,
++            )
++            .await
++            .unwrap();
++        let mut granted = target.clone();
++        granted["reauth_token"] = grant["reauth_token"].clone();
++        handler
++            .enforce_fresh_authorization("identity.nostr-sign", &mut Some(granted), &session)
++            .await
++            .unwrap();
++        assert!(handler
++            .enforce_fresh_authorization(
++                "identity.nostr-sign",
++                &mut Some(serde_json::json!({"id": "linked", "event": event})),
++                &Some("invalid".to_string()),
++            )
++            .await
++            .is_err());
++    }
+ }
+diff --git a/neode-ui/src/components/AppLauncherOverlay.vue b/neode-ui/src/components/AppLauncherOverlay.vue
+index e7f5768..e82676f 100644
+--- a/neode-ui/src/components/AppLauncherOverlay.vue
++++ b/neode-ui/src/components/AppLauncherOverlay.vue
+@@ -294,8 +294,11 @@ interface SelectedIdentity {
+   pubkey: string
+   nostr_pubkey?: string
+   nostr_npub?: string
++  origin?: 'local' | 'linked'
+ }
+ 
++const NATIVE_NOSTR_IDENTITY_APPS = new Set(['wildbloom', 'wildbloom-node', 'spry', 'kithmoot-node'])
++
+ /** Get the stored identity for an app, or null if first launch */
+ function getStoredIdentity(appUrl: string): SelectedIdentity | null {
+   try {
+@@ -337,11 +340,19 @@ function cancelIdentitySelection() {
+   iframeRef.value?.contentWindow?.postMessage({ type: 'archipelago:identity-cancelled' }, '*')
+ }
+ 
++function usesNativeNostrIdentity(identity: SelectedIdentity): boolean {
++  if (identity.origin !== 'linked') return false
++  if (store.panelAppId) return NATIVE_NOSTR_IDENTITY_APPS.has(store.panelAppId)
++  const title = store.title.toLowerCase()
++  return title.includes('wildbloom') || title.includes('spry') || title.includes('kithmoot')
++}
++
+ /** Send a specific identity to the iframe */
+ async function sendSelectedIdentity(identity: SelectedIdentity) {
+   try {
++    const nativeNostr = usesNativeNostrIdentity(identity)
+     const challenge = `archipelago-identity:${Date.now()}`
+-    const sigRes = await rpcClient.call<{ signature: string }>({
++    const sigRes = nativeNostr ? null : await rpcClient.call<{ signature: string }>({
+       method: 'identity.sign',
+       params: { id: identity.id, message: challenge }
+     })
+@@ -354,8 +365,7 @@ async function sendSelectedIdentity(identity: SelectedIdentity) {
+       pubkey: identity.pubkey,
+       nostr_pubkey: identity.nostr_pubkey || null,
+       nostr_npub: identity.nostr_npub || null,
+-      challenge,
+-      signature: sigRes.signature
++      ...(sigRes ? { challenge, signature: sigRes.signature } : {})
+     }, '*')
+   } catch {
+     /* identity signing not available */
+diff --git a/neode-ui/src/components/__tests__/AppLauncherIndependentReview.test.ts b/neode-ui/src/components/__tests__/AppLauncherIndependentReview.test.ts
+index 8186899..3d32407 100644
+--- a/neode-ui/src/components/__tests__/AppLauncherIndependentReview.test.ts
++++ b/neode-ui/src/components/__tests__/AppLauncherIndependentReview.test.ts
+@@ -3,7 +3,9 @@ import { createPinia, setActivePinia, disposePinia, type Pinia } from 'pinia'
+ import { nextTick } from 'vue'
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import AppLauncherOverlay from '../AppLauncherOverlay.vue'
++import NostrIdentityPicker from '../NostrIdentityPicker.vue'
+ import { useAppLauncherStore } from '@/stores/appLauncher'
++import { rpcClient } from '@/api/rpc-client'
+ 
+ // Only external effects are inert; both the launcher store and overlay are real.
+ vi.mock('@/api/rpc-client', () => ({ rpcClient: { call: vi.fn(() => { throw new Error('Unexpected RPC') }) } }))
+@@ -25,6 +27,7 @@ describe('custom launcher navigation ownership', () => {
+   }
+   beforeEach(() => {
+     vi.useFakeTimers()
++    vi.clearAllMocks()
+     localStorage.clear()
+     pinia = createPinia()
+     setActivePinia(pinia)
+@@ -87,4 +90,38 @@ describe('custom launcher navigation ownership', () => {
+     expect(iframe()).toBe(current)
+     expect(loading()).not.toBeNull()
+   })
++
++  it('hands a linked identity to KithMoot without an impossible Ed25519 signature', async () => {
++    store.open({ url: 'https://node.test:3753/', title: 'KithMoot Node' })
++    await nextTick()
++    const postMessage = vi.spyOn(iframe()!.contentWindow!, 'postMessage')
++    wrapper.findComponent(NostrIdentityPicker).vm.$emit('select', {
++      id: 'linked', name: 'Linked', did: 'did:key:zLinked', pubkey: 'ed',
++      nostr_pubkey: 'aa', nostr_npub: 'npub1linked', origin: 'linked',
++    })
++    await nextTick()
++    expect(rpcClient.call).not.toHaveBeenCalled()
++    const identity = postMessage.mock.calls[0]![0] as Record<string, unknown>
++    expect(identity).toMatchObject({ type: 'archipelago:identity', nostr_pubkey: 'aa' })
++    expect(identity).not.toHaveProperty('signature')
++    expect(identity).not.toHaveProperty('challenge')
++  })
++
++  it('retains the Ed25519 identity proof for a local identity', async () => {
++    vi.mocked(rpcClient.call).mockResolvedValue({ signature: 'ed-signature' } as never)
++    store.open({ url: 'https://node.test:3753/', title: 'KithMoot Node' })
++    await nextTick()
++    const postMessage = vi.spyOn(iframe()!.contentWindow!, 'postMessage')
++    wrapper.findComponent(NostrIdentityPicker).vm.$emit('select', {
++      id: 'local', name: 'Local', did: 'did:key:zLocal', pubkey: 'ed',
++      nostr_pubkey: 'bb', origin: 'local',
++    })
++    await Promise.resolve()
++    await nextTick()
++    expect(rpcClient.call).toHaveBeenCalledWith({
++      method: 'identity.sign',
++      params: { id: 'local', message: expect.stringMatching(/^archipelago-identity:\d+$/) },
++    })
++    expect(postMessage.mock.calls[0]![0]).toMatchObject({ signature: 'ed-signature' })
++  })
+ })
+-- 
+2.39.5 (Apple Git-154)
+
