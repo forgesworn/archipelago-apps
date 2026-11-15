@@ -196,7 +196,7 @@ No firewall or application-container change was made. Physical signer acceptance
 and post-deployment captures remain pending. See the
 [live p8 verification receipt](live-p8-verification.json).
 
-**Patch-level-9 working candidate, 15 November:** owner acceptance showed that
+**Patch-level-9 CI candidate, 15 November:** owner acceptance showed that
 the remaining ordinary-launch password was caused by both legacy Apps launchers
 preflighting `package.credentials-authorize` for every app, not only managed
 logins. Patch 42 limits that preflight to the existing managed interstitials and
@@ -208,10 +208,30 @@ export retain fresh password proof, and the p8 backend remains compatible. All
 build pass. The assembled source is `359a65220bbb2b0f8ab294e7cfd379c6589dd394`;
 local frontend SHA-256 is `50f2a0dacac44390ef1af9a8fbc1253716412254101cb572b3d8984887d938f7`,
 with input receipt `a6ea806da1e170241c955550a00f794b1593780b8ba15f6df1dcb747257c2284`.
-Exact CI artifacts will be recorded before deployment. Hosted CI, deployment and
-physical acceptance are pending. Review **My Apps** in both desktop and icon-grid
+[Frontend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43701574552)
+passed. Its exact source is `23a2a58e33a3b240f9b1d5c89c54f52fc436343f`;
+archive SHA-256 is `236da86fd8cfccf58992b3382de9d7a47dd9db372af4b67666cce5727846a0c3`.
+Only the three generated source-metadata files differ from local; all 1,279
+other files are byte-identical. [Full backend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43701576985)
+also passed; deployment retains the already verified p8 backend. Physical
+acceptance is pending. Review **My Apps** in both desktop and icon-grid
 modes, direct native launches, File Browser's managed-login interstitial and
 Qortal's existing credential prompt.
+
+**Live p9 deployment, 15 November:** operation
+`6d76d777-ab55-4d70-acbd-afe76a989f4e` is active on `demo.forgesworn.dev`.
+The backend remains at the verified p8 hash. The fresh recovery archive is
+SHA-256 `b2eeff905c97f339e2414f9191ded89bb1cdc0fde4e11c2c429b4169fa56880b`;
+authenticated off-host decryption matched, and a pristine network-isolated
+restore verified all 110,293 entries with zero unexpected paths. GNU tar passed
+its content/xattr/ACL comparison and all 12 selected SQLite checks passed on
+copies. The active frontend tree is
+`645d1b3f8254efddefdb68914754dfe84bc1b28fd797ed958eb7bf78226962fc`.
+Manager health, crash recovery, the trusted dashboard and all three local app
+endpoints pass; all six original container IDs, images and manifests remain.
+No firewall or application-container change was made. Physical acceptance and
+post-deployment captures remain pending. See the
+[live p9 verification receipt](live-p9-verification.json).
 
 For launch review on a backed-up test node with File Browser installed and a
 login signer enrolled: sign in with the signer, open **My Apps** and launch
