@@ -2,6 +2,7 @@ const status = document.querySelector('#status');
 const base = new URL('./', import.meta.url);
 let endpoint, audience, privateRelay;
 let pairingExpiresAt = 0, pairingTimer;
+let metricsTimer, metricsSample, metricsStarted = false, metricsLoading = false;
 function clearPairing() {
   clearTimeout(pairingTimer);
   document.querySelector('#handoff').hidden = true;
@@ -30,6 +31,11 @@ async function refreshStatus() {
     document.querySelector('#stat-control').textContent = state.controlReady === true ? 'Connected' : 'Connecting';
     document.querySelector('#stat-mode').textContent = privateRelay ? 'Private mesh' : 'Public endpoint';
     document.querySelector('#pair').disabled = !ready;
+    document.querySelector('#refresh-stats').disabled = !ready;
+    if (ready && !metricsStarted) {
+      metricsStarted = true;
+      void refreshMetrics();
+    }
     if (ready && location.hash === '#pairing') {
       history.replaceState(null, '', location.pathname);
       await action(document.querySelector('#pair'), pair);
@@ -51,6 +57,55 @@ async function request(path, value = {}) {
   const result = await response.json();
   if (!response.ok) throw new Error(typeof result.error === 'string' ? result.error : 'Spry could not complete that. Try again.');
   return result;
+}
+function setMetric(id, value) {
+  document.querySelector(id).textContent = value;
+}
+function formatBytes(value) {
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: unit ? 1 : 0 })} ${units[unit]}`;
+}
+function scheduleMetrics() {
+  clearTimeout(metricsTimer);
+  if (!document.hidden) metricsTimer = setTimeout(() => void refreshMetrics(), 15000);
+}
+async function refreshMetrics() {
+  if (metricsLoading) return;
+  metricsLoading = true;
+  clearTimeout(metricsTimer);
+  document.querySelector('#refresh-stats').disabled = true;
+  try {
+    const stats = await request('/v1/owner/stats');
+    if (stats.available !== true) {
+      for (const id of ['#stat-allocations', '#stat-peers', '#stat-throughput', '#stat-bytes', '#stat-dropped']) setMetric(id, 'Unavailable');
+      setMetric('#metrics-status', 'Live relay counters are available on a private mesh relay.');
+      metricsSample = undefined;
+      return;
+    }
+    const counters = ['activeAllocations', 'allocationLimit', 'perDeviceAllocationLimit', 'connectedPeers', 'forwardedPackets', 'forwardedBytes', 'droppedPackets', 'startedAt'];
+    if (counters.some(key => !Number.isSafeInteger(stats[key]) || stats[key] < 0) || stats.allocationLimit < 1 || stats.perDeviceAllocationLimit < 1) throw new Error('Spry returned invalid relay statistics.');
+    const sampledAt = performance.now();
+    let throughput = 'Measuring';
+    if (metricsSample && stats.forwardedBytes >= metricsSample.bytes && sampledAt > metricsSample.at) {
+      throughput = `${formatBytes((stats.forwardedBytes - metricsSample.bytes) * 1000 / (sampledAt - metricsSample.at))}/s`;
+    }
+    metricsSample = { bytes: stats.forwardedBytes, at: sampledAt };
+    setMetric('#stat-allocations', `${stats.activeAllocations.toLocaleString()} / ${stats.allocationLimit.toLocaleString()}`);
+    setMetric('#stat-peers', stats.connectedPeers.toLocaleString());
+    setMetric('#stat-throughput', throughput);
+    setMetric('#stat-bytes', formatBytes(stats.forwardedBytes));
+    setMetric('#stat-dropped', stats.droppedPackets.toLocaleString());
+    setMetric('#stat-limit', `${stats.perDeviceAllocationLimit.toLocaleString()} allocations`);
+    setMetric('#metrics-status', `Live relay totals since ${new Date(stats.startedAt * 1000).toLocaleString()}. Throughput combines both directions and is measured between updates.`);
+  } catch (error) {
+    setMetric('#metrics-status', error instanceof Error ? error.message : 'Live activity is unavailable. Try again.');
+  } finally {
+    metricsLoading = false;
+    document.querySelector('#refresh-stats').disabled = false;
+    scheduleMetrics();
+  }
 }
 async function action(button, run) {
   button.disabled = true; status.textContent = 'Waiting for your approval…';
@@ -93,7 +148,21 @@ document.querySelector('#copy-link').onclick = async () => {
   try { await navigator.clipboard.writeText(value); status.textContent = 'Pairing link copied. Open it in KithMoot, or paste it in Settings → Connections → Spry.'; }
   catch { const field = document.querySelector('#pairing-link'); field.focus(); field.select(); status.textContent = 'The link is selected. Choose Copy, or press Command-C on Mac or Ctrl-C on Windows/Linux.'; }
 };
-window.addEventListener('pagehide', clearPairing);
+window.addEventListener('pagehide', () => {
+  clearPairing();
+  clearTimeout(metricsTimer);
+  metricsStarted = false;
+  metricsSample = undefined;
+});
+window.addEventListener('pageshow', event => { if (event.persisted) void refreshStatus(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) clearTimeout(metricsTimer);
+  else if (metricsStarted) void refreshMetrics();
+});
+document.querySelector('#refresh-stats').onclick = () => {
+  metricsStarted = true;
+  void refreshMetrics();
+};
 document.querySelector('#pair').onclick = event => {
   if (window !== window.top) {
     // Leave the dashboard iframe with a real user gesture. The new top-level
@@ -117,4 +186,33 @@ document.querySelector('#load').onclick = event => action(event.currentTarget, a
     row.append(remove); list.append(row);
   }
   status.textContent = pairings.length ? '' : 'No paired devices yet.';
+});
+document.querySelector('#load-grants').onclick = event => action(event.currentTarget, async () => {
+  const { grants } = await request('/v1/owner/grants/list');
+  if (!Array.isArray(grants)) throw new Error('Spry returned invalid call-access information.');
+  const list = document.querySelector('#grants'); list.replaceChildren();
+  document.querySelector('#stat-grants').textContent = String(grants.length);
+  for (const grant of grants) {
+    if (typeof grant.id !== 'string' || !/^[a-f0-9]{64}$/.test(grant.id) || !Number.isSafeInteger(grant.expiresAt) || !Number.isSafeInteger(grant.recentDevices)) throw new Error('Spry returned invalid call-access information.');
+    const row = document.createElement('li');
+    const description = document.createElement('div');
+    const title = document.createElement('strong'); title.textContent = `Call access ${grant.id.slice(0, 8)}`;
+    const details = document.createElement('small');
+    details.textContent = `${grant.recentDevices} recent credential ${grant.recentDevices === 1 ? 'device' : 'devices'}. Current access expiry: ${new Date(grant.expiresAt * 1000).toLocaleString()}.`;
+    description.append(title, details);
+    const remove = document.createElement('button'); remove.textContent = 'Revoke access'; remove.className = 'secondary';
+    remove.setAttribute('aria-label', `Revoke call access ${grant.id.slice(0, 8)}`);
+    remove.onclick = event => action(event.currentTarget, async () => {
+      if (!window.confirm('Revoke this call access? Existing relay access can take up to five minutes to expire.')) {
+        status.textContent = 'Revocation cancelled.';
+        return;
+      }
+      await request('/v1/owner/grants/remove', { id: grant.id }); row.remove();
+      document.querySelector('#stat-grants').textContent = String(list.children.length);
+      status.textContent = 'Call access revoked. Existing relay access can take up to five minutes to expire.';
+      if (!list.children.length) status.textContent += ' No remaining call access.';
+    });
+    row.append(description, remove); list.append(row);
+  }
+  status.textContent = grants.length ? '' : 'No call access yet.';
 });

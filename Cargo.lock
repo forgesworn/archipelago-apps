@@ -687,6 +687,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustls-pemfile"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dce314e5fee3f39953d46bb63bb8a46d40c2f8fb7cc5a3b6cab2bde9721d6e50"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
 name = "rustls-pki-types"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -842,7 +851,7 @@ dependencies = [
 [[package]]
 name = "spry-access"
 version = "0.1.0"
-source = "git+https://github.com/forgesworn/spry-turn.git?rev=6b34f061ab25cac402bfaa833ce6ef95e98d0621#6b34f061ab25cac402bfaa833ce6ef95e98d0621"
+source = "git+https://github.com/forgesworn/spry-turn.git?rev=77fbf90e5f8ad8abd339d3a67701a8ad6f3a22cf#77fbf90e5f8ad8abd339d3a67701a8ad6f3a22cf"
 dependencies = [
  "base64",
  "getrandom 0.3.4",
@@ -858,7 +867,7 @@ dependencies = [
 [[package]]
 name = "spry-link"
 version = "0.1.0"
-source = "git+https://github.com/forgesworn/spry-turn.git?rev=6b34f061ab25cac402bfaa833ce6ef95e98d0621#6b34f061ab25cac402bfaa833ce6ef95e98d0621"
+source = "git+https://github.com/forgesworn/spry-turn.git?rev=77fbf90e5f8ad8abd339d3a67701a8ad6f3a22cf#77fbf90e5f8ad8abd339d3a67701a8ad6f3a22cf"
 dependencies = [
  "base64",
  "chacha20 0.9.1",
@@ -881,9 +890,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "spry-portmap"
+version = "0.1.0"
+source = "git+https://github.com/forgesworn/spry-turn.git?rev=77fbf90e5f8ad8abd339d3a67701a8ad6f3a22cf#77fbf90e5f8ad8abd339d3a67701a8ad6f3a22cf"
+dependencies = [
+ "getrandom 0.3.4",
+ "socket2",
+]
+
+[[package]]
 name = "spry-service"
 version = "0.1.0"
-source = "git+https://github.com/forgesworn/spry-turn.git?rev=6b34f061ab25cac402bfaa833ce6ef95e98d0621#6b34f061ab25cac402bfaa833ce6ef95e98d0621"
+source = "git+https://github.com/forgesworn/spry-turn.git?rev=77fbf90e5f8ad8abd339d3a67701a8ad6f3a22cf#77fbf90e5f8ad8abd339d3a67701a8ad6f3a22cf"
 dependencies = [
  "bytes",
  "futures-util",
@@ -892,10 +910,12 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rustls",
+ "rustls-pemfile",
  "serde_json",
  "socket2",
  "spry-access",
  "spry-link",
+ "spry-portmap",
  "spry-turn",
  "tokio",
  "tokio-tungstenite",
@@ -905,8 +925,8 @@ dependencies = [
 
 [[package]]
 name = "spry-turn"
-version = "0.2.1"
-source = "git+https://github.com/forgesworn/spry-turn.git?rev=6b34f061ab25cac402bfaa833ce6ef95e98d0621#6b34f061ab25cac402bfaa833ce6ef95e98d0621"
+version = "0.4.2"
+source = "git+https://github.com/forgesworn/spry-turn.git?rev=77fbf90e5f8ad8abd339d3a67701a8ad6f3a22cf#77fbf90e5f8ad8abd339d3a67701a8ad6f3a22cf"
 dependencies = [
  "base64",
  "crc32fast",
@@ -914,6 +934,8 @@ dependencies = [
  "hmac",
  "md-5",
  "mio",
+ "rustls",
+ "rustls-pemfile",
  "sha1 0.10.6",
  "socket2",
 ]
