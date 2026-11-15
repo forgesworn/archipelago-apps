@@ -1,0 +1,32 @@
+{
+  "passed": true,
+  "liveCounters": true,
+  "throughputChanges": true,
+  "grantRevocationCancelled": true,
+  "grantRevoked": true,
+  "publicMetricsUnavailable": true,
+  "noRoomOrParticipantFields": true,
+  "responsive": [
+    {
+      "width": 1440,
+      "viewport": 1440,
+      "content": 1440
+    },
+    {
+      "width": 768,
+      "viewport": 768,
+      "content": 768
+    },
+    {
+      "width": 390,
+      "viewport": 390,
+      "content": 390
+    },
+    {
+      "width": 320,
+      "viewport": 320,
+      "content": 320
+    }
+  ],
+  "browserErrors": []
+}
