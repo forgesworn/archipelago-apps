@@ -9,11 +9,17 @@
 <div><dt>Relay</dt><dd id="stat-ready">Starting</dd></div>
 <div><dt>Control link</dt><dd id="stat-control">Starting</dd></div>
 <div><dt>Mode</dt><dd id="stat-mode">Private mesh</dd></div>
+<div><dt>Active allocations</dt><dd id="stat-allocations">Not loaded</dd></div>
+<div><dt>Mesh peers</dt><dd id="stat-peers">Not loaded</dd></div>
+<div><dt>Throughput</dt><dd id="stat-throughput">Not loaded</dd></div>
+<div><dt>Relayed total</dt><dd id="stat-bytes">Not loaded</dd></div>
+<div><dt>Dropped packets</dt><dd id="stat-dropped">Not loaded</dd></div>
 <div><dt>Paired devices</dt><dd id="stat-devices">Not loaded</dd></div>
-<div><dt>Call capacity</dt><dd>32 allocations</dd></div>
-<div><dt>Per device</dt><dd>8 allocations</dd></div>
+<div><dt>Call access</dt><dd id="stat-grants">Not loaded</dd></div>
+<div><dt>Per device</dt><dd id="stat-limit">8 allocations</dd></div>
 </dl>
-<p class="quiet">Operational status and configured limits, not live bandwidth counters.</p>
+<button id="refresh-stats" class="secondary" type="button">Refresh live activity</button>
+<p id="metrics-status" class="quiet" role="status" aria-live="polite">Live activity needs owner approval. Counters reset when the relay restarts.</p>
 </section>
 <section id="handoff" hidden aria-label="Pair KithMoot">
 <p>Open the KithMoot app where you are already signed in.</p>
@@ -26,5 +32,8 @@
 </section>
 <details><summary>Manage paired devices</summary><button id="load">Show paired devices</button><ul id="devices"></ul>
 <p>Removing a pairing stops new call access. Existing access can take up to five minutes to expire.</p></details>
+<details><summary>Manage call access</summary><button id="load-grants" type="button">Show call access</button><ul id="grants" class="admin-list"></ul>
+<p>Each entry is an opaque call-access grant, not a room name or participant list. Recent devices received credentials in the last ten minutes; this does not mean they are on a call.</p>
+<p>Revoking access stops credential renewal. Existing relay access can take up to five minutes to expire.</p></details>
 <p class="quiet">Your node handles relay access. Room membership and media keys stay in KithMoot.</p></main>
 <script src="nostr-provider.js" data-app-id="spry" data-no-nip98></script><script type="module" src="app.mjs"></script></body></html>

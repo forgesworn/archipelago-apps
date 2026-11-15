@@ -80,10 +80,18 @@ have a 30-day idle lease extended through use. No arbitrary proxy is installed.
 ## Operational statistics
 
 **Relay at a glance** reports readiness, control-link health, private/public
-mode, the paired-device count after loading devices, and configured allocation
-limits. These are operational and configured values, not live bandwidth or
-connection counters. The relay library has process-local counters, but the
-service does not expose them through a remote metrics API.
+mode, paired-device and call-grant counts after loading them, and configured
+allocation limits. On a private mesh relay, signed-owner updates also report
+active allocations, connected mesh peers, aggregate throughput, relayed bytes
+and dropped packets. Throughput is calculated between updates; totals reset
+when the embedded relay restarts. Public mode marks live counters unavailable
+because its separate relay process has no metrics connection to the service.
+
+**Manage call access** lists opaque grant identifiers, current access expiry
+and devices issued credentials in the last ten minutes. Recent credentials do
+not prove call attendance. The list contains no room scope, participant key or
+bearer grant. Owners can revoke a grant durably; existing TURN allocations can
+remain until their five-minute credentials expire.
 
 ## Verification
 
