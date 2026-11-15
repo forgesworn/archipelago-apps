@@ -297,7 +297,7 @@ identity selection and Heartwood sign-in work without a node-password or
 authenticator prompt. Post-deployment captures and maintainer ZAT remain pending.
 See the [live p11 verification receipt](live-p11-verification.json).
 
-**Patch-level-12 working candidate, 15 November:** Spry's `node.nostr-sign`
+**Patch-level-12 CI candidate, 15 November:** Spry's `node.nostr-sign`
 fallback used the appliance key because no identity was selected. Patch 45 adds
 Spry and the other native apps to App Session's first-launch identity picker and
 refuses node signing when an identity-aware app has no selected identity. This
@@ -307,8 +307,26 @@ the production frontend build pass. Assembled source is
 `b363018ec0feef063fcf39dd16842c3cef52db15`; local frontend SHA-256 is
 `100b566c76847dea42c9e97e01d2d74088b36b01b66064b52d6343f3f67751df`,
 with input receipt `618ceac3b4674106c90110378655a9d5897131e0cb1b4b0f13a8ebc195123681`.
-Exact CI artifacts will be recorded before deployment. Hosted CI, deployment and
-physical Spry acceptance are pending.
+[Frontend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43712780837)
+passed. Its exact source is `a31d3f521a0bf0bf6cb307f88f54bc13a404851d`;
+archive SHA-256 is `3e541b19a107878d4d64f9397f5390346a9053e8ea01f84c1537a0ece67e853a`.
+Only the three generated source-metadata files differ from local; all 1,279
+other files are byte-identical. Physical Spry acceptance is pending.
+
+**Live p12 deployment, 15 November:** operation
+`a3486af1-f816-4a7d-aecb-5844f374ea3b` is active on `demo.forgesworn.dev`.
+The backend remains at the verified p8 hash. The fresh recovery archive is
+SHA-256 `83689f97cd83586182287fc673b3423b6f2043e6a50a130b5c92afb7c07a73f0`;
+authenticated off-host decryption matched, and a pristine network-isolated
+restore verified all 114,785 entries with zero unexpected paths. GNU tar passed
+its content/xattr/ACL comparison and all 12 selected SQLite checks passed on
+copies. The active frontend tree is
+`db1fca18d2ef6cd52c151e43f004fe3bff3f390a8c4eb9d4ecb953ae76efab4b`.
+Manager health, crash recovery, the trusted dashboard and all four local app
+endpoints pass; all six original container IDs and images remain. No firewall
+or application-container change was made. Physical Spry acceptance and
+post-deployment captures remain pending. See the
+[live p12 verification receipt](live-p12-verification.json).
 
 For launch review on a backed-up test node with File Browser installed and a
 login signer enrolled: sign in with the signer, open **My Apps** and launch
