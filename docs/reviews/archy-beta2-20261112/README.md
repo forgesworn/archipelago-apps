@@ -115,8 +115,8 @@ overflow. No payment, message, room change or refund was submitted. See the
 are retained privately, not published in this pack. Physical signer/client
 acceptance and ZAT remain pending.
 
-**Patch-level-7 working candidate, 15 November:** the uncommitted
-`fix/signer-app-launch-20261115` branch is based on p6 commit `14c141a`.
+**Patch-level-7 CI candidate, 15 November:** candidate commit `2a2d0d8` on
+`fix/signer-app-launch-20261115` is based on p6 commit `14c141a`.
 Patch 40 adopts current upstream's managed-app-login exemption for File Browser,
 Datum, PhotoPrism, Grafana and Portainer. It leaves Qortal, unknown apps, key
 exports, security changes and funds operations under fresh password proof. The
@@ -128,8 +128,31 @@ frontend assembled at `f095d66f1e566f8f562e3231677c267800cd1849`; archive
 SHA-256 `0366459f1fa711ca64c9787ac2df91162d022e011895fd0c72b8b015482d8c02`,
 input receipt `cfbc62cd32e09cca781e45bb18a731f4a0941ec676e5d39ee095d1b896ffe854`.
 The archive's three bundled manifests match their pinned sources byte-for-byte.
-The isolated Rust boundary tests and x86-64 production backend are not yet
-complete. No p7 live deployment or firewall change has been made.
+[Frontend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43686958633)
+passed its UI and browser acceptance checks and produced byte-identical bytes.
+[Backend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43686958641)
+passed 3,123 core tests, the fresh Debian host fixture, and both new managed-login
+boundary regressions. Its x86-64 backend SHA-256 is
+`0c56ec04676f7d8d70ac098693f1f6683e2cd7effed1acafd8818459075adb29`, with
+input receipt `bf80f43517c0503fb2f198d44b9ec0ae64e21757bc2b67df0bd5720aee66773f`.
+No firewall change is part of this candidate.
+
+**Live p7 deployment, 15 November:** operation
+`48d32d2d-890a-48fb-b2af-a648f67cda3b` is active on `demo.forgesworn.dev`.
+The fresh coherent archive is SHA-256
+`3e6862587110e82d1a3104df676d20ecc3feef73044b4c9d40d263827e7036f8`;
+authenticated off-host decryption matched, and a network-isolated restore
+verified all 107,304 entries with zero unexpected paths. GNU tar independently
+passed its content/xattr/ACL comparison and all 12 selected SQLite databases
+passed integrity checks on copies. The exact historical Wildbloom and Wildbloom
+Node manifests were restored before candidate preparation, preserving their
+running images and all six original container IDs. Manager and nginx health,
+crash recovery, all three local app endpoints and the startup guard pass. The
+active frontend tree is `7a6ef1df03ed1f4689caf042f20e131a50bf9249ff5e5b3b08db2c34e980c9be`.
+No firewall or application-container change was made. The trusted dashboard
+route returns HTTP 200; untrusted external callers retain the intended private
+404. Physical signer launch, post-deployment captures and maintainer approval
+remain pending. See the [live p7 verification receipt](live-p7-verification.json).
 
 For launch review on a backed-up test node with File Browser installed and a
 login signer enrolled: sign in with the signer, open **My Apps** and launch
