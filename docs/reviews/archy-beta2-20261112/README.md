@@ -328,6 +328,19 @@ or application-container change was made. Physical Spry acceptance and
 post-deployment captures remain pending. See the
 [live p12 verification receipt](live-p12-verification.json).
 
+**Spry operational statistics working candidate, 15 November:** the Spry app now
+has a **Relay at a glance** panel with readiness, control-link health,
+private/public mode, paired-device count after loading devices, and configured
+allocation limits. It explicitly does not claim live bandwidth or connection
+counters, which the service does not expose remotely. Four focused tests pass,
+including JavaScript syntax and pairing-count updates. Synthetic browser checks
+passed at 1440px and 390px with no horizontal overflow; see
+[desktop](spry-stats-desktop.png) and [mobile](spry-stats-mobile.png) captures.
+The package revision is 5. Hosted Rust/image verification, deployment and live
+acceptance are pending. **Maintainer must review and approve UI work on Spry's
+Relay at a glance and Manage paired devices screens before merging or approval.
+ZAT pending.**
+
 For launch review on a backed-up test node with File Browser installed and a
 login signer enrolled: sign in with the signer, open **My Apps** and launch
 **File Browser**, then continue through its managed-login interstitial. Expected:
@@ -461,6 +474,8 @@ they cannot establish working integrated App Store installation.
 - [Sales mobile with a light OS preference](storage-sales-mobile-os-light.png)
 - [Embedded Wildbloom](integrated-wildbloom.png)
 - [Embedded Spry](integrated-spry.png)
+- [Spry operational statistics desktop](spry-stats-desktop.png)
+- [Spry operational statistics mobile](spry-stats-mobile.png)
 - [Embedded KithMoot Node](integrated-kithmoot-node.png)
 - [Fresh-authorisation incorrect-password response](integrated-fresh-authorization-error.png)
 - [Clipboard-blocked manual pairing link](pairing-copy-blocked-390.png)

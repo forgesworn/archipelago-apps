@@ -3,6 +3,18 @@
 <body data-owner-help="Open Spry from your Archipelago dashboard to pair it."><main><p class="eyebrow">YOUR ARCHIPELAGO</p><h1>Calls, through your node.</h1>
 <p>Pair Spry with KithMoot once. KithMoot will give the people in your calls access automatically.</p>
 <button id="pair">Pair with KithMoot</button><p id="status" role="status" aria-live="polite"></p>
+<section id="operational-stats" aria-label="Relay at a glance">
+<h2>Relay at a glance</h2>
+<dl class="stats-grid">
+<div><dt>Relay</dt><dd id="stat-ready">Starting</dd></div>
+<div><dt>Control link</dt><dd id="stat-control">Starting</dd></div>
+<div><dt>Mode</dt><dd id="stat-mode">Private mesh</dd></div>
+<div><dt>Paired devices</dt><dd id="stat-devices">Not loaded</dd></div>
+<div><dt>Call capacity</dt><dd>32 allocations</dd></div>
+<div><dt>Per device</dt><dd>8 allocations</dd></div>
+</dl>
+<p class="quiet">Operational status and configured limits, not live bandwidth counters.</p>
+</section>
 <section id="handoff" hidden aria-label="Pair KithMoot">
 <p>Open the KithMoot app where you are already signed in.</p>
 <p><a id="open-app" class="button">Open KithMoot app</a></p>

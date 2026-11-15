@@ -77,6 +77,14 @@ Existing credentials and allocations expire within five minutes. The node
 persists pairings and grants privately across restarts; room capabilities
 have a 30-day idle lease extended through use. No arbitrary proxy is installed.
 
+## Operational statistics
+
+**Relay at a glance** reports readiness, control-link health, private/public
+mode, the paired-device count after loading devices, and configured allocation
+limits. These are operational and configured values, not live bandwidth or
+connection counters. The relay library has process-local counters, but the
+service does not expose them through a remote metrics API.
+
 ## Verification
 
 Run Rust fmt, clippy and workspace tests. Image CI builds both native
