@@ -12,6 +12,19 @@ historical references for their named alpha revisions. See
 compatibility evidence, unresolved gates and the mapping of integrated work.
 Old qualification notes retained inside patches do not establish beta acceptance.
 
+## Native app launch preflight and My Apps tabs (archy `5aac0d2`)
+
+The legacy Apps and icon-grid launchers requested `package.credentials-authorize`
+for every app before launch. For native apps this turned an ordinary launch into
+an unrelated credential-export password prompt. Patch 0042 limits that preflight
+to the existing managed interstitials and Qortal, whose API-key flow is retained.
+KithMoot Node, Spry, Wildbloom and Wildbloom Node now launch directly through the
+existing session gate. It also adds those apps to the generated launcher-title
+map so their declared UIs remain under My Apps instead of Web. Explicit credential
+display/export still requires fresh password proof. Regressions cover the native
+launch without a credential RPC, Qortal and managed-login prompt compatibility,
+and all four My Apps classifications.
+
 ## Native app authentication with a linked signer (archy `5aac0d2`)
 
 Beta2 still requires fresh password proof for `identity.nostr-sign`, even when

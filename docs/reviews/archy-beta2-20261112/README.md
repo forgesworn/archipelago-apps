@@ -196,6 +196,23 @@ No firewall or application-container change was made. Physical signer acceptance
 and post-deployment captures remain pending. See the
 [live p8 verification receipt](live-p8-verification.json).
 
+**Patch-level-9 working candidate, 15 November:** owner acceptance showed that
+the remaining ordinary-launch password was caused by both legacy Apps launchers
+preflighting `package.credentials-authorize` for every app, not only managed
+logins. Patch 42 limits that preflight to the existing managed interstitials and
+Qortal, preserving its API-key flow. KithMoot Node, Spry, Wildbloom and Wildbloom
+Node now launch directly and are included in the generated launcher-title map,
+keeping their declared UIs under My Apps rather than Web. Credential display and
+export retain fresh password proof, and the p8 backend remains compatible. All
+107 focused launcher tests, clean patch validation and the production frontend
+build pass. The assembled source is `359a65220bbb2b0f8ab294e7cfd379c6589dd394`;
+local frontend SHA-256 is `50f2a0dacac44390ef1af9a8fbc1253716412254101cb572b3d8984887d938f7`,
+with input receipt `a6ea806da1e170241c955550a00f794b1593780b8ba15f6df1dcb747257c2284`.
+Exact CI artifacts will be recorded before deployment. Hosted CI, deployment and
+physical acceptance are pending. Review **My Apps** in both desktop and icon-grid
+modes, direct native launches, File Browser's managed-login interstitial and
+Qortal's existing credential prompt.
+
 For launch review on a backed-up test node with File Browser installed and a
 login signer enrolled: sign in with the signer, open **My Apps** and launch
 **File Browser**, then continue through its managed-login interstitial. Expected:
