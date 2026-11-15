@@ -233,6 +233,18 @@ No firewall or application-container change was made. Physical acceptance and
 post-deployment captures remain pending. See the
 [live p9 verification receipt](live-p9-verification.json).
 
+**Patch-level-10 working candidate, 15 November:** owner acceptance still reached
+`identity.sign` because the saved linked identity predated the `origin` field.
+Patch 43 resolves legacy selections with authenticated `identity.get`, uses the
+native Nostr handoff only when the backend confirms `linked`, and writes the
+corrected origin back to storage. Explicit local identities retain their Ed25519
+proof. The regression and all 108 focused launcher tests, clean patch validation
+and the production frontend build pass. Assembled source is
+`613479a7bbda317e38609f7bcc7965bd7f54f5e1`; local frontend SHA-256 is
+`f5aafeb1fa8b9cbe8d6b28fa323aa0e925b742023828bec6b1cd260b08bb1153`,
+with input receipt `d73da105037ad6b1d6ab8971cd6295eea5ddad50b35799a523b23848d14559ee`.
+Hosted CI, deployment and physical acceptance are pending.
+
 For launch review on a backed-up test node with File Browser installed and a
 login signer enrolled: sign in with the signer, open **My Apps** and launch
 **File Browser**, then continue through its managed-login interstitial. Expected:

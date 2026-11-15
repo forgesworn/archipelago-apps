@@ -12,6 +12,17 @@ historical references for their named alpha revisions. See
 compatibility evidence, unresolved gates and the mapping of integrated work.
 Old qualification notes retained inside patches do not establish beta acceptance.
 
+## Legacy linked-identity storage in native apps (archy `5aac0d2`)
+
+Native app identity selections saved before the `origin` field existed have no
+way for the launcher to distinguish a linked identity from a local one. Patch
+0043 resolves those legacy selections with authenticated `identity.get` before
+choosing the signing path. A confirmed linked identity uses the native Nostr
+handoff and the corrected origin is written back to storage; it no longer falls
+into the impossible Ed25519 `identity.sign` password prompt. Explicit local
+identities retain their existing proof. The regression covers a legacy linked
+selection with no origin field alongside the existing linked and local controls.
+
 ## Native app launch preflight and My Apps tabs (archy `5aac0d2`)
 
 The legacy Apps and icon-grid launchers requested `package.credentials-authorize`
