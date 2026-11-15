@@ -12,6 +12,21 @@ historical references for their named alpha revisions. See
 compatibility evidence, unresolved gates and the mapping of integrated work.
 Old qualification notes retained inside patches do not establish beta acceptance.
 
+## Native app authentication with a linked signer (archy `5aac0d2`)
+
+Beta2 still requires fresh password proof for `identity.nostr-sign`, even when
+the selected identity's NIP-46 signer is about to receive and approve the exact
+full event. Its generic launcher also attempts an Ed25519 `identity.sign` proof
+for linked identities although their private keys are not on the node. Patch
+0041 lets native Nostr apps (Wildbloom, Wildbloom Node, Spry and KithMoot Node)
+receive the linked public identity without that impossible generic proof. The
+app's actual full-event signing request then goes to the linked signer, whose
+verified response is the fresh proof. The backend requires a valid session, an
+explicit linked identity and a full event. Local identities, raw hashes, generic
+`identity.sign`, credential displays/exports and all other sensitive operations
+retain their existing password grants. Regressions cover those boundaries and
+the KithMoot/local identity handoffs.
+
 ## Managed app login from a signer session (archy `5aac0d2`)
 
 Beta2 requires fresh password proof before `package.credentials-authorize`,

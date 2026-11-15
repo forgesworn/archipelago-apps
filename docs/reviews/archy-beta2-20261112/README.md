@@ -151,20 +151,41 @@ crash recovery, all three local app endpoints and the startup guard pass. The
 active frontend tree is `7a6ef1df03ed1f4689caf042f20e131a50bf9249ff5e5b3b08db2c34e980c9be`.
 No firewall or application-container change was made. The trusted dashboard
 route returns HTTP 200; untrusted external callers retain the intended private
-404. Physical signer launch, post-deployment captures and maintainer approval
-remain pending. See the [live p7 verification receipt](live-p7-verification.json).
+404. Owner acceptance then confirmed that p7 did not complete signer-only app
+authentication: linked `identity.sign` still failed. The separately requested
+KithMoot **Show application credentials** operation remains intentionally
+password-protected. See the [live p7 verification receipt](live-p7-verification.json).
+
+**Patch-level-8 working candidate, 15 November:** patch 41 addresses the failed
+linked-identity path without adding general signer support for sensitive
+reauthentication. Wildbloom, Wildbloom Node, Spry and KithMoot Node receive the
+linked public identity without an impossible Ed25519 signature, then their real
+full-event request goes to the linked signer and its verified response is the
+fresh proof. A valid session and explicit linked identity are required. Local
+identities, raw hashes, generic `identity.sign`, credential displays/exports and
+other sensitive operations retain password grants. Five focused frontend tests,
+106 Python tests, clean patch validation and the production frontend build pass.
+The assembled source is `1acc4e98b35b025aa305a0765d43f08fbfbf6cbc`; frontend
+SHA-256 is `8a5ef416a7476e15e1d28ca5146b3f44cbcf0ab112d46c0a4c83e5560df601f7`,
+with input receipt `b02037f7d33a224b733bda740ed2738bce580162210aa4e1ba9bc0ab7ae7223c`.
+Hosted backend/frontend CI, deployment and physical acceptance are pending.
 
 For launch review on a backed-up test node with File Browser installed and a
 login signer enrolled: sign in with the signer, open **My Apps** and launch
 **File Browser**, then continue through its managed-login interstitial. Expected:
 no second node-password demand, the existing owner session and one-use
 capability are accepted, and the app opens. Launch **Wildbloom** from the same
-page and confirm its existing HTTPS gate. Invalid sessions, CSRF and origins must
-remain refused by the automated boundary test. No visual source or styling is
-changed; capture the working launch interstitial and embedded app after the
-candidate is deployed. Maintainer must review and approve UI work on **My Apps,
-the File Browser launch interstitial and embedded app, and Wildbloom launch**
-before merging or approval. ZAT pending.
+page and confirm its existing HTTPS gate. Launch **KithMoot Node**, choose the
+linked identity, and approve its real Nostr sign-in event on the signer. Expected:
+no node-password demand and no impossible Ed25519 request; the signer receives
+the exact full event and the app opens. Repeat the linked sign-in on **Wildbloom**
+and **Spry**. Confirm **Show application credentials** still requests fresh
+password proof. Invalid sessions, local identities, raw hashes, CSRF and origins
+must remain refused by automated boundaries. No visual styling is changed;
+capture the identity chooser, signer consent and embedded apps after deployment.
+Maintainer must review and approve UI work on **My Apps, the File Browser launch
+interstitial and embedded app, and the KithMoot Node, Wildbloom and Spry identity
+choosers, signing consent and embedded apps** before merging or approval. ZAT pending.
 
 **Linked integration evidence, 13 November:** a real `nak` NIP-46 signer and
 loopback relay passed linked identity creation, secret-free export,

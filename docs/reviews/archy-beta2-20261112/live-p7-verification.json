@@ -46,6 +46,10 @@
   "firewallChanged": false,
   "applicationContainersRecreated": false,
   "physicalSignerLaunchAccepted": false,
+  "physicalSignerObservedFailures": [
+    "identity.sign for a linked identity",
+    "package.credentials-authorize for kithmoot-node (credential display remains protected)"
+  ],
   "postDeploymentCapturesComplete": false,
   "maintainerUiApproval": "ZAT pending"
 }
