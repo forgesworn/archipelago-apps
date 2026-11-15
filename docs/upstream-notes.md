@@ -12,6 +12,17 @@ historical references for their named alpha revisions. See
 compatibility evidence, unresolved gates and the mapping of integrated work.
 Old qualification notes retained inside patches do not establish beta acceptance.
 
+## Linked identities across every app identity injector (archy `5aac0d2`)
+
+Patch 0043 resolved legacy origins only in the overlay injector and only for
+four app IDs. A second App Session injector still called Ed25519 `identity.sign`
+for linked identities. Patch 0044 applies the correct rule in both injectors: a
+linked identity has no node-local Ed25519 private key, so the dashboard sends
+its public fields without claiming an Ed25519 proof and lets the app's actual
+full Nostr event go to the linked signer. Legacy origins are resolved with
+authenticated `identity.get`; explicit local identities retain their existing
+proof. Regressions cover both injectors and legacy linked storage.
+
 ## Legacy linked-identity storage in native apps (archy `5aac0d2`)
 
 Native app identity selections saved before the `origin` field existed have no

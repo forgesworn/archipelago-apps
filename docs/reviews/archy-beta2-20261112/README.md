@@ -264,6 +264,19 @@ or application-container change was made. Physical acceptance and post-deploymen
 captures remain pending. See the
 [live p10 verification receipt](live-p10-verification.json).
 
+**Patch-level-11 working candidate, 15 November:** the owner's detailed
+acceptance flow confirmed that the second App Session identity injector still
+called `identity.sign`. Patch 44 removes the app allowlist and applies the same
+rule in both injectors: linked identities never request an impossible
+node-local Ed25519 signature. Only public fields are injected; the app's real
+full Nostr event then goes to Heartwood. Local identities retain their existing
+proof, and legacy origins are resolved through `identity.get`. All 113 focused
+launcher and identity tests, clean patch validation and the production frontend
+build pass. Assembled source is `8e420b5d486d2e2a083728b6b0e481b668c3852f`;
+local frontend SHA-256 is `a143975bc4b97245dd720a4853d2208c3da5dec7c1931d87db8775185aa587eb`,
+with input receipt `1ac9ba8f9f78df954d39624ad0c1258ede1ab33ba0b3eb2cc6fe2c2e3c3abec0`.
+Hosted CI, deployment and physical acceptance are pending.
+
 For launch review on a backed-up test node with File Browser installed and a
 login signer enrolled: sign in with the signer, open **My Apps** and launch
 **File Browser**, then continue through its managed-login interstitial. Expected:
