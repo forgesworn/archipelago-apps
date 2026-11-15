@@ -115,6 +115,34 @@ overflow. No payment, message, room change or refund was submitted. See the
 are retained privately, not published in this pack. Physical signer/client
 acceptance and ZAT remain pending.
 
+**Patch-level-7 working candidate, 15 November:** the uncommitted
+`fix/signer-app-launch-20261115` branch is based on p6 commit `14c141a`.
+Patch 40 adopts current upstream's managed-app-login exemption for File Browser,
+Datum, PhotoPrism, Grafana and Portainer. It leaves Qortal, unknown apps, key
+exports, security changes and funds operations under fresh password proof. The
+runtime recipe retains Spry, Wildbloom and Wildbloom Node manifests across
+frontend updates; it does not add catalogue installation authority.
+
+Local checks: 106 Python tests and the manifest validator pass. The production
+frontend assembled at `f095d66f1e566f8f562e3231677c267800cd1849`; archive
+SHA-256 `0366459f1fa711ca64c9787ac2df91162d022e011895fd0c72b8b015482d8c02`,
+input receipt `cfbc62cd32e09cca781e45bb18a731f4a0941ec676e5d39ee095d1b896ffe854`.
+The archive's three bundled manifests match their pinned sources byte-for-byte.
+The isolated Rust boundary tests and x86-64 production backend are not yet
+complete. No p7 live deployment or firewall change has been made.
+
+For launch review on a backed-up test node with File Browser installed and a
+login signer enrolled: sign in with the signer, open **My Apps** and launch
+**File Browser**, then continue through its managed-login interstitial. Expected:
+no second node-password demand, the existing owner session and one-use
+capability are accepted, and the app opens. Launch **Wildbloom** from the same
+page and confirm its existing HTTPS gate. Invalid sessions, CSRF and origins must
+remain refused by the automated boundary test. No visual source or styling is
+changed; capture the working launch interstitial and embedded app after the
+candidate is deployed. Maintainer must review and approve UI work on **My Apps,
+the File Browser launch interstitial and embedded app, and Wildbloom launch**
+before merging or approval. ZAT pending.
+
 **Linked integration evidence, 13 November:** a real `nak` NIP-46 signer and
 loopback relay passed linked identity creation, secret-free export,
 fresh-authorised event signing, login-signer enrolment and signer login on the

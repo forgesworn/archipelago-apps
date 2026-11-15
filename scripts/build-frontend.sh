@@ -95,10 +95,12 @@ for entry in "$dist"/* "$dist"/.[!.]*; do
   cp -R "$entry" "$work/tree/"
 done
 
-# Include Spry's runtime definition. The verified catalogue still controls
+# Include our runtime definitions. The verified catalogue still controls
 # whether the beta App Store permits a new installation.
-mkdir -p "$work/tree/archipelago-runtime/apps/spry"
-cp "$root/apps/spry/manifest.yml" "$work/tree/archipelago-runtime/apps/spry/manifest.yml"
+for app in spry wildbloom wildbloom-node; do
+  mkdir -p "$work/tree/archipelago-runtime/apps/$app"
+  cp "$root/apps/$app/manifest.yml" "$work/tree/archipelago-runtime/apps/$app/manifest.yml"
+done
 
 # Beta runtime and backend helpers are one compatibility unit. Retaining the
 # upstream copies here would omit our ingress/lifecycle fixes. Regenerate the

@@ -1,0 +1,168 @@
+From f3b7c0d0c58df6f772b6ce26cd529970eb072e8d Mon Sep 17 00:00:00 2001
+From: ForgeSworn <ci@invalid>
+Date: Sun, 15 Nov 2026 00:23:08 +0000
+Subject: [PATCH 40/40] Allow managed app login from a signer session
+
+---
+diff --git a/core/archipelago/src/api/rpc/credential_boundary_tests.rs b/core/archipelago/src/api/rpc/credential_boundary_tests.rs
+index 216cb6c..ecda3d8 100644
+--- a/core/archipelago/src/api/rpc/credential_boundary_tests.rs
++++ b/core/archipelago/src/api/rpc/credential_boundary_tests.rs
+@@ -97,29 +97,34 @@ async fn credentials_require_admin_csrf_and_single_use_session_bound_capability(
+     let raw_body = hyper::body::to_bytes(raw.into_body()).await.unwrap();
+     assert!(!String::from_utf8_lossy(&raw_body).contains(secret));
+ 
+-    let refused = handler
+-        .clone()
+-        .handle(request(
+-            "package.credentials-authorize",
+-            &token,
+-            &csrf,
+-            Some("https://node.example"),
+-            serde_json::json!({"app_id":"datum"}),
+-        ))
+-        .await
+-        .unwrap();
+-    let refused: serde_json::Value =
+-        serde_json::from_slice(&hyper::body::to_bytes(refused.into_body()).await.unwrap()).unwrap();
+-    assert_eq!(refused["error"]["code"], -32041);
+-    assert!(handler.credential_capabilities.lock().await.is_empty());
++    // No fresh password is needed for managed app login details, but a
++    // missing session/CSRF or non-dashboard origin must still fail closed.
++    for (session, csrf_value, origin) in [
++        ("invalid", csrf.as_str(), Some("https://node.example")),
++        (token.as_str(), "invalid", Some("https://node.example")),
++        (token.as_str(), csrf.as_str(), None),
++        (
++            token.as_str(),
++            csrf.as_str(),
++            Some("https://node.example:8337"),
++        ),
++    ] {
++        let refused = handler
++            .clone()
++            .handle(request(
++                "package.credentials-authorize",
++                session,
++                csrf_value,
++                origin,
++                serde_json::json!({"app_id":"datum"}),
++            ))
++            .await
++            .unwrap();
++        let bytes = hyper::body::to_bytes(refused.into_body()).await.unwrap();
++        assert!(!String::from_utf8_lossy(&bytes).contains(secret));
++        assert!(handler.credential_capabilities.lock().await.is_empty());
++    }
+ 
+-    let proof = handler.clone().handle(request(
+-        "auth.reauthenticate", &token, &csrf, Some("https://node.example"),
+-        serde_json::json!({"method":"package.credentials-authorize", "params":{"app_id":"datum"}, "password":"Credential-Test123!"}),
+-    )).await.unwrap();
+-    let proof: serde_json::Value =
+-        serde_json::from_slice(&hyper::body::to_bytes(proof.into_body()).await.unwrap()).unwrap();
+-    let grant = proof["result"]["reauth_token"].as_str().unwrap();
+     let minted = handler
+         .clone()
+         .handle(request(
+@@ -127,7 +132,7 @@ async fn credentials_require_admin_csrf_and_single_use_session_bound_capability(
+             &token,
+             &csrf,
+             Some("https://node.example"),
+-            serde_json::json!({"app_id":"datum", "reauth_token":grant}),
++            serde_json::json!({"app_id":"datum"}),
+         ))
+         .await
+         .unwrap();
+@@ -165,13 +170,6 @@ async fn credentials_require_admin_csrf_and_single_use_session_bound_capability(
+     let replay_body = hyper::body::to_bytes(replay.into_body()).await.unwrap();
+     assert!(!String::from_utf8_lossy(&replay_body).contains(secret));
+ 
+-    let proof = handler.clone().handle(request(
+-        "auth.reauthenticate", &token, &csrf, Some("https://node.example"),
+-        serde_json::json!({"method":"package.credentials-authorize", "params":{"app_id":"datum"}, "password":"Credential-Test123!"}),
+-    )).await.unwrap();
+-    let proof: serde_json::Value =
+-        serde_json::from_slice(&hyper::body::to_bytes(proof.into_body()).await.unwrap()).unwrap();
+-    let grant = proof["result"]["reauth_token"].as_str().unwrap();
+     let reminted = handler
+         .clone()
+         .handle(request(
+@@ -179,7 +177,7 @@ async fn credentials_require_admin_csrf_and_single_use_session_bound_capability(
+             &token,
+             &csrf,
+             Some("https://node.example"),
+-            serde_json::json!({"app_id":"datum", "reauth_token":grant}),
++            serde_json::json!({"app_id":"datum"}),
+         ))
+         .await
+         .unwrap();
+diff --git a/core/archipelago/src/api/rpc/reauth.rs b/core/archipelago/src/api/rpc/reauth.rs
+index 3f5b98d..121830b 100644
+--- a/core/archipelago/src/api/rpc/reauth.rs
++++ b/core/archipelago/src/api/rpc/reauth.rs
+@@ -200,7 +200,19 @@ impl RpcHandler {
+         session: &Option<String>,
+     ) -> Result<()> {
+         let policy = crate::settings::session_policy::load(&self.config.data_dir).await;
+-        if !protected(method, policy.reauth_for_funds) {
++        // Managed app UI logins are part of ordinary authenticated app launch.
++        // The HTTP boundary still requires owner session, CSRF, dashboard origin
++        // and a one-use app/session-bound capability. Other exports (including
++        // Qortal's API key) retain fresh proof.
++        let managed_app_login = method == "package.credentials-authorize"
++            && matches!(
++                params
++                    .as_ref()
++                    .and_then(|p| p.get("app_id"))
++                    .and_then(Value::as_str),
++                Some("filebrowser" | "datum" | "photoprism" | "grafana" | "portainer")
++            );
++        if !protected(method, policy.reauth_for_funds) || managed_app_login {
+             return Ok(());
+         }
+         let session = session.as_deref().context(REQUIRED)?;
+@@ -442,4 +454,41 @@ mod tests {
+             );
+         }
+     }
++
++    #[tokio::test]
++    async fn managed_app_logins_skip_fresh_proof_but_other_credentials_do_not() {
++        let (handler, _directory) = test_rpc_handler().await;
++        for app in ["filebrowser", "datum", "photoprism", "grafana", "portainer"] {
++            handler
++                .enforce_fresh_authorization(
++                    "package.credentials-authorize",
++                    &mut Some(serde_json::json!({"app_id": app})),
++                    &None,
++                )
++                .await
++                .unwrap();
++        }
++        for params in [
++            None,
++            Some(serde_json::json!({})),
++            Some(serde_json::json!({"app_id":"qortal"})),
++            Some(serde_json::json!({"app_id":"unknown"})),
++        ] {
++            assert!(handler
++                .enforce_fresh_authorization(
++                    "package.credentials-authorize",
++                    &mut params.clone(),
++                    &None
++                )
++                .await
++                .is_err());
++        }
++        for method in [
++            "identity.export-keys",
++            "security.rotate-app-admin",
++            "wallet.ecash-send",
++        ] {
++            assert!(protected(method, true));
++        }
++    }
+ }
+-- 
+2.52.0

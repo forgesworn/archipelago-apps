@@ -12,6 +12,19 @@ historical references for their named alpha revisions. See
 compatibility evidence, unresolved gates and the mapping of integrated work.
 Old qualification notes retained inside patches do not establish beta acceptance.
 
+## Managed app login from a signer session (archy `5aac0d2`)
+
+Beta2 requires fresh password proof before `package.credentials-authorize`,
+including ordinary managed UI logins. A linked signer can establish an admin
+session but cannot satisfy that second password prompt, so File Browser's
+launch interstitial cannot proceed. Patch 0040 adopts current upstream's narrow
+managed-login exemption for File Browser, Datum, PhotoPrism, Grafana and
+Portainer. The existing owner-session, CSRF, dashboard-origin and one-use
+app/session-bound capability checks remain. Qortal, unknown apps, key exports,
+security changes and funds operations retain fresh proof. The regressions cover
+all five managed apps, those negative boundaries, invalid sessions/CSRF/origins,
+capability session binding and single-use redemption.
+
 ## Manifest lifecycle controls on Docker (archy `7f0318c`)
 
 The production orchestrator already selects Docker from the node configuration,
