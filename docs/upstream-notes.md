@@ -12,6 +12,16 @@ historical references for their named alpha revisions. See
 compatibility evidence, unresolved gates and the mapping of integrated work.
 Old qualification notes retained inside patches do not establish beta acceptance.
 
+## Spry must select an identity before signing (archy `5aac0d2`)
+
+Spry did not open the identity picker on first launch and its sign-in fell back
+to `node.nostr-sign`, requesting fresh password proof for the appliance key.
+Patch 0045 adds Spry and the other native apps to App Session's identity-aware
+set so first launch offers a selection. Their Nostr bridge now refuses node
+signing when no identity is selected instead of silently using the appliance
+key. Existing linked/local signing and non-identity-aware app behavior remain.
+Regressions cover first-launch selection and the no-fallback boundary.
+
 ## Linked identities across every app identity injector (archy `5aac0d2`)
 
 Patch 0043 resolved legacy origins only in the overlay injector and only for

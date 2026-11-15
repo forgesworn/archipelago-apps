@@ -297,6 +297,19 @@ identity selection and Heartwood sign-in work without a node-password or
 authenticator prompt. Post-deployment captures and maintainer ZAT remain pending.
 See the [live p11 verification receipt](live-p11-verification.json).
 
+**Patch-level-12 working candidate, 15 November:** Spry's `node.nostr-sign`
+fallback used the appliance key because no identity was selected. Patch 45 adds
+Spry and the other native apps to App Session's first-launch identity picker and
+refuses node signing when an identity-aware app has no selected identity. This
+preserves linked/local signing and non-identity-aware app behavior. The Spry
+regressions and all 232 App Session/launcher tests, clean patch validation and
+the production frontend build pass. Assembled source is
+`b363018ec0feef063fcf39dd16842c3cef52db15`; local frontend SHA-256 is
+`100b566c76847dea42c9e97e01d2d74088b36b01b66064b52d6343f3f67751df`,
+with input receipt `618ceac3b4674106c90110378655a9d5897131e0cb1b4b0f13a8ebc195123681`.
+Exact CI artifacts will be recorded before deployment. Hosted CI, deployment and
+physical Spry acceptance are pending.
+
 For launch review on a backed-up test node with File Browser installed and a
 login signer enrolled: sign in with the signer, open **My Apps** and launch
 **File Browser**, then continue through its managed-login interstitial. Expected:
