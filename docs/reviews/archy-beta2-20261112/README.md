@@ -264,7 +264,7 @@ or application-container change was made. Physical acceptance and post-deploymen
 captures remain pending. See the
 [live p10 verification receipt](live-p10-verification.json).
 
-**Patch-level-11 working candidate, 15 November:** the owner's detailed
+**Patch-level-11 CI candidate, 15 November:** the owner's detailed
 acceptance flow confirmed that the second App Session identity injector still
 called `identity.sign`. Patch 44 removes the app allowlist and applies the same
 rule in both injectors: linked identities never request an impossible
@@ -275,7 +275,26 @@ launcher and identity tests, clean patch validation and the production frontend
 build pass. Assembled source is `8e420b5d486d2e2a083728b6b0e481b668c3852f`;
 local frontend SHA-256 is `a143975bc4b97245dd720a4853d2208c3da5dec7c1931d87db8775185aa587eb`,
 with input receipt `1ac9ba8f9f78df954d39624ad0c1258ede1ab33ba0b3eb2cc6fe2c2e3c3abec0`.
-Hosted CI, deployment and physical acceptance are pending.
+[Frontend CI](https://github.com/forgesworn/archipelago-apps/actions/runs/43709473971)
+passed. Its exact source is `9c97e082535510202586a6c58e3a93031958adba`;
+archive SHA-256 is `c859b90d1ae706eba349d3190516857403ab69545271ef8500210c4b9a645948`.
+Only the three generated source-metadata files differ from local; all 1,279
+other files are byte-identical. Physical acceptance is pending.
+
+**Live p11 deployment, 15 November:** operation
+`10688326-d365-43e8-a13d-b7f5d057ce14` is active on `demo.forgesworn.dev`.
+The backend remains at the verified p8 hash. The fresh recovery archive is
+SHA-256 `60a5c451539484a11c0760e8eaf50fc87f18bf76f5bfad103236f73d2f59ad9f`;
+authenticated off-host decryption matched, and a pristine network-isolated
+restore verified all 113,281 entries with zero unexpected paths. GNU tar passed
+its content/xattr/ACL comparison and all 12 selected SQLite checks passed on
+copies. The active frontend tree is
+`6ded1f80c6f7da97fafa8a51b92f3452d335a298e636223dfd43104c610e8e59`.
+Manager health, crash recovery, the trusted dashboard and all three local app
+endpoints pass; all six original container IDs and images remain. No firewall
+or application-container change was made. Physical acceptance and post-deployment
+captures remain pending. See the
+[live p11 verification receipt](live-p11-verification.json).
 
 For launch review on a backed-up test node with File Browser installed and a
 login signer enrolled: sign in with the signer, open **My Apps** and launch
