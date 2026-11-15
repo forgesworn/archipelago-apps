@@ -37,7 +37,9 @@
   "recoverySqliteDatabasesPassed": 12,
   "firewallChanged": false,
   "applicationContainersRecreated": false,
-  "physicalSignerLaunchAccepted": false,
+  "physicalSignerLaunchAccepted": true,
+  "ownerAcceptedAt": "2026-11-15T12:00:46Z",
+  "ownerAcceptance": "Launch, choose identity and sign in completed using Heartwood without a node-password or authenticator prompt",
   "postDeploymentCapturesComplete": false,
   "maintainerUiApproval": "ZAT pending"
 }
