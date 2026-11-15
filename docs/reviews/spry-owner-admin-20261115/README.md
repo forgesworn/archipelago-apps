@@ -11,11 +11,12 @@ acceptance. No maintainer has been contacted.
 
 - Archipelago app revision: `1ad8dec1fdba83872361e7e57d971bb5c5289d3d`, branch
   `feat/spry-owner-admin-20261115`.
-- Spry library revision: `5ce6ae49fc634b1b9c931c14f4cdc39b9ecfca8e`, branch
+- Spry library revision: `77fbf90e5f8ad8abd339d3a67701a8ad6f3a22cf`, branch
   `feat/spry-owner-admin-20261115`.
-- Intended image tag: `ghcr.io/forgesworn/spry:0.1.0-5ce6ae4-6`.
-- Both revisions are local. No image or release has been published and demo
-  remains unchanged. The app lockfile resolves all four Spry crates to the
+- Intended image tag: `ghcr.io/forgesworn/spry:0.1.0-77fbf90-6`.
+- The library revision is public on [spry-turn PR45](https://github.com/forgesworn/spry-turn/pull/45);
+  the app candidate is local. No image or frontend release has been published
+  and demo remains unchanged. The app lockfile resolves all Spry crates to the
   exact library revision above; `cargo build --locked -p spry-node` passes.
 
 ## Screen changes
