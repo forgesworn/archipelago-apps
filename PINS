@@ -18,8 +18,8 @@ WILDBLOOM_NODE_REF=b9a7cf48752037fe3588e62ec3a6a12aaebf7ee5
 # The node never re-pulls an existing tag, so every image change needs a new tag.
 WILDBLOOM_PKG_REV=5
 WILDBLOOM_NODE_PKG_REV=3
-SPRY_REF=72d547650a1f7403a1d025a44c2753a40c0a9db7
-SPRY_PKG_REV=7
+SPRY_REF=a84bede353b21f168c3eb7ad030e45b5d501d6d4
+SPRY_PKG_REV=8
 # Bumped whenever upstream/patches changes; names the backend release asset.
 BACKEND_PATCH_LEVEL=12
 # Frontend build: bumped whenever upstream/patches or the build recipe changes;
