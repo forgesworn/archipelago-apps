@@ -9,7 +9,7 @@ acceptance. No maintainer has been contacted.
 
 ## Candidate
 
-- Archipelago app revision: `1ad8dec1fdba83872361e7e57d971bb5c5289d3d`, branch
+- Archipelago app revision: `fcc05c24e3e06ceaa2b1db04e684e6241b3bd47e`, branch
   `feat/spry-owner-admin-20261115`.
 - Spry library revision: `77fbf90e5f8ad8abd339d3a67701a8ad6f3a22cf`, branch
   `feat/spry-owner-admin-20261115`.
