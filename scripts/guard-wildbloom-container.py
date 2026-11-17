@@ -35,9 +35,9 @@ def render(config):
         ' chain output {',
         '  type filter hook output priority 10; policy accept;',
         '  ct direction reply ct state { established, related } counter accept',
-        # Archy's existing in-container health check connects to localhost.
-        '  ip daddr 127.0.0.1 tcp dport 3742 counter accept',
-        '  ip6 daddr ::1 tcp dport 3742 counter accept',
+        # Health checks use loopback. Rootless port forwarding also opens a
+        # connection to this namespace's own bridge address on the app port.
+        '  fib daddr type local tcp dport 3742 counter accept',
     ]
     for ip in addresses['dns_servers']:
         family = 'ip' if ip.version == 4 else 'ip6'

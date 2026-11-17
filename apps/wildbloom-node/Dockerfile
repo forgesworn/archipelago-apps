@@ -18,6 +18,11 @@ RUN git clone --quiet --no-checkout https://github.com/forgesworn/shelter-kit.gi
     && git -C vendor/shelter-kit apply /patches/shelter-sales-capacity.patch \
     && git apply --check /patches/checkout-sales-capacity.patch \
     && git apply /patches/checkout-sales-capacity.patch
+# Permission-failure tests must run without root's DAC bypass, as on the
+# upstream CI runners. Keep the build user and its Cargo cache out of runtime.
+RUN useradd --create-home --uid 10001 builder && chown -R builder:builder /src
+USER builder
+ENV CARGO_HOME=/home/builder/.cargo
 RUN cargo test --locked --workspace \
     && cargo test --locked --manifest-path vendor/shelter-kit/Cargo.toml --lib \
     && cargo build --release --locked -p wildbloomd -p wildbloom-checkout --bin wildbloomd --bin checkout-operator
