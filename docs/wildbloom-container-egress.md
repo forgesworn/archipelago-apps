@@ -24,3 +24,7 @@ Only responses to incoming connections, TCP 3742 on the container’s own addres
 Before installing, rehearse in a disposable container with the same rootless network. Prove blocked destinations with listening synthetic fixtures and check public TCP, DNS over UDP/TCP and replies to incoming connections. Preserve the container volume and payment ledger using the offline backup procedure in `wildbloom-upgrade.md`.
 
 Service startup behaviour: [systemd.service](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#ExecStartPre=).
+
+## Qualification on 17 November 2026
+
+On the existing private Debian 13 node with rootless Podman 5.4.2, disposable containers proved nine previously reachable IPv4/IPv6 private, loopback, metadata and node-public test addresses became unreachable. Public TCP, DNS over UDP/TCP, in-container IPv4/IPv6 health connections and replies through the real rootless published port remained available. A real Quadlet start/restart recreated the guard for different container IDs; invalid guard configuration failed startup and removed the workload. The fixtures and their temporary unit were removed. This qualifies the namespace guard independently of any live image update.

@@ -25,7 +25,7 @@ for (const [type, body, active] of fixtures) {
     Authorization: `Nostr ${Buffer.from(JSON.stringify(event)).toString('base64')}`,
     'X-SHA-256': hash, 'Content-Type': type,
   }});
-  assert.equal(upload.status, 200, `${type} upload: ${await upload.text()}`);
+  assert.equal(upload.status, 201, `${type} upload: ${await upload.text()}`);
   for (const [method, headers, status] of [['GET', {}, 200], ['HEAD', {}, 200], ['GET', {Range: 'bytes=0-2'}, 206]]) {
     const response = await fetch(`${origin}/${hash}`, {method, headers});
     assert.equal(response.status, status, `${type} ${method}`);
