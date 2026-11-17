@@ -56,6 +56,9 @@ jobs:
           load: true
           tags: ${{ needs.wildbloom-node-plan.outputs.tag }}-${{ matrix.arch }}
       - run: tests/smoke/wildbloom-node.sh "${{ needs.wildbloom-node-plan.outputs.tag }}-${{ matrix.arch }}" "${{ matrix.previous }}"
+      - name: Upgrade the exact private-node package without changing stored bytes
+        if: matrix.arch == 'amd64'
+        run: tests/smoke/wildbloom-node.sh "${{ needs.wildbloom-node-plan.outputs.tag }}-${{ matrix.arch }}" ghcr.io/forgesworn/wildbloom-node:0.3.5-4474ce1-2
       - run: |
           sudo apt-get update && sudo apt-get install -y python3-yaml
           node tests/smoke/seller-capacity.mjs "${{ needs.wildbloom-node-plan.outputs.tag }}-${{ matrix.arch }}"

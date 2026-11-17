@@ -13,7 +13,7 @@ COPY checkout-sales-capacity.patch shelter-sales-capacity.patch /patches/
 # Package-scoped patches against the exact Node and Shelter inputs. Keep the
 # original repositories untouched; replace these with upstream pins when merged.
 RUN git clone --quiet --no-checkout https://github.com/forgesworn/shelter-kit.git vendor/shelter-kit \
-    && git -C vendor/shelter-kit checkout --quiet c573ca3da5725fb8bf3d2593ae2c07b0278289a5 \
+    && git -C vendor/shelter-kit checkout --quiet 6ad89f1f281af14410f637f5a3e5f32fc6fae3a9 \
     && git -C vendor/shelter-kit apply --check /patches/shelter-sales-capacity.patch \
     && git -C vendor/shelter-kit apply /patches/shelter-sales-capacity.patch \
     && git apply --check /patches/checkout-sales-capacity.patch \
