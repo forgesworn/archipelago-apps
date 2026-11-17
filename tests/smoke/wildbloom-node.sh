@@ -60,6 +60,7 @@ if [ -n "$previous" ]; then
   echo "Existing bytes survived the version-to-version volume upgrade."
 fi
 (cd "$here" && node storage-proof.mjs "$secret" "$payload")
+(cd "$here" && node blob-serving.mjs "$secret")
 # A stranger's key must be refused. Fresh payload, so the refusal is about auth, not a stored blob.
 stranger=$(openssl rand -hex 32)
 payload2=$scratch/payload2; head -c 4096 /dev/urandom > "$payload2"
