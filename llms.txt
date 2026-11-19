@@ -1,0 +1,13 @@
+# ForgeSworn Archipelago Apps
+
+> ForgeSworn app manifests and runtime integrations for self-hosted Archipelago nodes.
+
+## Documentation
+
+- [App catalogue and integration](https://github.com/forgesworn/archipelago-apps/blob/main/README.md): Packaging scope, operator setup and release boundaries.
+
+## ForgeSworn ecosystem
+
+- [ForgeSworn library guide](https://forgesworn.dev/llms.txt): Find related libraries, tools and integration guides by task and runtime.
+- [ForgeSworn on GitHub](https://github.com/forgesworn): Browse the organisation’s public repositories.
+- [Project source](https://github.com/forgesworn/archipelago-apps): Canonical source repository, documentation and release information.
