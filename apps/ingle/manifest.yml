@@ -44,7 +44,7 @@ app:
       - "0"
       # The games this Keep hosts, one open lobby each, on the one UDP port.
       - --games
-      - stampede,twangthang,gameflock,axenstax
+      - stampede,twangthang,gameflock
       # The always-on AxeNStax world: the Keep runs the AxeNStax server from the image as a
       # child process (as the keep user, over its stdin and stdout, no sockets of its own)
       # and adds the world as the last game, with one persistent room that never closes.
