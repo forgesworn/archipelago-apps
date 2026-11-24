@@ -80,7 +80,7 @@ app:
   resources:
     # 1Gi so the world gets its full 384 MB cap (Ingle holds each world's cap under this
     # limit less 192 MB set aside for the tunnel and Ingle, and the rooms' estimates) with
-    # room left for Stampede and Twang matches. Measured: the world 258-304 MiB in use with
+    # room left for Stampede, Twang and Cluster Flock matches. Measured: the world 258-304 MiB in use with
     # one or two test players near the spawn; Ingle about 13 MB at rest; the tunnel up to
     # about 106 MB. The world's own process only runs while someone is in it. cpu_limit is unmeasured.
     # Written as 1g: the node's renderer (upstream quadlet.rs parse_memory_mib) reads only g, m or a
@@ -145,4 +145,4 @@ app:
 
   metadata:
     author: ForgeSworn
-    tags: [game, multiplayer, stampede, twang, axenstax]
+    tags: [game, multiplayer, stampede, twang, clusterflock, axenstax]
