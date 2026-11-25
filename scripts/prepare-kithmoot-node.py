@@ -16,7 +16,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "experimental/kithmoot-node"
 BASE_IMAGE = "node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c"
-REQUIRED = {"kithmoot-node", "runtime/bin/node", "lib/kithmoot-node.mjs", "bin/spry-node", "bin/bothyd",
+REQUIRED = {"kithmoot-node", "runtime/bin/node", "lib/kithmoot-node.mjs", "bin/spry-node", "bin/wok-roomd",
             "deploy/kithmoot-node.service", "deploy/kithmoot-node-front.service", "licenses/NOTICE.txt",
             "licenses/Node-LICENSE.txt", "licenses/Spry-LICENSE.txt", "licenses/Shelter-LICENSE.txt"}
 
@@ -36,9 +36,12 @@ def verified_bundle(bundle):
     if release.get("v") != 1 or release.get("name") != "kithmoot-node" or release.get("version") != "0.1.0-rc.1" \
             or release.get("platform") not in {"linux-arm64", "linux-x64"} or release.get("distribution") != "private-candidate":
         raise ValueError("A supported private node candidate is required")
+    # The room relay was a private input while it was built from the Bothy node.
+    # From Wok 0.7.0 it is wok-roomd, which is public, and a bundle may say so.
+    # The candidate itself stays private: only that distribution is accepted.
     dependencies = release.get("dependencies", [])
-    if not any(item.get("name") == "shelter" and item.get("visibility") == "private" for item in dependencies):
-        raise ValueError("Shelter must remain an explicitly private input")
+    if not any(item.get("name") == "shelter" and item.get("visibility") in {"private", "public"} for item in dependencies):
+        raise ValueError("The room relay must be a declared input")
     files = release.get("files")
     if not isinstance(files, list) or not REQUIRED <= {item.get("path") for item in files} or len(files) > 64:
         raise ValueError("Incomplete candidate inventory")

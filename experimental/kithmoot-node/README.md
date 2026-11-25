@@ -2,7 +2,9 @@
 
 This is the Archy operator app for the KithMoot room node. It is deliberately
 outside `apps/`: the public catalogue and automatic image publisher do not ship
-it. Shelter remains a private input. No public signed node release is claimed.
+it. Its room relay is `wok-roomd`, which is public in Wok from 0.7.0, and a
+bundle may declare it so. The candidate itself stays private. No public signed
+node release is claimed.
 
 The controller sets up and runs the existing node supervisor as uid/gid 1000.
 It signs no room grants and stores no room keys. Archy owns its HTTPS/TURN TLS

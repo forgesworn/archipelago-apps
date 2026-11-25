@@ -46,10 +46,15 @@ function configuration(facts, limits) {
   return { v: 1, host: facts.host, hosting: 'archy', relayIp: facts.address,
     aggregateBytesPerSecond: limits.aggregateBytesPerSecond, maxBytes: limits.maxBytes, minFreeBytes: limits.minFreeBytes,
     maxRooms: limits.maxRooms, origins: ['https://kithmoot.app', 'https://www.kithmoot.app', 'https://kithmoot.forgesworn.dev'],
-    spryBinary: BASE + '/bin/spry-node', shelterBinary: BASE + '/bin/bothyd',
+    spryBinary: BASE + '/bin/spry-node', shelterBinary: BASE + '/bin/wok-roomd',
     deskPort: 3750, spryPort: 3751, shelterPort: 3752, tlsGate: true,
     turnPorts: { udpTcp: 34790, tls: 53499 }, relayPortFirst: 49192 }
 }
+
+// Choices saved by an image whose room relay was `bothyd` are retried as they
+// were saved. The supervisor runs the `wok-roomd` beside a stored `bothyd`.
+const sameSetup = (saved, proposed) => [proposed, { ...proposed, shelterBinary: BASE + '/bin/bothyd' }]
+  .some(value => JSON.stringify(saved) === JSON.stringify(value))
 
 export class NodeProcess {
   #child
@@ -127,7 +132,7 @@ export class NodeProcess {
       if (!this.#neverRan()) throw new Refused(409, 'configuration-review-required')
       const limits = choices(value), path = join(this.state, 'ui-configuration.json')
       const proposed = configuration(this.facts, limits)
-      if (existsSync(path) && JSON.stringify(readPrivate(path)) !== JSON.stringify(proposed)) throw new Refused(409, 'retry-saved-setup')
+      if (existsSync(path) && !sameSetup(readPrivate(path), proposed)) throw new Refused(409, 'retry-saved-setup')
       if (!existsSync(path)) savePrivate(path, proposed)
       const op = existsSync(join(this.state, 'initialising')) ? 'resume-init' : 'init'
       const reply = await this.#command(op, ['--configuration', path])

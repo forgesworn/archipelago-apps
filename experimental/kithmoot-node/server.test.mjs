@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { request } from 'node:http'
 import { mkdtempSync, writeFileSync, rmSync, chmodSync, symlinkSync, statSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -125,6 +126,35 @@ test('interrupted initialisation remains recoverable even after node.json was wr
   const status = await node.status()
   assert.equal(status.configured, false); assert.equal(status.setupPending, true); assert.equal(status.running, false)
   assert.deepEqual(status.limits, limits)
+})
+
+test('setup names wok-roomd as the room relay, and choices saved while it was bothyd are retried as saved', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'node-companion-saved-relay-'))
+  t.after(() => rmSync(directory, { recursive: true }))
+  const chosen = { hostedAwayFromHome: true, maxRooms: 4, maxBytes: 268435456, minFreeBytes: 1073741824, aggregateBytesPerSecond: 1000000 }
+  const path = join(directory, 'ui-configuration.json'), calls = []
+  let finishes = false
+  const node = new NodeProcess({ host: 'node.example', address: '1.2.3.4' }, {}, directory, {
+    command: async (op, extra) => {
+      calls.push([op, ...extra])
+      if (!finishes) return { code: 1, output: '' }
+      writeFileSync(join(directory, 'node.json'), readFileSync(path), { mode: 0o600 })
+      return { code: 0, output: '' }
+    },
+    launch: () => { const child = new EventEmitter(); child.exitCode = null; return child } })
+  await assert.rejects(node.setup(chosen), /setup-incomplete/)
+  const saved = JSON.parse(readFileSync(path, 'utf8'))
+  assert.equal(saved.shelterBinary, '/opt/kithmoot-node/current/bin/wok-roomd')
+
+  // The same unfinished setup as an earlier image saved it.
+  const earlier = JSON.stringify({ ...saved, shelterBinary: '/opt/kithmoot-node/current/bin/bothyd' }) + '\n'
+  writeFileSync(path, earlier, { mode: 0o600 })
+  await assert.rejects(node.setup({ ...chosen, maxRooms: 8 }), /retry-saved-setup/)
+  finishes = true
+  assert.deepEqual(await node.setup(chosen), { configured: true })
+  assert.deepEqual(calls, [['init', '--configuration', path], ['init', '--configuration', path]])
+  assert.equal(readFileSync(path, 'utf8'), earlier)
+  assert.equal(readFileSync(join(directory, 'node.json'), 'utf8'), earlier)
 })
 
 test('data directory ownership is enforced and pausing preserves saved state privately', async t => {
