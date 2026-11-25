@@ -51,11 +51,17 @@ class PrivatePackaging(unittest.TestCase):
         path.unlink(); path.write_bytes(data); path.chmod(0o777)
         with self.assertRaises(ValueError): prepare.verified_bundle(self.bundle)
 
-    def test_private_input_cannot_silently_become_public(self):
-        self.release['distribution'] = 'public'; self.save()
-        with self.assertRaises(ValueError): prepare.verified_bundle(self.bundle)
-        self.release['distribution'] = 'private-candidate'
+    def test_private_candidate_cannot_silently_become_public(self):
+        for distribution in ['public', 'public-release']:
+            self.release['distribution'] = distribution; self.save()
+            with self.assertRaises(ValueError): prepare.verified_bundle(self.bundle)
+
+    def test_room_relay_is_a_declared_input_whether_private_or_public(self):
         self.release['dependencies'][0]['visibility'] = 'public'; self.save()
+        prepare.verified_bundle(self.bundle)
+        self.release['dependencies'][0]['visibility'] = 'undeclared'; self.save()
+        with self.assertRaises(ValueError): prepare.verified_bundle(self.bundle)
+        self.release['dependencies'] = [{'name': 'spry', 'visibility': 'public'}]; self.save()
         with self.assertRaises(ValueError): prepare.verified_bundle(self.bundle)
 
     def test_duplicate_or_traversal_inventory_paths_are_refused(self):
