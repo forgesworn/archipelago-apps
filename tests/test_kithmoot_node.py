@@ -23,7 +23,7 @@ class PrivatePackaging(unittest.TestCase):
             path = self.bundle / name
             path.parent.mkdir(parents=True, exist_ok=True)
             data = ('Private fixture ' + name).encode()
-            executable = name in {'kithmoot-node', 'runtime/bin/node', 'lib/kithmoot-node.mjs', 'bin/bothyd', 'bin/spry-node'}
+            executable = name in {'kithmoot-node', 'runtime/bin/node', 'lib/kithmoot-node.mjs', 'bin/wok-roomd', 'bin/spry-node'}
             path.write_bytes(data); path.chmod(0o755 if executable else 0o644)
             files.append({'path': name, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'executable': executable})
         self.release = {'v': 1, 'name': 'kithmoot-node', 'version': '0.1.0-rc.1', 'platform': 'linux-arm64',
@@ -35,7 +35,7 @@ class PrivatePackaging(unittest.TestCase):
 
     def test_inventory_detects_tampering_and_undeclared_inputs(self):
         prepare.verified_bundle(self.bundle)
-        path = self.bundle / 'bin/bothyd'
+        path = self.bundle / 'bin/wok-roomd'
         original = path.read_bytes(); path.write_bytes(b'tampered')
         with self.assertRaises(ValueError): prepare.verified_bundle(self.bundle)
         path.write_bytes(original)
@@ -43,7 +43,7 @@ class PrivatePackaging(unittest.TestCase):
         with self.assertRaises(ValueError): prepare.verified_bundle(self.bundle)
 
     def test_symlinks_and_writable_executables_are_refused(self):
-        path = self.bundle / 'bin/bothyd'
+        path = self.bundle / 'bin/wok-roomd'
         data = path.read_bytes(); path.unlink()
         outside = Path(self.temporary.name) / 'outside'; outside.write_bytes(data)
         path.symlink_to(outside)

@@ -16,7 +16,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "experimental/kithmoot-node"
 BASE_IMAGE = "node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c"
-REQUIRED = {"kithmoot-node", "runtime/bin/node", "lib/kithmoot-node.mjs", "bin/spry-node", "bin/bothyd",
+REQUIRED = {"kithmoot-node", "runtime/bin/node", "lib/kithmoot-node.mjs", "bin/spry-node", "bin/wok-roomd",
             "deploy/kithmoot-node.service", "deploy/kithmoot-node-front.service", "licenses/NOTICE.txt",
             "licenses/Node-LICENSE.txt", "licenses/Spry-LICENSE.txt", "licenses/Shelter-LICENSE.txt"}
 
